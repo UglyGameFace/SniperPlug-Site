@@ -34,7 +34,7 @@ The repository-configured OAuth scope is:
 openid profile email forum:read
 ```
 
-Never commit real secret values.
+Never commit real secret values. Saving or changing a Cloudflare secret requires a fresh Pages deployment before Functions can read the new value.
 
 ## Owner workflow
 
