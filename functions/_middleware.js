@@ -2,10 +2,7 @@ const REQUIRED_CONTROL_CONFIGURATION = [
   'SNIPERPLUG_DB',
   'SNIPERPLUG_ADMIN_PASSWORD',
   'SNIPERPLUG_SESSION_SECRET',
-  'WHOP_CLIENT_ID',
   'WHOP_TOKEN_SECRET',
-  'WHOP_REDIRECT_URI',
-  'WHOP_OAUTH_SCOPES',
 ];
 
 function missingControlConfiguration(env) {
@@ -31,7 +28,7 @@ function configurationError(missing) {
 
 export async function onRequest(context) {
   const url = new URL(context.request.url);
-  if (url.pathname === '/api/control') {
+  if (url.pathname === '/api/control' || url.pathname === '/api/whop/oauth/callback') {
     const missing = missingControlConfiguration(context.env);
     if (missing.length) return configurationError(missing);
   }
