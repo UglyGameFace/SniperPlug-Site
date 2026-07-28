@@ -10,24 +10,25 @@ D1 privately stores OAuth sessions, approved and disapproved source IDs, post de
 
 ## Complete Cloudflare configuration
 
-Configure every item below in both Cloudflare **Preview** and **Production** before testing the Control Center. The runtime preflight reports every missing item together instead of failing one setting at a time.
+The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. The callback URL is derived from the current site origin through the dedicated `/api/whop/oauth/callback` route.
+
+Only these private runtime items must exist in both Cloudflare **Preview** and **Production**:
 
 - `SNIPERPLUG_DB` — D1 binding
 - `SNIPERPLUG_ADMIN_PASSWORD` — encrypted secret
 - `SNIPERPLUG_SESSION_SECRET` — encrypted secret
-- `WHOP_CLIENT_ID` — Whop application/client ID
 - `WHOP_TOKEN_SECRET` — encrypted secret used only to seal OAuth tokens in D1
-- `WHOP_REDIRECT_URI` — environment-specific callback URL
-- `WHOP_OAUTH_SCOPES` — OAuth scopes
 
-Use these callback values:
+The runtime preflight reports every missing private item together instead of failing one setting at a time.
+
+Register both exact callback URLs in the Whop application:
 
 ```text
-Preview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/control?action=oauth-callback
-Production: https://sniperplug.com/api/control?action=oauth-callback
+Preview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback
+Production: https://sniperplug.com/api/whop/oauth/callback
 ```
 
-Register both callback URLs in the Whop application. Use this scope value in both environments:
+The repository-configured OAuth scope is:
 
 ```text
 openid profile email forum:read
