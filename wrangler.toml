@@ -2,6 +2,10 @@ name = "sniperplug-site"
 pages_build_output_dir = "."
 compatibility_date = "2026-07-28"
 
+[vars]
+WHOP_CLIENT_ID = "app_JCFpN1nv4khSkx"
+WHOP_OAUTH_SCOPES = "openid profile email forum:read"
+
 [[d1_databases]]
 binding = "SNIPERPLUG_DB"
 database_name = "sniperplug-guides"
