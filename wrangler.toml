@@ -1,0 +1,8 @@
+name = "sniperplug-site"
+pages_build_output_dir = "."
+compatibility_date = "2026-07-28"
+
+[[d1_databases]]
+binding = "SNIPERPLUG_DB"
+database_name = "sniperplug-guides"
+database_id = "7e4e8318-f7fa-4a7f-97fb-742656de2834"
