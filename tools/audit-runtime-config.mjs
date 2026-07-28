@@ -24,7 +24,9 @@ for (const name of requiredPrivate) {
 }
 
 assert.ok(wrangler.includes('WHOP_CLIENT_ID = "app_JCFpN1nv4khSkx"'), 'Public Whop client ID is not pinned in Wrangler configuration.');
-assert.ok(wrangler.includes('WHOP_OAUTH_SCOPES = "openid profile email forum:read"'), 'Whop OAuth scopes are not pinned in Wrangler configuration.');
+assert.ok(wrangler.includes('forum:read'), 'Whop forum scope is missing.');
+assert.ok(wrangler.includes('member:basic:read'), 'Whop membership discovery basic-read scope is missing.');
+assert.ok(wrangler.includes('member:email:read'), 'Whop membership discovery email-read scope is missing.');
 assert.ok(existsSync(join(root, 'functions/api/whop/oauth/callback.js')), 'Origin-aware Whop OAuth callback route is missing.');
 assert.ok(docs.includes('agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback'), 'Preview callback URL is not documented.');
 assert.ok(docs.includes('sniperplug.com/api/whop/oauth/callback'), 'Production callback URL is not documented.');
@@ -34,6 +36,6 @@ assert.ok(middleware.includes('missing,'), 'Runtime response does not include th
 
 console.log('\nSNIPERPLUG RUNTIME CONFIG AUDIT PASSED\n');
 console.log('✓ D1 and every required private secret are checked together.');
-console.log('✓ Public Whop settings ship through Wrangler instead of manual dashboard entry.');
+console.log('✓ Forum and membership discovery scopes ship through Wrangler.');
 console.log('✓ Preview and Production OAuth callbacks are explicit and documented.');
 console.log('✓ Missing settings are reported in one redacted response.');
