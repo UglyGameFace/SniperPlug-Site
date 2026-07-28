@@ -93,15 +93,16 @@ export async function scanApprovedSource(env, whopSession, experience) {
 
   const statements = posts.map((post) => db.prepare(`
     INSERT INTO whop_posts (
-      source_key, experience_id, post_id, title, excerpt, author_json, attachment_json,
+      source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
       source_created_at, source_updated_at, source_fingerprint, integrity_json,
       decision, decision_updated_at, last_scanned_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
     ON CONFLICT(source_key) DO UPDATE SET
       experience_id = excluded.experience_id,
       post_id = excluded.post_id,
       title = excluded.title,
       excerpt = excluded.excerpt,
+      body_markdown = excluded.body_markdown,
       author_json = excluded.author_json,
       attachment_json = excluded.attachment_json,
       source_created_at = excluded.source_created_at,
@@ -125,6 +126,7 @@ export async function scanApprovedSource(env, whopSession, experience) {
     post.postId,
     post.title,
     post.excerpt,
+    post.body,
     JSON.stringify(post.author || {}),
     JSON.stringify(post.attachments),
     post.sourceCreatedAt,
@@ -148,6 +150,7 @@ export async function scanApprovedSource(env, whopSession, experience) {
     postId: row.post_id,
     title: row.title,
     excerpt: row.excerpt,
+    body: row.body_markdown,
     author: JSON.parse(row.author_json || '{}'),
     attachments: JSON.parse(row.attachment_json || '[]'),
     sourceCreatedAt: row.source_created_at,
@@ -180,5 +183,19 @@ export async function listSavedPosts(env, experienceId) {
     SELECT * FROM whop_posts WHERE experience_id = ?
     ORDER BY source_updated_at DESC, title ASC
   `).bind(experienceId).all();
-  return rows.results || [];
+  return (rows.results || []).map((row) => ({
+    sourceKey: row.source_key,
+    experienceId: row.experience_id,
+    postId: row.post_id,
+    title: row.title,
+    excerpt: row.excerpt,
+    body: row.body_markdown,
+    author: JSON.parse(row.author_json || '{}'),
+    attachments: JSON.parse(row.attachment_json || '[]'),
+    sourceCreatedAt: row.source_created_at,
+    sourceUpdatedAt: row.source_updated_at,
+    sourceFingerprint: row.source_fingerprint,
+    integrity: JSON.parse(row.integrity_json || '{}'),
+    decision: row.decision,
+  }));
 }
