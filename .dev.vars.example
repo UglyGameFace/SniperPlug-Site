@@ -1,6 +1,3 @@
 SNIPERPLUG_ADMIN_PASSWORD=replace-with-a-long-private-password
 SNIPERPLUG_SESSION_SECRET=replace-with-a-different-high-entropy-secret
-WHOP_CLIENT_ID=app_replace_me
 WHOP_TOKEN_SECRET=replace-with-a-third-high-entropy-secret
-WHOP_REDIRECT_URI=http://localhost:8788/api/control?action=oauth-callback
-WHOP_OAUTH_SCOPES=openid profile email forum:read
