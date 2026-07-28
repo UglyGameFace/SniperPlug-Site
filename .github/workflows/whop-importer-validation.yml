@@ -1,10 +1,12 @@
 name: SniperPlug importer validation
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [agent/whop-guide-importer]
+
+concurrency:
+  group: sniperplug-whop-importer-validation
+  cancel-in-progress: true
 
 permissions:
   contents: read
