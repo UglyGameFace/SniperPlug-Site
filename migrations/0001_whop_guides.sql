@@ -19,6 +19,14 @@ INSERT OR IGNORE INTO guide_categories (slug, label, description, sort_order, ac
   ('smart-home', 'Smart Home', 'Connected-home, security, automation, and smart-device methods.', 60, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
   ('tools', 'Tools', 'Tools, hardware, home-improvement, and workshop methods.', 70, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 
+CREATE TABLE IF NOT EXISTS admin_login_attempts (
+  client_key TEXT PRIMARY KEY,
+  failures INTEGER NOT NULL DEFAULT 0,
+  window_started_at TEXT NOT NULL,
+  blocked_until TEXT,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS whop_oauth_states (
   state TEXT PRIMARY KEY,
   admin_session_id TEXT NOT NULL,
@@ -66,6 +74,7 @@ CREATE TABLE IF NOT EXISTS whop_posts (
   post_id TEXT NOT NULL,
   title TEXT NOT NULL,
   excerpt TEXT NOT NULL DEFAULT '',
+  body_markdown TEXT NOT NULL DEFAULT '',
   author_json TEXT NOT NULL DEFAULT '{}',
   attachment_json TEXT NOT NULL DEFAULT '[]',
   source_created_at TEXT,
