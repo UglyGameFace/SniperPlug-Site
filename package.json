@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "audit": "node tools/audit-whop-importer.mjs",
+    "audit": "node tools/audit-whop-importer.mjs && node tools/audit-runtime-config.mjs",
     "test": "npm run audit",
     "build": "npm run audit"
   },
