@@ -5,10 +5,9 @@ import { whopApi } from './whop.js';
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_MEMBERSHIPS = 1000;
-const MAX_FORUMS_PER_COMPANY = 250;
+const MAX_ITEMS_PER_PRODUCT = 250;
 const MAX_COMPANIES = 100;
 const CONCURRENCY = 5;
-const ACCESS_STATUSES = new Set(['trialing', 'active', 'past_due', 'completed', 'canceling']);
 const DEFAULT_GROUPS = new Map([
   ['black box', 0],
   ['hidden files', 1],
@@ -16,6 +15,11 @@ const DEFAULT_GROUPS = new Map([
 
 function normalize(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
+}
+
+function exactExperienceId(value) {
+  const id = String(value || '').trim();
+  return /^exp_[A-Za-z0-9_-]+$/.test(id) ? id : '';
 }
 
 async function allPages(session, path, query, maxItems, label) {
@@ -38,7 +42,7 @@ async function allPages(session, path, query, maxItems, label) {
   throw new HttpError(502, 'Whop pagination exceeded the safe page limit.');
 }
 
-async function mapConcurrent(values, mapper) {
+async function mapConcurrent(values, mapper, concurrency = CONCURRENCY) {
   const output = new Array(values.length);
   let cursor = 0;
   async function worker() {
@@ -48,43 +52,147 @@ async function mapConcurrent(values, mapper) {
       output[index] = await mapper(values[index], index);
     }
   }
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, Math.max(1, values.length)) }, () => worker()));
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, values.length)) }, () => worker()));
   return output;
 }
 
-function membershipCompanies(memberships) {
+export function membershipCompanies(memberships) {
   const companies = new Map();
   for (const membership of memberships) {
-    const status = String(membership?.status || '').toLowerCase();
-    if (status && !ACCESS_STATUSES.has(status)) continue;
     const companyId = String(membership?.company?.id || '').trim();
     if (!companyId) continue;
+    const status = String(membership?.status || '').trim().toLowerCase();
     const current = companies.get(companyId) || {
       id: companyId,
       title: String(membership?.company?.title || membership?.company?.name || 'Whop group').trim(),
       route: String(membership?.company?.route || '').trim() || null,
       statuses: new Set(),
       products: new Map(),
+      memberships: 0,
     };
     if (status) current.statuses.add(status);
     const productId = String(membership?.product?.id || '').trim();
     if (productId) current.products.set(productId, String(membership?.product?.title || 'Whop product').trim());
+    current.memberships += 1;
     companies.set(companyId, current);
   }
-  return [...companies.values()].slice(0, MAX_COMPANIES);
+  const values = [...companies.values()];
+  if (values.length > MAX_COMPANIES) {
+    throw new HttpError(422, `Whop returned more than ${MAX_COMPANIES} joined companies. Narrow the connected account before continuing.`);
+  }
+  return values;
+}
+
+function companySummary(company) {
+  return {
+    id: company.id,
+    title: company.title,
+    route: company.route,
+  };
 }
 
 function forumExperience(forum, company) {
-  const id = String(forum?.experience?.id || '').trim();
-  if (!/^exp_[A-Za-z0-9_-]+$/.test(id)) return null;
+  const id = exactExperienceId(forum?.experience?.id || forum?.id);
+  if (!id) return null;
   return {
     id,
     name: String(forum?.experience?.name || forum?.name || 'Forum').trim(),
-    company: {
-      id: company.id,
-      title: company.title,
-      route: company.route,
+    is_public: Boolean(forum?.experience?.is_public),
+    company: companySummary(company),
+    app: {
+      id: forum?.experience?.app?.id || null,
+      name: forum?.experience?.app?.name || 'Forums',
     },
+  };
+}
+
+function listedExperience(experience, company) {
+  const id = exactExperienceId(experience?.id);
+  if (!id) return null;
+  return {
+    ...experience,
+    id,
+    name: String(experience?.name || 'Whop experience').trim(),
+    company: companySummary(company),
+    app: experience?.app ? {
+      id: experience.app.id || null,
+      name: experience.app.name || null,
+    } : null,
+  };
+}
+
+function isForumExperience(experience) {
+  return normalize(experience?.app?.name || '').includes('forum');
+}
+
+function discoveryFailure(label, error) {
+  if (error instanceof HttpError && error.status === 403) return `${label} was denied`;
+  if (error instanceof HttpError && error.status === 404) return `${label} was not found`;
+  const message = String(error?.message || '').trim().slice(0, 160);
+  return `${label} failed${message ? `: ${message}` : ''}`;
+}
+
+async function discoverCompanyForumSources(session, env, company) {
+  const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
+  const scopes = membershipProducts.length ? membershipProducts : [{ id: null, title: 'company access' }];
+  const attempts = await mapConcurrent(scopes, async (product) => {
+    const query = {
+      company_id: company.id,
+      ...(product.id ? { product_id: product.id } : {}),
+    };
+    const output = { product, forums: [], experiences: [], failures: [] };
+    try {
+      output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_PRODUCT, `${product.title} forums`);
+    } catch (error) {
+      output.failures.push(discoveryFailure(`${product.title} forum lookup`, error));
+    }
+    try {
+      output.experiences = await allPages(session, 'experiences', query, MAX_ITEMS_PER_PRODUCT, `${product.title} experiences`);
+    } catch (error) {
+      output.failures.push(discoveryFailure(`${product.title} experience lookup`, error));
+    }
+    return output;
+  }, Math.min(3, CONCURRENCY));
+
+  const discovered = new Map();
+  const experienceTypes = new Set();
+  const failures = new Set();
+  for (const attempt of attempts) {
+    for (const failure of attempt.failures) failures.add(failure);
+    for (const forum of attempt.forums) {
+      const experience = forumExperience(forum, company);
+      if (experience) discovered.set(experience.id, experience);
+    }
+    for (const raw of attempt.experiences) {
+      const experience = listedExperience(raw, company);
+      if (!experience) continue;
+      const appName = String(experience.app?.name || 'Unknown app').trim() || 'Unknown app';
+      experienceTypes.add(appName);
+      if (isForumExperience(experience)) discovered.set(experience.id, experience);
+    }
+  }
+
+  const sources = [];
+  for (const experience of discovered.values()) {
+    sources.push({ experience, source: await sourceDecision(env, experience, experience.id) });
+  }
+
+  let error = null;
+  if (!sources.length) {
+    if (experienceTypes.size) {
+      error = `No native Whop forum is attached to this membership product. Available experience types: ${[...experienceTypes].sort().join(', ')}.`;
+    } else if (failures.size) {
+      error = `Whop found the membership, but product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`;
+    } else {
+      error = 'Whop found the membership product, but it has no readable forum or experience modules attached.';
+    }
+  }
+
+  return {
+    company,
+    sources,
+    experienceTypes: [...experienceTypes].sort(),
+    error,
   };
 }
 
@@ -100,35 +208,20 @@ export async function discoverWhopSources(session, env) {
   }
 
   const companies = membershipCompanies(memberships);
-  const results = await mapConcurrent(companies, async (company) => {
-    try {
-      const forums = await allPages(session, 'forums', { company_id: company.id }, MAX_FORUMS_PER_COMPANY, 'forums');
-      const sources = [];
-      for (const forum of forums) {
-        const experience = forumExperience(forum, company);
-        if (!experience) continue;
-        sources.push({ experience, source: await sourceDecision(env, experience, experience.id) });
-      }
-      return { company, sources, error: null };
-    } catch (error) {
-      if (error instanceof HttpError && [403, 404].includes(error.status)) {
-        return { company, sources: [], error: 'No readable forum experiences were returned for this membership.' };
-      }
-      return { company, sources: [], error: String(error?.message || 'Whop forum discovery failed.') };
-    }
-  });
-
-  const groups = results.map(({ company, sources, error }) => ({
+  const results = await mapConcurrent(companies, (company) => discoverCompanyForumSources(session, env, company));
+  const groups = results.map(({ company, sources, experienceTypes, error }) => ({
     company: {
       id: company.id,
       title: company.title,
       route: company.route,
       statuses: [...company.statuses],
       products: [...company.products].map(([id, title]) => ({ id, title })),
+      memberships: company.memberships,
     },
     builtIn: DEFAULT_GROUPS.has(normalize(company.title)),
     defaultRank: DEFAULT_GROUPS.get(normalize(company.title)) ?? 100,
     sources,
+    experienceTypes,
     error,
   })).filter((group) => group.sources.length || group.builtIn || group.error);
 
