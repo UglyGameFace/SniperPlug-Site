@@ -88,6 +88,16 @@ function renderList(lines, start) {
   return { html: `<${tag}>${items.map((item) => `<li>${inlineMarkdown(item)}</li>`).join('')}</${tag}>`, next: index };
 }
 
+function renderParagraph(parts) {
+  let output = '';
+  for (let index = 0; index < parts.length; index += 1) {
+    const hardBreak = /\s{2}$/.test(parts[index]);
+    output += inlineMarkdown(parts[index].replace(/\s{2}$/, ''));
+    if (index < parts.length - 1) output += hardBreak ? '<br>\n' : ' ';
+  }
+  return output;
+}
+
 export function renderMarkdown(markdown) {
   const lines = String(markdown ?? '').replace(/\r\n?/g, '\n').split('\n');
   const output = [];
@@ -171,8 +181,7 @@ export function renderMarkdown(markdown) {
       paragraph.push(lines[index]);
       index += 1;
     }
-    const rendered = paragraph.map((part) => inlineMarkdown(part.replace(/\s{2}$/, ''))).join(paragraph.some((part) => /\s{2}$/.test(part)) ? '<br>\n' : ' ');
-    output.push(`<p>${rendered}</p>`);
+    output.push(`<p>${renderParagraph(paragraph)}</p>`);
   }
 
   return output.join('\n');
