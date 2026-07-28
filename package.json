@@ -1,0 +1,14 @@
+{
+  "name": "sniperplug-site",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audit": "node tools/audit-whop-importer.mjs",
+    "test": "npm run audit",
+    "build": "npm run audit"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
