@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Guide Control Center | SniperPlug</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/css/styles.css">
+  <link rel="stylesheet" href="/assets/css/control-center.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a>
+      <nav class="nav" aria-label="Control Center navigation"><a href="/guides/">Public guides</a><a href="/deals/">Deals</a><a class="active" href="/control-center/">Control Center</a></nav>
+    </div>
+  </header>
+
+  <main id="main" class="control-shell" data-control-root>
+    <section class="control-login container" data-login-panel>
+      <span class="eyebrow">🔒 Private publishing</span>
+      <h1>Unlock the Guide Control Center.</h1>
+      <p>Import authorized Whop posts, approve or disapprove each one, review exact formatting, and publish only when the guide is ready.</p>
+      <form data-login-form>
+        <label><span>Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">Unlock Control Center</button>
+      </form>
+      <p class="control-message" data-login-message role="alert" hidden></p>
+    </section>
+
+    <section class="control-app container" data-control-app hidden>
+      <header class="control-hero">
+        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve the exact source, approve the exact posts, import hidden drafts, then publish separately.</p></div>
+        <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">View public guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
+      </header>
+
+      <div class="control-status" data-global-status role="status" aria-live="polite" hidden></div>
+
+      <section class="control-panel" id="whop-importer">
+        <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
+        <div class="button-row"><a class="btn primary" href="/api/control?action=oauth-start" data-whop-connect>Continue with Whop</a><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect</button></div>
+        <div class="source-chips" data-source-options></div>
+      </section>
+
+      <section class="control-panel">
+        <header class="panel-head"><div><span class="eyebrow">2 · Approve source</span><h2>Choose a Whop group</h2><p>Black Box and Hidden Files are the defaults. Another exact group can be approved later with the same controls.</p></div></header>
+        <form class="source-form" data-source-form>
+          <label><span>Experience ID or Whop link</span><input name="source" placeholder="exp_xxxxxxxxxxxxxx or a link containing it" autocomplete="off" required></label>
+          <button class="btn primary" type="submit">Check group</button>
+        </form>
+        <article class="source-review" data-source-review hidden>
+          <div><small>Exact Whop source</small><h3 data-source-title>Whop group</h3><p data-source-detail></p></div>
+          <strong class="state-pill" data-source-state data-state="pending">Needs decision</strong>
+          <div class="decision-row"><button class="decision approve" type="button" data-source-approve>Approve group</button><button class="decision disapprove" type="button" data-source-disapprove>Disapprove group</button></div>
+        </article>
+      </section>
+
+      <section class="control-panel" data-post-panel hidden>
+        <header class="panel-head"><div><span class="eyebrow">3 · Approve posts</span><h2 data-post-title>Review posts</h2><p data-post-summary></p></div><div class="button-row"><button class="decision approve" type="button" data-approve-all>Approve all ready</button><button class="decision disapprove" type="button" data-disapprove-all>Disapprove all</button><button class="btn ghost" type="button" data-reset-all>Reset decisions</button></div></header>
+        <div class="decision-counts"><span><strong data-count-approved>0</strong>Approved</span><span><strong data-count-disapproved>0</strong>Disapproved</span><span><strong data-count-pending>0</strong>Need decision</span><span><strong data-count-blocked>0</strong>Blocked</span></div>
+        <div class="post-list" data-post-list></div>
+        <div class="import-bar">
+          <label><span>Category for approved posts</span><select data-import-category></select></label>
+          <label class="rights-check"><input type="checkbox" data-rights-confirm><span>I own these posts or have explicit permission to republish them on SniperPlug.</span></label>
+          <button class="btn primary" type="button" data-import-approved disabled>Import approved drafts</button>
+        </div>
+      </section>
+
+      <section class="control-panel">
+        <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>The importer uses this live registry. Add a category instead of forcing a guide into the wrong one.</p></div></header>
+        <form class="category-form" data-category-form>
+          <label><span>Label</span><input name="label" maxlength="60" placeholder="Reselling" required></label>
+          <label><span>Description</span><input name="description" maxlength="220" placeholder="Reselling, sourcing, and flip methods."></label>
+          <label><span>Order</span><input name="sortOrder" type="number" min="0" max="9999" value="100"></label>
+          <button class="btn ghost" type="submit">Add or update category</button>
+        </form>
+        <div class="category-list" data-category-list></div>
+      </section>
+
+      <section class="control-panel">
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported posts stay private until you open a draft and press Publish.</p></div><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></header>
+        <div class="draft-layout">
+          <aside class="draft-list" data-draft-list></aside>
+          <div class="draft-empty" data-draft-empty><strong>No draft selected</strong><p>Choose an imported guide to review its exact content.</p></div>
+          <form class="draft-editor" data-draft-editor hidden>
+            <input type="hidden" name="id">
+            <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open published guide</a></div>
+            <label><span>Title</span><input name="title" maxlength="140" required></label>
+            <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
+            <label><span>Category</span><select name="category" required></select></label>
+            <label><span>Guide Markdown</span><textarea name="body" rows="24" spellcheck="true" required></textarea></label>
+            <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private/expiring attachment.</span></label>
+            <label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide above normal guide ordering.</span></label>
+            <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
+            <details class="exact-preview"><summary>Exact Markdown preview</summary><pre data-markdown-preview></pre></details>
+          </form>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="preview-backdrop" data-post-preview hidden>
+    <section role="dialog" aria-modal="true" aria-labelledby="post-preview-title">
+      <header><h2 id="post-preview-title" data-preview-title>Post preview</h2><button type="button" data-close-preview aria-label="Close">×</button></header>
+      <p data-preview-meta></p><pre data-preview-body></pre><footer><button class="btn ghost" type="button" data-close-preview>Close</button></footer>
+    </section>
+  </div>
+
+  <script src="/assets/js/control-center.js" defer></script>
+</body>
+</html>
