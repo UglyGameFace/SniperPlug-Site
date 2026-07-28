@@ -44,16 +44,25 @@
         <div class="source-chips" data-source-options></div>
       </section>
 
-      <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">2 · Approve source</span><h2>Choose a Whop group</h2><p>Black Box and Hidden Files are the defaults. Another exact group can be approved later with the same controls.</p></div></header>
-        <form class="source-form" data-source-form>
-          <label><span>Experience ID or Whop link</span><input name="source" placeholder="exp_xxxxxxxxxxxxxx or a link containing it" autocomplete="off" required></label>
-          <button class="btn primary" type="submit">Check group</button>
-        </form>
+      <section class="control-panel" data-discovery-panel>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your joined Whop groups</h2><p>Joined memberships and readable forum experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh groups</button></header>
+        <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load groups.</strong><span data-discovery-message></span></div>
+        <div class="discovery-bulk" data-discovery-bulk hidden>
+          <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files forum</span></label>
+          <div class="button-row"><button class="decision approve" type="button" data-approve-selected disabled>Approve selected</button><button class="decision disapprove" type="button" data-disapprove-selected disabled>Disapprove selected</button><button class="btn ghost" type="button" data-clear-selected disabled>Clear selection</button></div>
+        </div>
+        <div class="discovered-groups" data-discovered-groups></div>
+        <details class="manual-source">
+          <summary>Advanced fallback: paste a Whop experience ID or link</summary>
+          <form class="source-form" data-source-form>
+            <label><span>Experience ID or Whop link</span><input name="source" placeholder="exp_xxxxxxxxxxxxxx or a link containing it" autocomplete="off" required></label>
+            <button class="btn primary" type="submit">Check group</button>
+          </form>
+        </details>
         <article class="source-review" data-source-review hidden>
           <div><small>Exact Whop source</small><h3 data-source-title>Whop group</h3><p data-source-detail></p></div>
           <strong class="state-pill" data-source-state data-state="pending">Needs decision</strong>
-          <div class="decision-row"><button class="decision approve" type="button" data-source-approve>Approve group</button><button class="decision disapprove" type="button" data-source-disapprove>Disapprove group</button></div>
+          <div class="decision-row"><button class="decision approve" type="button" data-source-approve>Approve group</button><button class="decision disapprove" type="button" data-source-disapprove>Disapprove group</button><button class="btn ghost" type="button" data-source-scan>Review posts</button></div>
         </article>
       </section>
 
@@ -109,5 +118,6 @@
   </div>
 
   <script src="/assets/js/control-center.js" defer></script>
+  <script src="/assets/js/whop-discovery.js" defer></script>
 </body>
 </html>
