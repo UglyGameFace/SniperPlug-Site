@@ -12,6 +12,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 const exists = (path) => existsSync(join(root, path));
 
 const required = [
+  'wrangler.toml',
   'migrations/0001_whop_guides.sql',
   'control-center/index.html',
   'assets/css/control-center.css',
@@ -34,6 +35,13 @@ const required = [
   'functions/_lib/whop.js',
 ];
 for (const path of required) assert.ok(exists(path), `Required importer file is missing: ${path}`);
+
+const wrangler = read('wrangler.toml');
+assert.ok(wrangler.includes('name = "sniperplug-site"'), 'Wrangler config targets the wrong Cloudflare Pages project.');
+assert.ok(wrangler.includes('pages_build_output_dir = "."'), 'Wrangler config does not preserve the static root build output.');
+assert.ok(wrangler.includes('binding = "SNIPERPLUG_DB"'), 'Cloudflare D1 binding must remain SNIPERPLUG_DB.');
+assert.ok(wrangler.includes('database_name = "sniperplug-guides"'), 'Wrangler config targets the wrong D1 database name.');
+assert.ok(wrangler.includes('database_id = "7e4e8318-f7fa-4a7f-97fb-742656de2834"'), 'Wrangler config targets the wrong D1 database ID.');
 
 const sample = '\uFEFF## Café launch 👩🏽‍💻\r\n\r\nFirst paragraph with “curly quotes” and 日本語.  \r\nHard-break line.\r\nSoft continuation.\r\n\r\n| Item | Value |\r\n| --- | ---: |\r\n| Emoji | 🚀 |\r\n\r\n```html\r\n<script>literal example only</script>\r\n```\r\n';
 const prepared = await prepareGuideBody(sample, { source: 'Audit fixture' });
@@ -123,6 +131,7 @@ for (const directory of ['functions', 'assets/js']) {
 }
 
 console.log('\nSNIPERPLUG WHOP IMPORTER AUDIT PASSED\n');
+console.log('✓ Cloudflare Pages binds SNIPERPLUG_DB to the exact SniperPlug D1 database.');
 console.log('✓ Black Box and Hidden Files are built-in suggestions, with reversible approval for any exact group ID.');
 console.log('✓ Source and post Approve, Disapprove, bulk actions, and Undo are visible and wired.');
 console.log('✓ Approved IDs are re-fetched from Whop; browser-submitted post bodies are never trusted.');
