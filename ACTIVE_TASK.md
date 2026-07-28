@@ -4,7 +4,7 @@
 Build an authorized Whop-to-SniperPlug forum-post importer with secure OAuth, explicit source and post approval/disapproval, exact formatting preservation, private draft storage, category-aware review, duplicate/update protection, and explicit publishing to the SniperPlug website.
 
 ## Status
-Active on `agent/whop-guide-importer`. The real SniperPlug site is a static Cloudflare Pages project with no existing guide CMS. The importer will add a private D1-backed guide system without exposing drafts in this public repository.
+Active on `agent/whop-guide-importer`. The SniperPlug Cloudflare Pages preview now has the D1 database binding, the migration has been applied, and the owner configured the Control Center password and session-signing secret for runtime testing.
 
 ## Scope
 - Use Whop OAuth 2.1 with PKCE and `openid profile email forum:read`; never collect or store a Whop password.
@@ -23,23 +23,26 @@ Active on `agent/whop-guide-importer`. The real SniperPlug site is a static Clou
 - Add targeted tests, repository audits, Cloudflare Pages validation, cleanup, conflict inspection, setup documentation, and a draft PR.
 
 ## Findings
-- `UglyGameFace/SniperPlug-Site` is the correct website repository. It is currently a static Cloudflare Pages deal site with one redirect Function and no guide CMS or owner Control Center.
-- Existing categories in `data/deals.json` are deal categories, so guide categories need a separate owner-managed registry rather than silently forcing forum posts into a product category.
-- The repository is public. Committing imported drafts as plaintext would expose paid/private Whop content even if the pages were hidden. Drafts must remain in private platform storage.
-- Cloudflare Pages Functions support D1 bindings and encrypted secrets. D1 can hold both private drafts and published guide content without requiring a rebuild.
+- `UglyGameFace/SniperPlug-Site` is the correct website repository and Cloudflare Pages deployment source.
+- Existing categories in `data/deals.json` are deal categories, so guide categories use a separate owner-managed registry.
+- The repository is public. Imported drafts remain in private D1 storage and are never committed as plaintext.
+- Cloudflare Pages Functions use the `SNIPERPLUG_DB` D1 binding for private drafts and published guide data.
 - Public Whop files can have permanent CDN URLs; private files use expiring signed URLs and must not be silently published as durable links.
 
 ## Validation
-- Current SniperPlug repository, deployment model, deal data, navigation, security headers, redirect Function, and static filters inspected.
-- Official Cloudflare Pages Functions, D1 bindings/migrations, and Web Crypto documentation verified.
-- Implementation and tests pending.
+- Complete importer audit and Cloudflare preview build passed.
+- `SNIPERPLUG_DB` is configured through `wrangler.toml` with the owner-provided D1 database UUID.
+- `migrations/0001_whop_guides.sql` was applied successfully; the database reports seven application tables.
+- Control Center password and session-secret configuration reached the preview setup stage.
+- This commit intentionally triggers a fresh Cloudflare preview so the newly saved encrypted secrets are loaded by Pages Functions.
 
 ## Cleanup
-- The earlier draft PR in `UglyGameFace/Hidden-files` targets The 420 Lobby and must not be merged. It will be closed after the correct SniperPlug implementation is safely established.
-- No SniperPlug production files have been changed yet.
+- Work is isolated to the correct `UglyGameFace/SniperPlug-Site` repository.
+- Imported Whop content and runtime secrets remain outside GitHub.
 
 ## Blockers
-- Live acceptance will require a Cloudflare D1 database bound as `SNIPERPLUG_DB`, the included migration applied, Whop app credentials, and private Cloudflare secrets.
+- Confirm the fresh preview accepts the configured Control Center password.
+- Configure and validate `WHOP_CLIENT_ID`, `WHOP_TOKEN_SECRET`, `WHOP_REDIRECT_URI`, and `WHOP_OAUTH_SCOPES` before testing Whop OAuth.
 - Republishing still requires ownership or explicit permission for the source posts.
 
 ## Backlog
