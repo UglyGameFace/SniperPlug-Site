@@ -1,25 +1,37 @@
+document.addEventListener('DOMContentLoaded', () => {
+  const nav = document.querySelector('.nav');
+  if (nav && !nav.querySelector('a[href="/guides/"]')) {
+    const guideLink = document.createElement('a');
+    guideLink.href = '/guides/';
+    guideLink.textContent = 'Guides';
+    if (location.pathname.startsWith('/guides/')) guideLink.classList.add('active');
+    const partnerLink = nav.querySelector('a[href="/partners/"]');
+    nav.insertBefore(guideLink, partnerLink || null);
+  }
 
-(function(){
+  const cards = [...document.querySelectorAll('.deal-card')];
   const search = document.querySelector('[data-deal-search]');
   const store = document.querySelector('[data-store-filter]');
   const category = document.querySelector('[data-category-filter]');
-  const cards = Array.from(document.querySelectorAll('.deal-card'));
   const empty = document.querySelector('[data-empty-state]');
-  function applyFilters(){
-    if(!cards.length) return;
-    const q = (search && search.value || '').trim().toLowerCase();
-    const s = store && store.value || 'all';
-    const c = category && category.value || 'all';
-    let visible = 0;
-    cards.forEach(card => {
-      const matchesQ = !q || (card.dataset.title || '').includes(q);
-      const matchesS = s === 'all' || card.dataset.store === s;
-      const matchesC = c === 'all' || card.dataset.category === c;
-      const show = matchesQ && matchesS && matchesC;
-      card.style.display = show ? '' : 'none';
-      if(show) visible++;
+  if (!cards.length) return;
+
+  const apply = () => {
+    const query = (search?.value || '').trim().toLowerCase();
+    const storeValue = store?.value || 'all';
+    const categoryValue = category?.value || 'all';
+    let shown = 0;
+    cards.forEach((card) => {
+      const matchesQuery = !query || (card.dataset.title || '').includes(query) || card.textContent.toLowerCase().includes(query);
+      const matchesStore = storeValue === 'all' || card.dataset.store === storeValue;
+      const matchesCategory = categoryValue === 'all' || card.dataset.category === categoryValue;
+      const visible = matchesQuery && matchesStore && matchesCategory;
+      card.hidden = !visible;
+      if (visible) shown += 1;
     });
-    if(empty) empty.style.display = visible ? 'none' : 'block';
-  }
-  [search, store, category].filter(Boolean).forEach(el => el.addEventListener('input', applyFilters));
-})();
+    if (empty) empty.style.display = shown ? 'none' : 'block';
+  };
+  search?.addEventListener('input', apply);
+  store?.addEventListener('change', apply);
+  category?.addEventListener('change', apply);
+});
