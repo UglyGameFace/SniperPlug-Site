@@ -8,18 +8,32 @@ Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_
 
 D1 privately stores OAuth sessions, approved and disapproved source IDs, post decisions, exact post previews, categories, drafts, and published guides. Imported post bodies are never committed to this public repository.
 
-## Required private variables
+## Complete Cloudflare configuration
 
-Configure these values in Cloudflare for preview and production:
+Configure every item below in both Cloudflare **Preview** and **Production** before testing the Control Center. The runtime preflight reports every missing item together instead of failing one setting at a time.
 
-- `SNIPERPLUG_ADMIN_PASSWORD`
-- `SNIPERPLUG_SESSION_SECRET`
-- `WHOP_CLIENT_ID`
-- `WHOP_TOKEN_SECRET`
-- `WHOP_REDIRECT_URI`
-- `WHOP_OAUTH_SCOPES`
+- `SNIPERPLUG_DB` — D1 binding
+- `SNIPERPLUG_ADMIN_PASSWORD` — encrypted secret
+- `SNIPERPLUG_SESSION_SECRET` — encrypted secret
+- `WHOP_CLIENT_ID` — Whop application/client ID
+- `WHOP_TOKEN_SECRET` — encrypted secret used only to seal OAuth tokens in D1
+- `WHOP_REDIRECT_URI` — environment-specific callback URL
+- `WHOP_OAUTH_SCOPES` — OAuth scopes
 
-Set the production redirect URI to the SniperPlug `/api/control` route with the `oauth-callback` action. Use `openid profile email forum:read` as the OAuth scope value. Never commit real secret values.
+Use these callback values:
+
+```text
+Preview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/control?action=oauth-callback
+Production: https://sniperplug.com/api/control?action=oauth-callback
+```
+
+Register both callback URLs in the Whop application. Use this scope value in both environments:
+
+```text
+openid profile email forum:read
+```
+
+Never commit real secret values.
 
 ## Owner workflow
 
@@ -48,4 +62,4 @@ Black Box and Hidden Files are built-in source suggestions. Their exact experien
 
 ## Build settings
 
-Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs the importer audit before deployment.
+Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs the importer and runtime-configuration audits before deployment.
