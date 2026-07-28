@@ -1,6 +1,9 @@
 import {
+  checkLoginThrottle,
   clearAdminSession,
+  clearLoginFailures,
   createAdminSession,
+  recordLoginFailure,
   requireAdmin,
   verifyAdminPassword,
 } from '../_lib/auth.js';
@@ -57,8 +60,13 @@ async function login(request, env) {
   }
   if (request.method === 'POST') {
     requireSameOrigin(request);
+    await checkLoginThrottle(request, env);
     const body = await readJson(request, { maxBytes: 10_000 });
-    if (!(await verifyAdminPassword(env, body.password))) throw new HttpError(401, 'Incorrect Control Center password.');
+    if (!(await verifyAdminPassword(env, body.password))) {
+      await recordLoginFailure(request, env);
+      throw new HttpError(401, 'Incorrect Control Center password.');
+    }
+    await clearLoginFailures(request, env);
     const result = await createAdminSession(env);
     return appendCookie(json({ authenticated: true, expiresAt: result.session.expiresAt }), result.cookie);
   }
@@ -77,12 +85,7 @@ async function dashboard(request, env, admin) {
     listCategories(env, { includeInactive: true }),
     listAdminGuides(env),
   ]);
-  return json({
-    whop: { connected: Boolean(whop), session: whop },
-    sources,
-    categories,
-    guides,
-  });
+  return json({ whop: { connected: Boolean(whop), session: whop }, sources, categories, guides });
 }
 
 async function oauthCallback(request, env) {
@@ -104,11 +107,7 @@ async function sourceCheck(request, env, admin) {
   const body = await readJson(request);
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, body.source);
-  return json({
-    experience,
-    source: await sourceDecision(env, experience, experience.id),
-    sources: await listSourceOptions(env),
-  });
+  return json({ experience, source: await sourceDecision(env, experience, experience.id), sources: await listSourceOptions(env) });
 }
 
 async function sourceSave(request, env, admin) {
@@ -146,23 +145,20 @@ async function postDecision(request, env) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request);
-  const changed = await savePostDecision(env, body.sourceKeys || body.sourceKey, String(body.decision || ''));
-  return json({ changed });
+  return json({ changed: await savePostDecision(env, body.sourceKeys || body.sourceKey, String(body.decision || '')) });
 }
 
 async function importPosts(request, env, admin) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 200_000 });
-  const whop = await requireWhopSession(request, env, admin);
-  return json(await importApprovedPosts(env, whop, body));
+  return json(await importApprovedPosts(env, await requireWhopSession(request, env, admin), body));
 }
 
 async function categorySave(request, env) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
-  const body = await readJson(request);
-  const saved = await saveCategory(env, body);
+  const saved = await saveCategory(env, await readJson(request));
   return json({ category: saved, categories: await listCategories(env, { includeInactive: true }) });
 }
 
@@ -187,7 +183,6 @@ async function guideStatus(request, env) {
 export async function onRequest(context) {
   const currentAction = action(context.request);
   if (currentAction === 'oauth-callback') return oauthCallback(context.request, context.env);
-
   try {
     if (currentAction === 'session') return await login(context.request, context.env);
     const admin = await requireAdmin(context.request, context.env);
@@ -212,8 +207,7 @@ export async function onRequest(context) {
     if (currentAction === 'guide-status') return await guideStatus(context.request, context.env);
     if (currentAction === 'posts') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-      const experienceId = new URL(context.request.url).searchParams.get('experienceId') || '';
-      return json({ posts: await listSavedPosts(context.env, experienceId) });
+      return json({ posts: await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '') });
     }
     throw new HttpError(404, 'Unknown Control Center action.');
   } catch (error) {
