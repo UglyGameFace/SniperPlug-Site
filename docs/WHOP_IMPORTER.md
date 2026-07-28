@@ -1,6 +1,6 @@
 # Whop to SniperPlug importer
 
-The private importer is available at `/control-center/`. It uses Whop OAuth and the official Forum Posts API. It never asks for a Whop password.
+The private importer is available at `/control-center/`. It uses Whop OAuth and official Whop APIs. It never asks for a Whop password.
 
 ## Cloudflare storage
 
@@ -12,7 +12,7 @@ D1 privately stores OAuth sessions, approved and disapproved source IDs, post de
 
 The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. The callback URL is derived from the current site origin through the dedicated `/api/whop/oauth/callback` route.
 
-Only these private runtime items must exist in both Cloudflare **Preview** and **Production**:
+Only these private runtime items must exist in Cloudflare Preview while testing and in Production before launch:
 
 - `SNIPERPLUG_DB` — D1 binding
 - `SNIPERPLUG_ADMIN_PASSWORD` — encrypted secret
@@ -28,11 +28,13 @@ Preview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oaut
 Production: https://sniperplug.com/api/whop/oauth/callback
 ```
 
-The repository-configured OAuth scope is:
+The repository-configured OAuth scopes are:
 
 ```text
-openid profile email forum:read
+openid profile email forum:read member:basic:read member:email:read
 ```
+
+Enable `forum:read`, `member:basic:read`, and `member:email:read` in the Whop application. Existing connections must disconnect and reconnect once after these scopes are added.
 
 Never commit real secret values. Saving or changing a Cloudflare secret requires a fresh Pages deployment before Functions can read the new value.
 
@@ -40,19 +42,21 @@ Never commit real secret values. Saving or changing a Cloudflare secret requires
 
 1. Unlock `/control-center/`.
 2. Connect through Whop.
-3. Paste an exact `exp_...` experience ID or a Whop URL containing it.
-4. Approve or disapprove the exact group.
-5. Review posts with Approve, Disapprove, Undo, Approve all ready, or Disapprove all.
-6. Select a category and confirm republication rights.
-7. Import approved posts as private drafts.
-8. Review formatting and attachments, then separately Publish or Reject each draft.
+3. SniperPlug automatically loads joined memberships and each readable forum experience.
+4. Select one forum, several forums, or every Black Box and Hidden Files forum.
+5. Approve or disapprove sources individually or in bulk.
+6. Open an approved forum and review posts with Approve, Disapprove, Undo, Approve all ready, or Disapprove all.
+7. Select a category and confirm republication rights.
+8. Import approved posts as private drafts.
+9. Review formatting and attachments, then separately Publish or Reject each draft.
 
-Black Box and Hidden Files are built-in source suggestions. Their exact experience IDs still require approval. Additional groups use the same exact-ID approval screen.
+Black Box and Hidden Files are prioritized automatically. Other joined groups remain available. Manual `exp_...` entry remains under the Advanced fallback only.
 
 ## Safety behavior
 
+- Membership email data is discarded server-side and never sent to the browser.
 - Changed Whop posts return to Needs decision.
-- The browser submits only approved IDs; the server re-fetches authoritative posts before import.
+- The browser submits only exact source and post IDs; the server re-fetches authoritative Whop content.
 - Imports always enter as drafts and are never featured automatically.
 - Duplicate source posts update the existing draft instead of creating copies.
 - Unicode, emoji, punctuation, paragraphs, Markdown hard breaks, headings, lists, tables, links, blockquotes, and fenced code pass through the integrity gate.
@@ -63,4 +67,4 @@ Black Box and Hidden Files are built-in source suggestions. Their exact experien
 
 ## Build settings
 
-Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs the importer and runtime-configuration audits before deployment.
+Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs importer, runtime-configuration, and automatic-discovery audits before deployment.
