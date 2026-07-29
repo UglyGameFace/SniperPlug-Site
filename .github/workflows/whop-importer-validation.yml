@@ -1,6 +1,8 @@
 name: Apply and verify SniperPlug interaction repair
 
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [agent/whop-guide-importer]
 
