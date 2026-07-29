@@ -42,54 +42,92 @@ async function loginClientKey(request) {
   return sha256(`sniperplug-control:${String(address).trim().slice(0, 128)}`);
 }
 
-async function migrateOwnerWhopSession(env, legacySessionId) {
-  const db = requireDatabase(env);
+function missingTable(error, table) {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('no such table') && message.includes(String(table || '').toLowerCase());
+}
+
+function migrationCompatibilityError(error) {
+  return /no such column|has no column named|constraint failed|datatype mismatch|cannot add a not null column/i.test(String(error?.message || ''));
+}
+
+async function sessionColumns(db) {
   try {
-    const owner = await db.prepare('SELECT admin_session_id FROM whop_sessions WHERE admin_session_id = ?')
-      .bind(OWNER_SESSION_ID)
-      .first();
-    if (owner) return;
-
-    let legacy = null;
-    if (legacySessionId && legacySessionId !== OWNER_SESSION_ID) {
-      legacy = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?')
-        .bind(legacySessionId)
-        .first();
-    }
-    if (!legacy) legacy = await db.prepare('SELECT * FROM whop_sessions ORDER BY updated_at DESC LIMIT 1').first();
-    if (!legacy) return;
-
-    await db.prepare(`
-      INSERT INTO whop_sessions (
-        admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
-        user_json, token_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(admin_session_id) DO UPDATE SET
-        access_cipher = excluded.access_cipher,
-        refresh_cipher = excluded.refresh_cipher,
-        token_type = excluded.token_type,
-        scopes = excluded.scopes,
-        expires_at = excluded.expires_at,
-        user_json = excluded.user_json,
-        token_version = excluded.token_version,
-        updated_at = excluded.updated_at
-    `).bind(
-      OWNER_SESSION_ID,
-      legacy.access_cipher,
-      legacy.refresh_cipher,
-      legacy.token_type,
-      legacy.scopes,
-      legacy.expires_at,
-      legacy.user_json,
-      legacy.token_version,
-      legacy.created_at,
-      legacy.updated_at,
-    ).run();
-    await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id <> ?').bind(OWNER_SESSION_ID).run();
+    const result = await db.prepare('PRAGMA table_info(whop_sessions)').all();
+    return new Set((result.results || []).map((row) => String(row.name || '')).filter(Boolean));
   } catch (error) {
-    const message = String(error?.message || '').toLowerCase();
-    if (message.includes('no such table') && message.includes('whop_sessions')) return;
+    if (missingTable(error, 'whop_sessions')) return new Set();
     throw error;
+  }
+}
+
+function sessionColumnValue(name, legacy, now) {
+  if (name === 'admin_session_id') return OWNER_SESSION_ID;
+  if (name === 'token_type') return String(legacy?.token_type || 'Bearer');
+  if (name === 'scopes') return String(legacy?.scopes || '');
+  if (name === 'user_json') return String(legacy?.user_json || '{}');
+  if (name === 'token_version') return Math.max(1, Number(legacy?.token_version || 1));
+  if (name === 'created_at' || name === 'updated_at') return String(legacy?.[name] || now);
+  if (name === 'expires_at') return String(legacy?.expires_at || now);
+  return legacy?.[name] == null ? '' : legacy[name];
+}
+
+async function copySessionToOwner(db, legacy, columns) {
+  const ordered = [
+    'admin_session_id',
+    'access_cipher',
+    'refresh_cipher',
+    'token_type',
+    'scopes',
+    'expires_at',
+    'user_json',
+    'token_version',
+    'created_at',
+    'updated_at',
+  ].filter((name) => columns.has(name));
+  if (!ordered.includes('admin_session_id') || !ordered.includes('access_cipher')) return false;
+
+  const now = new Date().toISOString();
+  const updates = ordered
+    .filter((name) => !['admin_session_id', 'created_at'].includes(name))
+    .map((name) => `${name} = excluded.${name}`);
+  const sql = `
+    INSERT INTO whop_sessions (${ordered.join(', ')})
+    VALUES (${ordered.map(() => '?').join(', ')})
+    ON CONFLICT(admin_session_id) DO UPDATE SET
+      ${updates.length ? updates.join(',\n      ') : 'admin_session_id = excluded.admin_session_id'}
+  `;
+  await db.prepare(sql).bind(...ordered.map((name) => sessionColumnValue(name, legacy, now))).run();
+  return true;
+}
+
+async function resolveOwnerWhopSessionId(env, legacySessionId) {
+  const db = requireDatabase(env);
+  const columns = await sessionColumns(db);
+  if (!columns.size) return OWNER_SESSION_ID;
+
+  const owner = await db.prepare('SELECT admin_session_id FROM whop_sessions WHERE admin_session_id = ?')
+    .bind(OWNER_SESSION_ID)
+    .first();
+  if (owner) return OWNER_SESSION_ID;
+
+  let legacy = null;
+  if (legacySessionId && legacySessionId !== OWNER_SESSION_ID) {
+    legacy = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?')
+      .bind(legacySessionId)
+      .first();
+  }
+  if (!legacy) legacy = await db.prepare('SELECT * FROM whop_sessions ORDER BY updated_at DESC LIMIT 1').first();
+  if (!legacy) return OWNER_SESSION_ID;
+
+  try {
+    return await copySessionToOwner(db, legacy, columns)
+      ? OWNER_SESSION_ID
+      : String(legacy.admin_session_id || OWNER_SESSION_ID);
+  } catch (error) {
+    if (!migrationCompatibilityError(error)) throw error;
+    console.warn('Whop owner-session migration deferred; using the existing compatible session row.');
+    return String(legacy.admin_session_id || OWNER_SESSION_ID);
   }
 }
 
@@ -166,8 +204,8 @@ export async function readAdminSession(request, env) {
 export async function requireAdmin(request, env) {
   const session = await readAdminSession(request, env);
   if (!session) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
-  await migrateOwnerWhopSession(env, session.sid);
-  return { ...session, legacySid: session.sid, sid: OWNER_SESSION_ID };
+  const effectiveSessionId = await resolveOwnerWhopSessionId(env, session.sid);
+  return { ...session, legacySid: session.sid, sid: effectiveSessionId };
 }
 
 export function clearAdminSession() {
