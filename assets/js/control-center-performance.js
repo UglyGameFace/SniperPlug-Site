@@ -36,9 +36,14 @@
 
   function applySelection(checkboxes, checked) {
     changingSelection = true;
+    window.__sniperplugSelectionBatch = true;
     let changed = false;
-    for (const checkbox of checkboxes) changed = setCheckbox(checkbox, checked) || changed;
-    changingSelection = false;
+    try {
+      for (const checkbox of checkboxes) changed = setCheckbox(checkbox, checked) || changed;
+    } finally {
+      changingSelection = false;
+      window.__sniperplugSelectionBatch = false;
+    }
     if (changed) scheduleSelectionSummary();
   }
 
