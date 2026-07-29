@@ -56,9 +56,10 @@ export async function reconcileRecentBulkImports(env) {
     SELECT id, title, body_markdown, status, source_key, source_created_at, imported_at,
            attachment_json, integrity_json
     FROM guides
-    WHERE id IN (${placeholders}) AND source_key IS NOT NULL
+    WHERE id IN (${placeholders}) AND source_key IS NOT NULL AND status != 'rejected'
   `).bind(...ids).all();
   const values = rows.results || [];
+  if (!values.length) return { checked: 0, rejected: 0, duplicates: 0 };
   const reasons = new Map();
   const duplicateGroups = new Map();
 
