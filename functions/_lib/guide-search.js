@@ -1,5 +1,5 @@
-import { quarantineUnsafePublishedGuides } from './content-policy.js';
 import { requireDatabase } from './http.js';
+import { reconcileRecentBulkImports } from './import-reconciliation.js';
 
 const DEFAULT_PAGE_SIZE = 18;
 const MAX_PAGE_SIZE = 48;
@@ -30,7 +30,7 @@ function normalize(row) {
 }
 
 export async function searchPublicGuides(env, input = {}) {
-  await quarantineUnsafePublishedGuides(env);
+  await reconcileRecentBulkImports(env);
   const db = requireDatabase(env);
   const page = clampInteger(input.page, 1, 100_000, 1);
   const pageSize = clampInteger(input.pageSize, 1, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE);
