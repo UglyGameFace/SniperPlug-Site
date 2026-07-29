@@ -16,22 +16,33 @@ document.addEventListener('DOMContentLoaded', () => {
   const empty = document.querySelector('[data-empty-state]');
   if (!cards.length) return;
 
+  const indexed = cards.map((card) => ({
+    card,
+    text: `${card.dataset.title || ''} ${card.textContent || ''}`.toLocaleLowerCase('en-US'),
+    store: card.dataset.store || '',
+    category: card.dataset.category || '',
+  }));
+  let frame = 0;
   const apply = () => {
-    const query = (search?.value || '').trim().toLowerCase();
+    frame = 0;
+    const query = (search?.value || '').trim().toLocaleLowerCase('en-US');
     const storeValue = store?.value || 'all';
     const categoryValue = category?.value || 'all';
     let shown = 0;
-    cards.forEach((card) => {
-      const matchesQuery = !query || (card.dataset.title || '').includes(query) || card.textContent.toLowerCase().includes(query);
-      const matchesStore = storeValue === 'all' || card.dataset.store === storeValue;
-      const matchesCategory = categoryValue === 'all' || card.dataset.category === categoryValue;
-      const visible = matchesQuery && matchesStore && matchesCategory;
-      card.hidden = !visible;
+    for (const item of indexed) {
+      const visible = (!query || item.text.includes(query))
+        && (storeValue === 'all' || item.store === storeValue)
+        && (categoryValue === 'all' || item.category === categoryValue);
+      item.card.hidden = !visible;
       if (visible) shown += 1;
-    });
-    if (empty) empty.style.display = shown ? 'none' : 'block';
+    }
+    if (empty) empty.hidden = shown > 0;
   };
-  search?.addEventListener('input', apply);
-  store?.addEventListener('change', apply);
-  category?.addEventListener('change', apply);
+  const schedule = () => {
+    if (frame) cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(apply);
+  };
+  search?.addEventListener('input', schedule, { passive: true });
+  store?.addEventListener('change', schedule);
+  category?.addEventListener('change', schedule);
 });

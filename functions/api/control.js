@@ -18,8 +18,9 @@ import {
   requireSameOrigin,
 } from '../_lib/http.js';
 import {
+  adminGuide,
   importApprovedPosts,
-  listAdminGuides,
+  listAdminGuideSummaries,
   listCategories,
   saveCategory,
   saveGuideDraft,
@@ -138,7 +139,7 @@ async function dashboard(request, env, admin) {
     verifiedWhopSummary(request, env, admin),
     listSourceOptions(env),
     listCategories(env, { includeInactive: true }),
-    listAdminGuides(env),
+    listAdminGuideSummaries(env),
   ]);
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
   return json({
@@ -240,6 +241,17 @@ async function categorySave(request, env) {
   return json({ category: saved, categories: await listCategories(env, { includeInactive: true }) });
 }
 
+async function guideDetail(request, env) {
+  if (request.method !== 'GET') return methodNotAllowed(['GET']);
+  const id = Number.parseInt(new URL(request.url).searchParams.get('id') || '', 10);
+  if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
+  const guide = await adminGuide(env, id);
+  if (!guide || guide.status === 'rejected' || guide.integrity?.quarantined === true) {
+    throw new HttpError(404, 'Guide not found in the active review queue.');
+  }
+  return json({ guide });
+}
+
 async function guideSave(request, env) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
@@ -283,6 +295,7 @@ export async function onRequest(context) {
     if (currentAction === 'post-decision') return await postDecision(context.request, context.env);
     if (currentAction === 'import') return await importPosts(context.request, context.env, admin);
     if (currentAction === 'category-save') return await categorySave(context.request, context.env);
+    if (currentAction === 'guide-detail') return await guideDetail(context.request, context.env);
     if (currentAction === 'guide-save') return await guideSave(context.request, context.env);
     if (currentAction === 'guide-status') return await guideStatus(context.request, context.env);
     if (currentAction === 'posts') {

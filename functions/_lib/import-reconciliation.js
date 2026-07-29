@@ -3,11 +3,43 @@ import { requireDatabase } from './http.js';
 
 const MAX_GUIDES = 4000;
 const UPDATE_BATCH_SIZE = 75;
-const RECONCILE_THROTTLE_MS = 30_000;
+const RECONCILE_THROTTLE_MS = 15 * 60_000;
+const MAINTENANCE_KEY = 'imported-guide-reconciliation-v4';
 
 let lastRunAt = 0;
 let lastResult = null;
 let inFlight = null;
+
+async function ensureMaintenanceTable(db) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS importer_maintenance (
+      maintenance_key TEXT PRIMARY KEY,
+      completed_at TEXT NOT NULL,
+      result_json TEXT NOT NULL
+    )
+  `).run();
+}
+
+async function savedMaintenance(db) {
+  await ensureMaintenanceTable(db);
+  const row = await db.prepare('SELECT completed_at, result_json FROM importer_maintenance WHERE maintenance_key = ?')
+    .bind(MAINTENANCE_KEY).first();
+  if (!row) return null;
+  const completedAt = Date.parse(row.completed_at || '');
+  if (!Number.isFinite(completedAt)) return null;
+  return { completedAt, result: safeJson(row.result_json, null) };
+}
+
+async function saveMaintenance(db, result) {
+  const completedAt = new Date().toISOString();
+  await db.prepare(`
+    INSERT INTO importer_maintenance (maintenance_key, completed_at, result_json)
+    VALUES (?, ?, ?)
+    ON CONFLICT(maintenance_key) DO UPDATE SET
+      completed_at = excluded.completed_at,
+      result_json = excluded.result_json
+  `).bind(MAINTENANCE_KEY, completedAt, JSON.stringify(result)).run();
+}
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
@@ -104,7 +136,7 @@ async function reconcile(env) {
       quarantined: true,
       quarantineReason: reason,
       quarantinedAt: now,
-      cleanupVersion: 3,
+      cleanupVersion: 4,
     }), row.id));
     if (row.source_key) {
       statements.push(db.prepare(`
@@ -131,10 +163,20 @@ export async function reconcileImportedGuides(env, { force = false } = {}) {
   const now = Date.now();
   if (!force && lastResult && now - lastRunAt < RECONCILE_THROTTLE_MS) return lastResult;
   if (inFlight) return inFlight;
+  const db = requireDatabase(env);
+  if (!force) {
+    const saved = await savedMaintenance(db).catch(() => null);
+    if (saved?.result && now - saved.completedAt < RECONCILE_THROTTLE_MS) {
+      lastRunAt = saved.completedAt;
+      lastResult = saved.result;
+      return saved.result;
+    }
+  }
   inFlight = reconcile(env)
-    .then((result) => {
+    .then(async (result) => {
       lastRunAt = Date.now();
       lastResult = result;
+      await saveMaintenance(db, result);
       return result;
     })
     .catch((error) => {

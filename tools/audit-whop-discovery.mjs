@@ -9,8 +9,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 const discovery = read('functions/_lib/discovery.js');
 const endpoint = read('functions/api/discover.js');
 const page = read('control-center/index.html');
-const client = read('assets/js/control-center.js');
-const hardening = read('assets/js/control-center-hardening.js');
+const client = read('assets/js/control-center-v2.js');
 const styles = read('assets/css/whop-discovery.css');
 
 assert.ok(discovery.includes("'memberships'"), 'Membership discovery endpoint is missing.');
@@ -43,11 +42,12 @@ assert.ok(page.includes('data-discovered-groups'), 'Active source browser is mis
 assert.ok(page.includes('data-approve-selected') && page.includes('data-disapprove-selected'), 'Source bulk controls are missing.');
 assert.ok(page.includes('Advanced fallback'), 'Manual experience-ID input is not contained as an advanced fallback.');
 assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types are not explained in the UI.');
-assert.ok(client.includes("fetch('/api/discover'"), 'Browser does not call automatic discovery.');
+assert.ok(client.includes("requestJson('/api/discover'"), 'Browser does not call automatic discovery.');
 assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
 assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');
-assert.ok(hardening.includes('External app content') && hardening.includes('Your membership access is valid'), 'External app modules are not explained clearly.');
-assert.ok(hardening.includes('It is not a missing Whop permission'), 'External app modules can still look like missing Whop access.');
+assert.ok(client.includes('External app content') && client.includes('Your membership access is valid'), 'External app modules are not explained clearly.');
+assert.ok(client.includes('not a missing Whop permission'), 'External app modules can still look like missing Whop access.');
+assert.ok(client.includes('groupSelectionCount') && client.includes('updateGroupSelectionCards'), 'Select group has no immediate local confirmation.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 
 for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed']) {

@@ -1,4 +1,6 @@
 export {
+  adminGuide,
+  listAdminGuideSummaries,
   listAdminGuides,
   listCategories,
   saveCategory,

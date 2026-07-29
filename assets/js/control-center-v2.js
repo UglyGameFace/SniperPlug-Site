@@ -7,6 +7,7 @@
   const idle = window.requestIdleCallback
     ? (callback) => window.requestIdleCallback(callback, { timeout: 120 })
     : (callback) => setTimeout(() => callback({ timeRemaining: () => 8, didTimeout: true }), 0);
+  const GUIDE_PAGE_SIZE = 60;
 
   const elements = {
     loginPanel: $('[data-login-panel]'),
@@ -103,10 +104,10 @@
     publishGuide: $('[data-publish-guide]'),
     rejectGuide: $('[data-reject-guide]'),
     returnDraft: $('[data-return-draft]'),
-    preview: $('[data-post-preview]'),
-    previewTitle: $('[data-preview-title]'),
-    previewMeta: $('[data-preview-meta]'),
-    previewBody: $('[data-preview-body]'),
+    preview: $('[data-post-preview]', document),
+    previewTitle: $('[data-preview-title]', document),
+    previewMeta: $('[data-preview-meta]', document),
+    previewBody: $('[data-preview-body]', document),
     mediaReadiness: $('[data-media-readiness]'),
   };
 
@@ -122,7 +123,10 @@
     postOrder: [],
     postRenderToken: 0,
     guides: new Map(),
+    guideDetails: new Map(),
     guideOrder: [],
+    guideRenderLimit: GUIDE_PAGE_SIZE,
+    guideRequestToken: 0,
     selectedGuideId: null,
     categoryTarget: 'import',
     bulkJob: null,
@@ -347,6 +351,25 @@
     fillCategorySelect(elements.draftEditor?.elements?.category, false);
   }
 
+  function updateGroupSelectionCards() {
+    for (const group of state.discovery?.groups || []) {
+      const card = elements.discoveredGroups.querySelector(`[data-group-key="${CSS.escape(groupKey(group))}"]`);
+      if (!card) continue;
+      const ids = (group.sources || []).map(sourceId).filter(Boolean);
+      const selected = ids.filter((id) => state.selectedSources.has(id)).length;
+      card.dataset.selection = selected === 0 ? 'none' : selected === ids.length ? 'all' : 'partial';
+      const count = $('[data-group-selection-count]', card);
+      const select = $('[data-action="group-select"]', card);
+      const clear = $('[data-action="group-clear"]', card);
+      if (count) count.textContent = `${selected}/${ids.length} selected`;
+      if (select) {
+        select.textContent = selected === ids.length && ids.length ? 'Group selected' : selected ? `Select remaining ${ids.length - selected}` : 'Select group';
+        select.disabled = !ids.length || selected === ids.length;
+      }
+      if (clear) clear.disabled = selected === 0;
+    }
+  }
+
   function syncSourceSelection() {
     const count = state.selectedSources.size;
     elements.selectedSourceCount.textContent = `${count} selected`;
@@ -362,6 +385,8 @@
     elements.bulkWorkflowSummary.textContent = count
       ? `${count} source${count === 1 ? '' : 's'} selected · open to publish`
       : 'Open when ready to import and publish';
+    if (elements.bulkWorkflow) elements.bulkWorkflow.dataset.hasSelection = String(count > 0);
+    updateGroupSelectionCards();
     syncBulkButtons();
   }
 
@@ -515,7 +540,12 @@
     title.textContent = group.company?.title || 'Whop group';
     const meta = document.createElement('p');
     meta.textContent = `${(group.sources || []).length} readable source${group.sources?.length === 1 ? '' : 's'} · ${(group.company?.products || []).length} membership product${group.company?.products?.length === 1 ? '' : 's'}`;
-    copy.append(eyebrow, title, meta);
+    const selectedCount = document.createElement('strong');
+    selectedCount.className = 'group-selection-count';
+    selectedCount.dataset.groupSelectionCount = 'true';
+    selectedCount.setAttribute('aria-live', 'polite');
+    selectedCount.textContent = `0/${(group.sources || []).length} selected`;
+    copy.append(eyebrow, title, meta, selectedCount);
 
     const actions = document.createElement('div');
     actions.className = 'button-row';
@@ -900,26 +930,45 @@
     button.className = `draft-item${guide.id === state.selectedGuideId ? ' active' : ''}`;
     button.dataset.action = 'guide-select';
     button.dataset.guideId = String(guide.id);
-    button.dataset.filterText = `${guide.title} ${guide.categoryLabel || guide.category}`.toLocaleLowerCase('en-US');
-    button.dataset.filterStatus = guide.status;
     button.style.contentVisibility = 'auto';
     button.style.containIntrinsicSize = '1px 70px';
     const strong = document.createElement('strong');
     strong.textContent = guide.title;
     const small = document.createElement('small');
-    small.textContent = `${guide.status} · ${guide.categoryLabel}${guide.attachments?.reviewCount ? ` · ${guide.attachments.reviewCount} file review` : ''}${guide.integrity?.quarantined ? ' · quarantined' : ''}`;
+    small.textContent = `${guide.status} · ${guide.categoryLabel}${guide.attachments?.reviewCount ? ` · ${guide.attachments.reviewCount} file review` : ''}`;
     button.append(strong, small);
     return button;
   }
 
-  function renderGuides() {
+  function filteredGuideIds() {
+    const query = elements.draftSearch.value.trim().toLocaleLowerCase('en-US');
+    const status = elements.draftStatusFilter.value;
+    return state.guideOrder.filter((id) => {
+      const guide = state.guides.get(id);
+      if (!guide) return false;
+      const text = `${guide.title} ${guide.categoryLabel || guide.category}`.toLocaleLowerCase('en-US');
+      return (!query || text.includes(query)) && (status === 'all' || guide.status === status);
+    });
+  }
+
+  function renderGuides({ reset = false } = {}) {
+    if (reset) state.guideRenderLimit = GUIDE_PAGE_SIZE;
+    const matching = filteredGuideIds();
+    const visible = matching.slice(0, state.guideRenderLimit);
     const fragment = document.createDocumentFragment();
-    for (const id of state.guideOrder) {
+    for (const id of visible) {
       const guide = state.guides.get(id);
       if (guide) fragment.append(guideListItem(guide));
     }
+    if (visible.length < matching.length) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'btn ghost draft-load-more';
+      more.dataset.action = 'guide-load-more';
+      more.textContent = `Load ${Math.min(GUIDE_PAGE_SIZE, matching.length - visible.length)} more · ${matching.length - visible.length} remaining`;
+      fragment.append(more);
+    }
     elements.draftList.replaceChildren(fragment);
-    filterGuides();
     if (state.selectedGuideId && !state.guides.has(state.selectedGuideId)) state.selectedGuideId = null;
     if (!state.selectedGuideId) {
       elements.draftEmpty.hidden = false;
@@ -928,21 +977,21 @@
   }
 
   function updateGuideListItem(guide) {
-    const current = elements.draftList.querySelector(`[data-guide-id="${guide.id}"]`);
-    const next = guideListItem(guide);
-    if (current) current.replaceWith(next);
-    else elements.draftList.prepend(next);
-    filterGuides();
+    state.guides.set(Number(guide.id), { ...(state.guides.get(Number(guide.id)) || {}), ...guide });
+    state.guideDetails.set(Number(guide.id), guide);
+    renderGuides();
   }
 
-  function selectGuide(id) {
-    const guide = state.guides.get(Number(id));
-    if (!guide) return;
+  function renderGuideEditor(guide, mode = 'select') {
+    if (!guide?.body && guide?.body !== '') return;
     const previous = elements.draftList.querySelector('.draft-item.active');
     if (previous) previous.classList.remove('active');
     const current = elements.draftList.querySelector(`[data-guide-id="${guide.id}"]`);
-    if (current) current.classList.add('active');
-    state.selectedGuideId = guide.id;
+    if (current) {
+      current.classList.add('active');
+      current.removeAttribute('aria-busy');
+    }
+    state.selectedGuideId = Number(guide.id);
     elements.draftEmpty.hidden = true;
     elements.draftEditor.hidden = false;
     const fields = elements.draftEditor.elements;
@@ -963,25 +1012,63 @@
     elements.publishGuide.disabled = guide.status === 'published' || reviewCount > 0;
     elements.rejectGuide.disabled = guide.status === 'rejected';
     elements.returnDraft.disabled = guide.status === 'draft';
+    root.dispatchEvent(new CustomEvent('sniperplug:guide-loaded', { detail: { id: guide.id, mode } }));
+  }
+
+  async function selectGuide(id) {
+    const requestToken = ++state.guideRequestToken;
+    const numericId = Number(id);
+    const summary = state.guides.get(numericId);
+    if (!summary) return;
+    state.selectedGuideId = numericId;
+    const previous = elements.draftList.querySelector('.draft-item.active');
+    if (previous) previous.classList.remove('active');
+    const current = elements.draftList.querySelector(`[data-guide-id="${numericId}"]`);
+    if (current) {
+      current.classList.add('active');
+      current.setAttribute('aria-busy', 'true');
+    }
+    elements.draftEmpty.hidden = false;
+    elements.draftEmpty.innerHTML = '<strong>Loading guide…</strong><p>Fetching the exact content only for this guide.</p>';
+    elements.draftEditor.hidden = true;
+    try {
+      let guide = state.guideDetails.get(numericId);
+      if (!guide || guide.updatedAt !== summary.updatedAt) {
+        const output = await requestJson(`/api/control?action=guide-detail&id=${encodeURIComponent(numericId)}`, { method: 'GET' });
+        guide = output.guide;
+        state.guideDetails.set(numericId, guide);
+        state.guides.set(numericId, { ...summary, ...guide });
+      }
+      if (requestToken !== state.guideRequestToken || state.selectedGuideId !== numericId) return;
+      renderGuideEditor(guide, 'select');
+    } catch (error) {
+      if (requestToken !== state.guideRequestToken) return;
+      if (current) current.removeAttribute('aria-busy');
+      elements.draftEmpty.hidden = false;
+      elements.draftEmpty.innerHTML = '<strong>Guide could not load</strong><p>Try again. The rest of the queue remains usable.</p>';
+      showStatus(error.message, 'error');
+    }
   }
 
   function filterGuides() {
-    const query = elements.draftSearch.value.trim().toLocaleLowerCase('en-US');
-    const status = elements.draftStatusFilter.value;
-    for (const item of $$('.draft-item', elements.draftList)) {
-      item.hidden = Boolean(query && !item.dataset.filterText.includes(query)) || (status !== 'all' && item.dataset.filterStatus !== status);
-    }
+    renderGuides({ reset: true });
   }
 
   function ingestDashboard(data) {
     state.dashboard = data;
-    state.guides = new Map((data.guides || []).map((guide) => [Number(guide.id), guide]));
-    state.guideOrder = (data.guides || []).map((guide) => Number(guide.id));
+    const summaries = data.guides || [];
+    state.guides = new Map(summaries.map((summary) => {
+      const cached = state.guideDetails.get(Number(summary.id));
+      const guide = cached?.updatedAt === summary.updatedAt ? { ...summary, ...cached } : summary;
+      if (cached && cached.updatedAt !== summary.updatedAt) state.guideDetails.delete(Number(summary.id));
+      return [Number(summary.id), guide];
+    }));
+    state.guideOrder = summaries.map((guide) => Number(guide.id));
     unlock();
     renderWhop();
     renderSourceSummary();
     renderCategories();
-    renderGuides();
+    renderGuides({ reset: true });
     root.dispatchEvent(new CustomEvent('sniperplug:dashboard-refreshed'));
   }
 
@@ -1316,9 +1403,8 @@
             attachmentsResolved: data.get('attachmentsResolved') === 'on',
           }),
         });
-        state.guides.set(Number(output.guide.id), output.guide);
         updateGuideListItem(output.guide);
-        selectGuide(output.guide.id);
+        renderGuideEditor(output.guide, 'saved');
         showStatus('Draft saved with exact formatting validation.');
       }).catch((error) => showStatus(error.message, 'error'));
     }
@@ -1358,6 +1444,13 @@
       cancelAnimationFrame(draftFrame);
       draftFrame = requestAnimationFrame(() => { elements.markdownPreview.textContent = target.value; });
     }
+  }, { passive: true });
+
+  root.addEventListener('pointerdown', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('button,.btn,[data-action]') : null;
+    if (!target || target.hasAttribute('disabled')) return;
+    target.dataset.pressed = 'true';
+    requestAnimationFrame(() => requestAnimationFrame(() => { delete target.dataset.pressed; }));
   }, { passive: true });
 
   root.addEventListener('click', async (event) => {
@@ -1471,6 +1564,11 @@
     if (button?.matches('[data-open-inline-category]')) return openInlineCategory(button.dataset.categoryTarget);
     if (button === elements.cancelInlineCategory) return closeInlineCategory();
     if (action === 'guide-select') return selectGuide(Number(button.dataset.guideId));
+    if (action === 'guide-load-more') {
+      state.guideRenderLimit += GUIDE_PAGE_SIZE;
+      renderGuides();
+      return;
+    }
     if (button === elements.refresh) {
       await withButton(button, 'Refreshing…', async () => {
         await loadDashboard({ discovery: false });
@@ -1483,9 +1581,20 @@
       const id = Number(elements.draftEditor.elements.id.value);
       await withButton(button, status === 'published' ? 'Publishing…' : 'Updating…', async () => {
         const output = await api('guide-status', { method: 'POST', body: JSON.stringify({ id, status }) });
-        state.guides.set(Number(output.guide.id), output.guide);
-        updateGuideListItem(output.guide);
-        selectGuide(output.guide.id);
+        if (status === 'rejected') {
+          state.guides.delete(Number(output.guide.id));
+          state.guideDetails.delete(Number(output.guide.id));
+          state.guideOrder = state.guideOrder.filter((guideId) => guideId !== Number(output.guide.id));
+          state.selectedGuideId = null;
+          elements.draftEditor.hidden = true;
+          elements.draftEmpty.hidden = false;
+          elements.draftEmpty.innerHTML = '<strong>Guide rejected</strong><p>It is private and removed from the normal review queue.</p>';
+          renderGuides();
+          root.dispatchEvent(new CustomEvent('sniperplug:guide-loaded', { detail: { id: output.guide.id, mode: 'status' } }));
+        } else {
+          updateGuideListItem(output.guide);
+          renderGuideEditor(output.guide, 'status');
+        }
         showStatus(status === 'published' ? 'Guide published.' : status === 'rejected' ? 'Guide rejected and kept private.' : 'Guide returned to draft.');
       }).catch((error) => showStatus(error.message, 'error'));
       return;

@@ -157,6 +157,59 @@ function normalizeGuideRow(row) {
   };
 }
 
+function normalizeGuideSummaryRow(row) {
+  const attachments = safeJson(row.attachment_json || '{}', {});
+  const integrity = safeJson(row.integrity_json || '{}', {});
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    description: row.description,
+    category: row.category_slug,
+    categoryLabel: row.category_label || row.category_slug,
+    status: row.status,
+    featured: Boolean(row.featured),
+    sortOrder: row.sort_order,
+    sourceKey: row.source_key,
+    attachments: { reviewCount: Number(attachments.reviewCount || 0) },
+    integrity: {
+      quarantined: integrity.quarantined === true,
+      manualReviewCompleted: integrity.manualReviewCompleted === true,
+      publishHoldReason: integrity.publishHoldReason || null,
+    },
+    importedAt: row.imported_at,
+    updatedAt: row.updated_at,
+    publishedAt: row.published_at,
+  };
+}
+
+export async function listAdminGuideSummaries(env) {
+  await ensureCategoryCatalog(env);
+  const db = requireDatabase(env);
+  const rows = await db.prepare(`
+    SELECT guides.id, guides.slug, guides.title, guides.description,
+           guides.category_slug, guide_categories.label AS category_label,
+           guides.status, guides.featured, guides.sort_order, guides.source_key,
+           guides.attachment_json, guides.integrity_json,
+           guides.imported_at, guides.updated_at, guides.published_at
+    FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
+    ORDER BY CASE guides.status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END,
+             guides.updated_at DESC
+  `).all();
+  return (rows.results || []).map(normalizeGuideSummaryRow);
+}
+
+export async function adminGuide(env, id) {
+  await ensureCategoryCatalog(env);
+  const db = requireDatabase(env);
+  const row = await db.prepare(`
+    SELECT guides.*, guide_categories.label AS category_label
+    FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
+    WHERE guides.id = ?
+  `).bind(id).first();
+  return row ? normalizeGuideRow(row) : null;
+}
+
 export async function listAdminGuides(env) {
   await ensureCategoryCatalog(env);
   const db = requireDatabase(env);

@@ -45,8 +45,13 @@ export async function onRequest(context) {
   if (url.protocol === 'https:') {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
+  const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
   if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/')) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
+  } else if (controlAsset && url.searchParams.has('v')) {
+    response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+  } else if (controlAsset) {
+    response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
   if (pathname.startsWith('/control-center/')) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');

@@ -2,7 +2,6 @@
   const root = document.querySelector('[data-control-root]');
   const editor = document.querySelector('[data-draft-editor]');
   const status = document.querySelector('[data-editor-status]');
-  const globalStatus = document.querySelector('[data-global-status]');
   const mediaReadiness = document.querySelector('[data-media-readiness]');
   if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(status instanceof HTMLElement)) return;
 
@@ -54,6 +53,27 @@
     else if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement || field instanceof HTMLSelectElement) field.value = String(value ?? '');
   }
 
+  function clearRecovery(id = currentId) {
+    try { if (id) localStorage.removeItem(backupKey(id)); } catch { /* browser storage may be unavailable */ }
+  }
+
+  function syncLockState() {
+    const current = status.textContent.trim().toLowerCase();
+    const editable = current === 'draft';
+    for (const name of editableNames) {
+      const field = editor.elements.namedItem(name);
+      if (field instanceof HTMLElement) field.toggleAttribute('disabled', !editable);
+    }
+    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !editable;
+    if (dirty) return;
+    message.hidden = editable || editor.hidden;
+    message.textContent = current === 'published'
+      ? 'This guide is live. Press Return to draft before changing its content.'
+      : current === 'rejected'
+        ? 'This guide is rejected and private. Press Return to draft before editing it.'
+        : '';
+  }
+
   function renderDirtyState() {
     editor.dataset.dirty = dirty ? 'true' : 'false';
     if (dirty) {
@@ -83,10 +103,6 @@
     saveRecoveryCopy();
   }
 
-  function clearRecovery(id = currentId) {
-    try { if (id) localStorage.removeItem(backupKey(id)); } catch { /* ignore */ }
-  }
-
   function markClean({ clearBackup = true } = {}) {
     currentId = String(editor.elements.namedItem('id')?.value || '');
     cleanSnapshot = snapshot();
@@ -103,8 +119,7 @@
     const base = snapshot();
     const recovered = backup?.values ? JSON.stringify(backup.values) : '';
     if (!recovered || recovered === base) return markClean();
-    const restore = window.confirm(`A locally recovered unsaved version of this guide exists from ${backup.savedAt ? new Date(backup.savedAt).toLocaleString() : 'an earlier session'}. Restore it?`);
-    if (!restore) {
+    if (!window.confirm(`A locally recovered unsaved version of this guide exists from ${backup.savedAt ? new Date(backup.savedAt).toLocaleString() : 'an earlier session'}. Restore it?`)) {
       clearRecovery();
       return markClean();
     }
@@ -117,33 +132,8 @@
     renderDirtyState();
   }
 
-  function scheduleLoadedDraft() {
-    loading = true;
-    setTimeout(() => {
-      loading = false;
-      restoreRecoveryIfAvailable();
-    }, 0);
-  }
-
   function confirmDiscard() {
     return !dirty || window.confirm('This guide has unsaved changes. Continue without saving? A local recovery copy will remain available.');
-  }
-
-  function syncLockState() {
-    const current = status.textContent.trim().toLowerCase();
-    const editable = current === 'draft';
-    for (const name of editableNames) {
-      const field = editor.elements.namedItem(name);
-      if (field instanceof HTMLElement) field.toggleAttribute('disabled', !editable);
-    }
-    if (saveButton instanceof HTMLButtonElement) saveButton.disabled = !editable;
-    if (dirty) return;
-    message.hidden = editable || editor.hidden;
-    message.textContent = current === 'published'
-      ? 'This guide is live. Press Return to draft before changing its content.'
-      : current === 'rejected'
-        ? 'This guide is rejected and private. Press Return to draft before editing it.'
-        : '';
   }
 
   editor.addEventListener('input', updateDirty);
@@ -162,9 +152,7 @@
     if ((risky || (navigation && !navigation.closest('[data-open-public]'))) && !confirmDiscard()) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      return;
     }
-    if (target.closest('.draft-item')) scheduleLoadedDraft();
   }, true);
 
   window.addEventListener('beforeunload', (event) => {
@@ -173,26 +161,20 @@
     event.returnValue = '';
   });
 
-  new MutationObserver(() => {
+  root.addEventListener('sniperplug:guide-loaded', (event) => {
+    loading = true;
     syncLockState();
-    if (!editor.hidden && String(editor.elements.namedItem('id')?.value || '') !== currentId) scheduleLoadedDraft();
-  }).observe(status, { childList: true, subtree: true });
-  new MutationObserver(() => {
-    syncLockState();
-    if (!editor.hidden) scheduleLoadedDraft();
-  }).observe(editor, { attributes: true, attributeFilter: ['hidden'] });
-  if (globalStatus) {
-    new MutationObserver(() => {
-      const text = globalStatus.textContent.trim().toLowerCase();
-      if (text.startsWith('draft saved')) markClean();
-      else if (text === 'guide published.' || text.startsWith('guide rejected') || text.startsWith('guide returned')) {
+    const mode = event.detail?.mode || 'select';
+    queueMicrotask(() => {
+      loading = false;
+      if (mode === 'saved') markClean();
+      else if (mode === 'status') {
         dirty = false;
         clearRecovery();
-        scheduleLoadedDraft();
-      }
-    }).observe(globalStatus, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
-  }
-
+        markClean({ clearBackup: false });
+      } else restoreRecoveryIfAvailable();
+    });
+  });
   root.addEventListener('sniperplug:dashboard-refreshed', softenMediaNotice);
   setTimeout(softenMediaNotice, 0);
   window.SniperPlugDraftSafety = { confirmDiscard, isDirty: () => dirty, markClean };

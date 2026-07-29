@@ -111,3 +111,18 @@
     width:65%;
   }
 }
+
+.draft-load-more{
+  width:100%;
+  min-height:48px;
+  position:sticky;
+  bottom:0;
+  z-index:2;
+  border-color:rgba(53,194,255,.28)!important;
+  background:rgba(9,15,25,.96)!important;
+  backdrop-filter:blur(10px);
+}
+.draft-item[aria-busy="true"]{
+  border-color:var(--brand2);
+  opacity:.78;
+}

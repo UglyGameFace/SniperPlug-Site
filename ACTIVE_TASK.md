@@ -1,66 +1,66 @@
 # Active Task
 
 ## Task
-Repair the live Cloudflare Pages Whop importer and publishing workflow so SniperPlug imports real top-level guide content instead of user replies, chat chatter, raw links, product-card noise, duplicate posts, stale picks, and incorrectly categorized material. Restore visible publishing progress and replace the unbounded review wall with a usable queue.
+Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls feel responsive, the review queue does not freeze the browser, stale client code cannot survive deployment, and the existing guide-quality/publishing safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`. The implementation at `e69b67e206e63c2da6a04671d3599bad8d69b71e` passed the complete Node 22 build and regression suite and deployed successfully to the Cloudflare Pages branch preview. The PR remains a draft. Authenticated acceptance against the connected Whop account and private D1 data is the only remaining completion gate.
+Active on `agent/whop-guide-importer`. Root-cause fixes, cleanup, targeted browser interaction checks, and the complete local regression suite pass. GitHub Actions, Cloudflare Pages deployment, conflict inspection, and authenticated acceptance against the connected Whop account/private D1 remain before merge or completion.
 
 ## Scope
-- Keep Whop OAuth, exact source approval, republication-rights confirmation, and private D1 storage intact.
-- Read official Whop Forums, Courses, and Chat APIs without trusting browser-submitted source bodies.
-- Import top-level durable guide content only; replies remain attached to their original Whop discussion.
-- Keep Chat available for explicit manual review but never automatically publish it as standalone guides.
-- Block raw URLs, identifiers, punctuation-only items, empty posts, expired picks, promotional chatter, placeholders, and weak unstructured forum content.
-- Re-fetch every approved item immediately before import and re-run the quality policy on the exact content.
-- Preserve authorized pictures, video, audio, PDFs, files, links, formatting, Unicode, and emoji through the existing media and integrity paths.
-- Auto-fit categories without allowing ordinary words such as “online” or “line of credit” to become Sports Betting.
-- Reconcile old imported drafts and published records across the full active queue, not only recent bulk-job output.
-- Quarantine invalid and duplicate imports, remove them from normal review, and unpublish unsafe existing records.
-- Keep owner-corrected drafts publishable after an explicit manual save.
-- Show visible working, success, warning, and error states for “Audit & publish ready drafts.”
-- Keep the normal review queue bounded, scrollable, one-column, and responsive on phone, tablet, and desktop.
-- Maintain permanent regression tests and Cloudflare Pages validation.
+- Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, content quality checks, media preservation, safe publishing, and 48-hour undo.
+- Make **Select group**, **Clear group**, source decisions, guide selection, search, filtering, publishing, and navigation acknowledge input immediately.
+- Keep source selection local and obvious on the exact group card that was tapped.
+- Prevent hundreds of full guide bodies and hundreds of DOM cards from loading during the initial dashboard request.
+- Keep exact guide content private and fetch it only when that guide is opened.
+- Prevent expensive imported-guide reconciliation from rerunning on every Cloudflare Worker cold start.
+- Eliminate stale Control Center JavaScript/CSS after deployments.
+- Remove obsolete scripts and observers rather than stacking another performance patch over them.
+- Validate phone, tablet, desktop, syntax, media, discovery, publishing, recovery, responsive flow, and public-page filtering.
 
 ## Findings
-- Current Whop scans already filtered newly fetched forum replies and Chat replies, but old imported records remained in D1 and continued appearing in the dashboard and public guide index.
-- The previous cleanup only inspected guide IDs from bulk jobs created within the last 72 hours, leaving older bad drafts and published junk untouched.
-- The previous forum policy automatically accepted any post over 420 characters, even when it was a product listing, community comment, promotion, or other non-guide content.
-- Legacy records could lack an explicit source type, so cleanup now derives Forum, Course, or Chat from the saved source key when necessary.
-- The Sports Betting category expression contained `line\b`, which matched the end of “online” and forced unrelated product posts into Sports Betting.
-- The resumable bulk workflow had a detailed progress bar, but the separate “Publish all ready drafts” path only changed a line of text and had no persistent visual evidence.
-- Responsive CSS removed the draft-list height limit and changed it to two columns below 900px, creating the giant wall shown in the screenshots.
-- `functions/_lib/guides.js` still contained a redundant older importer implementation even though the real runtime uses `guides-import.js` and `guides-media.js`.
+- The active runtime queried the post-preview modal through the Control Center root even though the modal is outside that root. `elements.preview` was therefore `null`, causing a JavaScript exception before `initialize()` ran. A cached older script could make the page appear partly usable while current controls silently had no working runtime.
+- **Select group** changed only an off-screen global count. The tapped group card and button did not show local selected/total feedback, so a successful synchronous action looked dead.
+- The dashboard returned `body_markdown`, author data, and full metadata for every guide, then synchronously created every guide card. Hundreds of imported records blocked the main thread and delayed taps.
+- Guide filtering repeatedly walked every rendered card. The normal queue had no client-side page boundary.
+- Imported-guide reconciliation was throttled only in one Worker process for 30 seconds. Cold starts could repeatedly scan up to 4,000 full guide bodies before the dashboard responded.
+- Control Center assets were unversioned and did not receive an explicit stale-asset policy, allowing Samsung Browser/Chrome to retain an obsolete runtime after deployment.
+- Draft safety used multiple `MutationObserver` instances and a click-timing recovery path even though the runtime already knows exactly when a guide loads or changes status.
+- Six obsolete Control Center runtimes remained in the repository after consolidation, and one regression audit still tested those dead files instead of the active runtime.
+- Public deal search recomputed every card’s complete text on each keystroke.
 
 ## Changes
-- Hardened content classification for forum replies, Chat, raw references, low-signal content, stale sports picks, chatter, placeholders, and unstructured product-style posts.
-- Replaced recent-only cleanup with unified reconciliation of active imported drafts and published guides, including exact duplicate handling and D1 decision synchronization.
-- Unified public detail-page cleanup with the same reconciliation used by the dashboard and public search.
-- Rebuilt category matching with explicit bounded phrases and added retail-shopping coverage.
-- Removed the obsolete duplicate importer from `guides.js`; active imports remain in `guides-import.js` and media preservation remains in `guides-media.js`.
-- Added a visible publish-ready progress track and direct public-guides verification link.
-- Defaulted Review & Publish to “Needs review,” removed the unusable rejected filter from the normal queue, and clarified what automatic quarantine removes.
-- Added a bounded, scrollable one-column draft queue at every viewport.
-- Expanded full importer and recovery audits to cover the reported regressions and the active runtime files.
+- Corrected all post-preview modal lookups to query `document`, preventing the runtime-ending null exception and allowing `initialize()` to execute reliably.
+- Added immediate pointer/touch acknowledgment and per-group `selected/total` state. **Select group** now changes locally to **Group selected**, highlights the group, updates its count, enables **Clear group**, and updates the global selection count in the same synchronous action.
+- Replaced dashboard full-guide loading with lightweight guide summaries. Added an authenticated `guide-detail` read that fetches the exact body only when one guide is opened.
+- Limited the normal review queue to 60 cards at a time with explicit **Load more** paging, in-memory filtering, lazy detail caching, and stale-request protection when users switch guides quickly.
+- Added durable D1-backed reconciliation maintenance state with a 15-minute cross-cold-start throttle while preserving force-run and failure-safe behavior.
+- Removed broad lifecycle observers and replaced them with explicit `sniperplug:guide-loaded` events while retaining unsaved-change warnings and local recovery copies.
+- Versioned every Control Center JavaScript/CSS request and added immutable caching only for versioned assets; unversioned control assets must revalidate.
+- Indexed public deal-card search text once and coalesced filtering into animation frames.
+- Deleted obsolete `control-center.js`, `control-center-hardening.js`, `control-center-performance.js`, `control-center-density.js`, `bulk-publish.js`, and `media-readiness.js` runtimes.
+- Updated regression audits to inspect the active runtime, local group feedback, lazy guide detail, bounded review rendering, persistent maintenance throttling, modal query scope, versioned assets, observer removal, and optimized public filtering.
 
 ## Validation
-- Passed: `npm run build` under Node 22 in the permanent **Verify SniperPlug** workflow.
-- Passed: JavaScript syntax validation for all Functions, browser scripts, and audit files.
-- Passed: importer quality, category regression, full D1 reconciliation, duplicate cleanup, publishing-progress, responsive layout, media preservation, authentication, discovery, bulk-job recovery, undo history, and public-guide isolation audits.
-- Passed: Cloudflare Pages deployed implementation commit `e69b67e206e63c2da6a04671d3599bad8d69b71e` successfully to the branch preview.
-- Passed: PR conflict inspection reports the draft PR is mergeable against `main`.
-- Pending: authenticated preview acceptance against the connected Whop account and live D1 data.
+- Passed: full `npm run build` under Node 22 locally.
+- Passed: JavaScript syntax validation across Functions, browser scripts, and audit scripts.
+- Passed: official Whop content paths, authoritative re-fetching, quality classification, categories, formatting, safe links, media preservation, auth, active membership discovery, bulk publishing, recovery, undo, public-guide isolation, and responsive normal-flow audits.
+- Passed: targeted headless Chromium interaction test with 500 guide summaries on a 412×915 mobile viewport. Only 60 guide cards rendered initially; **Select group** updated `0/19` to `19/19`, changed the button to **Group selected**, updated the global total, and loaded exact guide content on demand without a page error.
+- Passed: three repeated Chromium interaction runs; measured click completion was approximately 111–170 ms in the headless test harness, including Playwright actionability overhead.
+- Passed: dead-runtime reference scan; active HTML loads only `control-center-v2.js` and `control-center-lifecycle.js`.
+- Pending: GitHub Actions on the final branch commit.
+- Pending: Cloudflare Pages deployment of that exact commit.
+- Pending: PR mergeability/conflict recheck.
+- Pending: authenticated live check with the user’s connected Whop account and private D1 data.
 
 ## Cleanup
-- Removed the redundant importer implementation from `functions/_lib/guides.js` instead of layering another policy patch over both import paths.
-- Kept the compatibility reconciliation export so existing callers use the stronger cleanup without duplicate code.
-- Confirmed the obsolete `quarantineUnsafePublishedGuides` reference is absent.
-- Confirmed active import callers use `guides-import.js` and `guides-media.js`; the complete regression suite validates every JavaScript module and caller path.
-- Kept quarantined records private and reversible rather than deleting source material.
-- No temporary browser script, mock publishing state, or public plaintext content was added.
+- One active Control Center interaction runtime remains.
+- Draft safety remains separate but event-driven and observer-free.
+- The temporary source-artifact workflow step used for repository inspection was removed.
+- No mock data, browser test fixture, imported content, token, or secret is being committed.
+- Quarantined guide content remains private and reversible rather than being deleted.
 
 ## Blockers
-- The authenticated Control Center and private D1 contents cannot be acceptance-tested through GitHub alone. The final pass must confirm that refreshing the connected Control Center removes the old junk from normal review and public results, that the publish audit displays visible progress and counts, and that a known valid guide appears on `/guides/` after publishing.
+- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center or inspect private D1 rows. After final deployment, live acceptance must confirm group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
 
 ## Backlog
-- None. Do not switch tasks until authenticated acceptance is complete.
+- None. Do not switch tasks until final CI, deployment, conflict inspection, authenticated acceptance, and cleanup inspection pass.
