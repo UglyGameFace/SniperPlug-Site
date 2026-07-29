@@ -1,4 +1,11 @@
 (() => {
+  if (!document.querySelector('script[src="/assets/js/control-center-performance.js"]')) {
+    const runtime = document.createElement('script');
+    runtime.src = '/assets/js/control-center-performance.js';
+    runtime.defer = true;
+    document.head.append(runtime);
+  }
+
   const root = document.querySelector('[data-control-root]');
   if (!root) return;
 
@@ -11,7 +18,15 @@
   const draftList = root.querySelector('[data-draft-list]');
   const draftSearch = root.querySelector('[data-draft-search]');
   const draftStatus = root.querySelector('[data-draft-status-filter]');
+  const discoveryMessage = root.querySelector('[data-discovery-message]');
   if (!groupsRoot || !sourceTools || !sourceSearch || !sourceFilter || !draftList || !draftSearch || !draftStatus) return;
+
+  if (![...sourceFilter.options].some((option) => option.value === 'external')) {
+    const option = document.createElement('option');
+    option.value = 'external';
+    option.textContent = 'External app modules';
+    sourceFilter.append(option);
+  }
 
   let groupRecords = [];
   let sourceFilterFrame = 0;
@@ -51,6 +66,38 @@
     return group.dataset.defaultGroup !== 'true';
   }
 
+  function explainExternalApps(group) {
+    const wrapper = group.querySelector('.unsupported-sources');
+    if (!wrapper || wrapper.dataset.explained === 'true') return;
+    wrapper.dataset.explained = 'true';
+    wrapper.classList.add('external-apps');
+    const existing = [...wrapper.querySelectorAll('p')];
+    wrapper.replaceChildren();
+
+    const heading = document.createElement('strong');
+    heading.textContent = 'External app content';
+    const intro = document.createElement('p');
+    intro.className = 'external-app-intro';
+    intro.textContent = 'Your membership access is valid. These modules open another service, so Whop does not provide their posts, files, pictures, or videos through the standard Whop content API.';
+    wrapper.append(heading, intro);
+
+    for (const paragraph of existing) {
+      const raw = paragraph.textContent.trim();
+      const [namePart, appPart = 'External app'] = raw.split(' · ');
+      const appName = appPart.split('.')[0].trim() || 'External app';
+      const card = document.createElement('article');
+      card.className = 'external-app-card';
+      const title = document.createElement('strong');
+      title.textContent = namePart || 'External module';
+      const label = document.createElement('span');
+      label.textContent = `${appName} · Separate connection required`;
+      const detail = document.createElement('p');
+      detail.textContent = `SniperPlug can detect this module, but automatic import requires a dedicated ${appName} API connection. It is not a missing Whop permission.`;
+      card.append(title, label, detail);
+      wrapper.append(card);
+    }
+  }
+
   function buildRecord(group) {
     const title = group.querySelector('h3')?.textContent?.trim() || '';
     const sources = [...group.querySelectorAll('.discovered-source')].map((source) => ({
@@ -74,6 +121,7 @@
     const groups = [...groupsRoot.querySelectorAll('.discovered-group')];
     sourceTools.hidden = groups.length === 0;
     for (const group of groups) {
+      explainExternalApps(group);
       if (group.dataset.hardened === 'true') continue;
       group.dataset.hardened = 'true';
       const actions = group.querySelector(':scope > header .button-row');
@@ -89,10 +137,12 @@
         toggle.setAttribute('aria-expanded', 'true');
         actions.append(toggle);
       }
-      group.dataset.collapsed = initialCollapsed(group) ? 'false' : 'true';
-      setCollapsed(group, initialCollapsed(group));
+      const collapsed = initialCollapsed(group);
+      group.dataset.collapsed = collapsed ? 'false' : 'true';
+      setCollapsed(group, collapsed);
     }
     groupRecords = groups.map(buildRecord);
+    if (discoveryMessage) discoveryMessage.textContent = discoveryMessage.textContent.replace(/unsupported app module/gi, 'external app module');
     filterSourcesNow();
   }
 
