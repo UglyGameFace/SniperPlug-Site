@@ -1,5 +1,5 @@
 import { handleError, html } from '../_lib/http.js';
-import { publicGuide } from '../_lib/guides.js';
+import { publicGuide } from '../_lib/guides-public.js';
 import { guideDetailTemplate, notFoundTemplate } from '../_lib/templates.js';
 
 export async function onRequestGet(context) {
