@@ -10,7 +10,8 @@ function escapeHtml(value) {
 
 function safeUrl(value, { image = false } = {}) {
   try {
-    const url = new URL(String(value || '').trim());
+    const raw = String(value || '').trim();
+    const url = new URL(/^www\./i.test(raw) ? `https://${raw}` : raw);
     if (url.protocol !== 'https:' && (!image && url.protocol !== 'http:')) return null;
     return url.toString();
   } catch {
@@ -18,20 +19,46 @@ function safeUrl(value, { image = false } = {}) {
   }
 }
 
+function splitTrailingPunctuation(value) {
+  let target = String(value || '');
+  let suffix = '';
+  while (/[.,!?;:]$/.test(target)) {
+    suffix = target.slice(-1) + suffix;
+    target = target.slice(0, -1);
+  }
+  while (target.endsWith(')') && (target.match(/\(/g)?.length || 0) < (target.match(/\)/g)?.length || 0)) {
+    suffix = ')' + suffix;
+    target = target.slice(0, -1);
+  }
+  return { target, suffix };
+}
+
 function inlineMarkdown(value) {
-  let output = escapeHtml(value);
-  const code = [];
-  output = output.replace(/`([^`\n]+)`/g, (_, content) => {
-    const index = code.push(`<code>${content}</code>`) - 1;
-    return `\u0001CODE${index}\u0001`;
-  });
-  output = output.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_, alt, target) => {
+  let source = String(value ?? '');
+  const tokens = [];
+  const stash = (html) => `\u0001TOKEN${tokens.push(html) - 1}\u0001`;
+
+  source = source.replace(/`([^`\n]+)`/g, (_, content) => stash(`<code>${escapeHtml(content)}</code>`));
+  source = source.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_, alt, target) => {
     const url = safeUrl(target, { image: true });
-    return url ? `<img src="${escapeHtml(url)}" alt="${alt}" loading="lazy" decoding="async">` : `![${alt}](${escapeHtml(target)})`;
+    return stash(url
+      ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">`
+      : `![${escapeHtml(alt)}](${escapeHtml(target)})`);
   });
-  output = output.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_, label, target) => {
+  source = source.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_, label, target) => {
     const url = safeUrl(target);
-    return url ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow">${label}</a>` : `${label} (${escapeHtml(target)})`;
+    return stash(url
+      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(label)}</a>`
+      : `${escapeHtml(label)} (${escapeHtml(target)})`);
+  });
+
+  let output = escapeHtml(source);
+  output = output.replace(/(^|[\s(>])((?:https?:\/\/|www\.)[^\s<]+)/gi, (_, prefix, rawTarget) => {
+    const { target, suffix } = splitTrailingPunctuation(rawTarget);
+    const url = safeUrl(target);
+    return url
+      ? `${prefix}<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow">${escapeHtml(target)}</a>${escapeHtml(suffix)}`
+      : `${prefix}${escapeHtml(rawTarget)}`;
   });
   output = output
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
@@ -39,7 +66,7 @@ function inlineMarkdown(value) {
     .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
     .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
     .replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
-  output = output.replace(/\u0001CODE(\d+)\u0001/g, (_, index) => code[Number(index)] || '');
+  output = output.replace(/\u0001TOKEN(\d+)\u0001/g, (_, index) => tokens[Number(index)] || '');
   return output;
 }
 
@@ -187,4 +214,4 @@ export function renderMarkdown(markdown) {
   return output.join('\n');
 }
 
-export { escapeHtml };
+export { escapeHtml, inlineMarkdown };
