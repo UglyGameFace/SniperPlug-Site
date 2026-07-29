@@ -9,12 +9,13 @@ import { HttpError, requireDatabase } from './http.js';
 
 const OAUTH_BASE = 'https://api.whop.com/oauth';
 const API_BASE = 'https://api.whop.com/api/v1';
-const DEFAULT_SCOPES = 'openid profile email forum:read';
+const DEFAULT_SCOPES = 'openid profile email forum:read courses:read chat:read member:basic:read member:email:read';
 const REQUEST_TIMEOUT_MS = 20_000;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
-const MAX_POSTS = 2000;
+const MAX_SOURCE_ITEMS = 2000;
+const ITEM_CONCURRENCY = 6;
 
 function config(request, env) {
   const clientId = String(env?.WHOP_CLIENT_ID || '').trim();
@@ -289,19 +290,39 @@ export async function retrieveExperience(session, value) {
   return whopApi(session, `experiences/${encodeURIComponent(id)}`);
 }
 
-export async function listForumPosts(session, experienceId) {
-  const posts = [];
+function normalizedAppName(experience) {
+  return String(experience?.app?.name || '').normalize('NFKC').trim().toLowerCase();
+}
+
+export function whopExperienceType(experience) {
+  const app = normalizedAppName(experience);
+  if (app.includes('forum')) return 'forum';
+  if (app.includes('course')) return 'course';
+  if (app === 'chat' || app.includes('chat')) return 'chat';
+  return 'unsupported';
+}
+
+export function requiredScopeForExperience(experience) {
+  const type = whopExperienceType(experience);
+  if (type === 'forum') return 'forum:read';
+  if (type === 'course') return 'courses:read';
+  if (type === 'chat') return 'chat:read';
+  return null;
+}
+
+async function allPages(session, path, query, maxItems = MAX_SOURCE_ITEMS) {
+  const values = [];
   let after = '';
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const payload = await whopApi(session, 'forum_posts', {
-      experience_id: experienceId,
+    const payload = await whopApi(session, path, {
+      ...query,
       first: PAGE_SIZE,
       ...(after ? { after } : {}),
     });
     const data = Array.isArray(payload?.data) ? payload.data : [];
-    posts.push(...data.filter((post) => !post?.parent_id));
-    if (posts.length > MAX_POSTS) throw new HttpError(422, `This Whop group contains more than ${MAX_POSTS} top-level posts. Narrow the source before importing.`);
-    if (!payload?.page_info?.has_next_page) return posts;
+    values.push(...data);
+    if (values.length > maxItems) throw new HttpError(422, `Whop returned more than ${maxItems} content items for one source.`);
+    if (!payload?.page_info?.has_next_page) return values;
     const next = String(payload?.page_info?.end_cursor || '');
     if (!next || next === after) throw new HttpError(502, 'Whop returned an invalid pagination cursor.');
     after = next;
@@ -309,38 +330,248 @@ export async function listForumPosts(session, experienceId) {
   throw new HttpError(502, 'Whop pagination exceeded the safe page limit.');
 }
 
-export async function retrieveWhopFile(session, fileId) {
-  try {
-    const file = await whopApi(session, `files/${encodeURIComponent(fileId)}`);
-    const visibility = String(file?.visibility || '').toLowerCase();
-    const ready = String(file?.upload_status || '').toLowerCase() === 'ready';
-    const url = /^https:\/\//i.test(String(file?.url || '')) ? String(file.url) : null;
+async function mapConcurrent(values, mapper, concurrency = ITEM_CONCURRENCY) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, values.length)) }, () => worker()));
+  return output;
+}
+
+function cleanTitle(value, fallback) {
+  return String(value || fallback || 'Untitled Whop content').normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 140);
+}
+
+function firstLine(value, fallback) {
+  const text = String(value || '').replace(/^\s+|\s+$/g, '').split(/\n+/)[0]?.replace(/\s+/g, ' ') || '';
+  return cleanTitle(text.slice(0, 110), fallback);
+}
+
+function fileInput(file, role = 'attachment') {
+  if (!file || typeof file !== 'object') return null;
+  const id = String(file.id || '').trim();
+  const url = /^https:\/\//i.test(String(file.url || file.source_url || file.optimized_url || ''))
+    ? String(file.url || file.source_url || file.optimized_url)
+    : null;
+  if (!id && !url) return null;
+  return {
+    id,
+    filename: String(file.filename || `${role.replace(/-/g, ' ')} file`).trim().slice(0, 180),
+    content_type: String(file.content_type || '').trim().slice(0, 120),
+    url,
+    visibility: String(file.visibility || '').trim().toLowerCase() || null,
+    upload_status: String(file.upload_status || '').trim().toLowerCase() || null,
+    role,
+  };
+}
+
+function courseLessonContent(lesson, course) {
+  const parts = [];
+  const content = String(lesson?.content || '').trim();
+  if (content) parts.push(content);
+  if (lesson?.embed_type === 'youtube' && lesson?.embed_id) {
+    parts.push(`## Video\n\n[Watch on YouTube](https://www.youtube.com/watch?v=${encodeURIComponent(String(lesson.embed_id))})`);
+  } else if (lesson?.embed_type === 'loom' && lesson?.embed_id) {
+    parts.push(`## Video\n\n[Watch on Loom](https://www.loom.com/share/${encodeURIComponent(String(lesson.embed_id))})`);
+  }
+  if (Array.isArray(lesson?.assessment_questions) && lesson.assessment_questions.length) {
+    const questions = lesson.assessment_questions.map((question, index) => {
+      const options = Array.isArray(question?.options) && question.options.length
+        ? `\n${question.options.map((option) => `- ${String(option?.option_text || '').trim()}`).join('\n')}`
+        : '';
+      return `### ${index + 1}. ${String(question?.question_text || 'Question').trim()}${options}`;
+    });
+    parts.push(`## Knowledge check\n\n${questions.join('\n\n')}`);
+  }
+  if (!parts.length) parts.push(`Course lesson from ${cleanTitle(course?.title, 'Whop course')}.`);
+  return parts.join('\n\n');
+}
+
+function courseLessonAttachments(lesson) {
+  const values = [];
+  const mainPdf = fileInput(lesson?.main_pdf, 'main-pdf');
+  if (mainPdf) values.push(mainPdf);
+  for (const attachment of Array.isArray(lesson?.attachments) ? lesson.attachments : []) {
+    const normalized = fileInput(attachment, 'attachment');
+    if (normalized) values.push(normalized);
+  }
+  if (lesson?.video_asset) {
+    values.push({
+      id: String(lesson.video_asset.id || ''),
+      filename: `${cleanTitle(lesson.title, 'Course lesson')} hosted video`,
+      content_type: lesson.video_asset.audio_only ? 'audio/mpeg' : 'video/mp4',
+      url: null,
+      visibility: 'private',
+      upload_status: String(lesson.video_asset.status || 'unknown'),
+      role: 'hosted-video',
+      reviewReason: 'Whop-hosted course video uses signed playback credentials. Replace it with a SniperPlug-owned public file or an authorized external embed before publishing.',
+    });
+  }
+  return values;
+}
+
+function chatMessageContent(message) {
+  const parts = [];
+  const content = String(message?.content || '').trim();
+  if (content) parts.push(content);
+  if (message?.poll?.options?.length) {
+    parts.push(`## Poll\n\n${message.poll.options.map((option) => `- ${String(option?.text || '').trim()}`).join('\n')}`);
+  }
+  return parts.join('\n\n') || `[${String(message?.message_type || 'Chat message').replace(/_/g, ' ')}]`;
+}
+
+export function sourceKeyForWhopItem(item) {
+  const type = String(item?.sourceType || 'forum');
+  const id = String(item?.id || '').trim();
+  if (type === 'course') return `course-lesson:${id}`;
+  if (type === 'chat') return `chat-message:${id}`;
+  return `forum-post:${id}`;
+}
+
+export async function listForumPosts(session, experienceId) {
+  const posts = await allPages(session, 'forum_posts', { experience_id: experienceId });
+  return posts.filter((post) => !post?.parent_id);
+}
+
+async function listCourseItems(session, experience) {
+  const courses = await allPages(session, 'courses', { experience_id: experience.id }, 250);
+  const output = [];
+  for (const course of courses) {
+    const lessons = await allPages(session, 'course_lessons', { course_id: course.id });
+    const detailed = await mapConcurrent(lessons, async (lesson) => {
+      try { return await whopApi(session, `course_lessons/${encodeURIComponent(lesson.id)}`); }
+      catch { return lesson; }
+    });
+    for (const lesson of detailed) {
+      output.push({
+        sourceType: 'course',
+        id: String(lesson?.id || ''),
+        title: cleanTitle(lesson?.title, course?.title || 'Course lesson'),
+        content: courseLessonContent(lesson, course),
+        user: null,
+        attachments: courseLessonAttachments(lesson),
+        created_at: lesson?.created_at || course?.created_at || null,
+        updated_at: lesson?.updated_at || lesson?.created_at || course?.updated_at || null,
+        sourceMeta: {
+          courseId: course?.id || null,
+          courseTitle: course?.title || null,
+          chapterId: lesson?.chapter?.id || null,
+          lessonType: lesson?.lesson_type || null,
+          visibility: lesson?.visibility || null,
+          order: lesson?.order ?? null,
+        },
+      });
+      if (output.length > MAX_SOURCE_ITEMS) throw new HttpError(422, `This course source contains more than ${MAX_SOURCE_ITEMS} lessons.`);
+    }
+  }
+  return output;
+}
+
+async function listChatItems(session, experience) {
+  const messages = await allPages(session, 'messages', { channel_id: experience.id, direction: 'asc' });
+  return messages.map((message) => ({
+    sourceType: 'chat',
+    id: String(message?.id || ''),
+    title: message?.is_pinned
+      ? `Pinned · ${firstLine(message?.content, 'Chat message')}`
+      : firstLine(message?.content, `Chat message ${String(message?.id || '').slice(-8)}`),
+    content: chatMessageContent(message),
+    user: message?.user || null,
+    attachments: (Array.isArray(message?.attachments) ? message.attachments : []).map((attachment) => fileInput(attachment, 'chat-attachment')).filter(Boolean),
+    created_at: message?.created_at || null,
+    updated_at: message?.updated_at || message?.created_at || null,
+    sourceMeta: {
+      pinned: Boolean(message?.is_pinned),
+      edited: Boolean(message?.is_edited),
+      messageType: message?.message_type || null,
+      replyingTo: message?.replying_to_message_id || null,
+      viewCount: Number(message?.view_count || 0),
+    },
+  })).filter((item) => item.id);
+}
+
+export async function listExperienceItems(session, experience) {
+  const type = whopExperienceType(experience);
+  if (type === 'forum') {
+    const posts = await listForumPosts(session, experience.id);
+    return posts.map((post) => ({
+      sourceType: 'forum',
+      id: String(post?.id || ''),
+      title: cleanTitle(post?.title, firstLine(post?.content, 'Whop forum post')),
+      content: String(post?.content || ''),
+      user: post?.user || null,
+      attachments: (Array.isArray(post?.attachments) ? post.attachments : []).map((attachment) => fileInput(attachment, 'forum-attachment')).filter(Boolean),
+      created_at: post?.created_at || null,
+      updated_at: post?.updated_at || post?.created_at || null,
+      sourceMeta: {
+        pinned: Boolean(post?.is_pinned),
+        edited: Boolean(post?.is_edited),
+        posterAdmin: Boolean(post?.is_poster_admin),
+      },
+    })).filter((item) => item.id);
+  }
+  if (type === 'course') return listCourseItems(session, experience);
+  if (type === 'chat') return listChatItems(session, experience);
+  throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” does not expose a supported read API. Forums, Courses, and Chat are supported.`);
+}
+
+export async function retrieveWhopFile(session, input) {
+  const original = input && typeof input === 'object' ? input : { id: input };
+  if (original.role === 'hosted-video') {
     return {
-      id: String(file?.id || fileId),
-      filename: String(file?.filename || 'attachment'),
-      contentType: String(file?.content_type || ''),
+      id: String(original.id || ''),
+      filename: String(original.filename || 'hosted video'),
+      contentType: String(original.content_type || 'video/mp4'),
+      visibility: 'private',
+      uploadStatus: String(original.upload_status || 'unknown'),
+      url: null,
+      durable: false,
+      role: original.role,
+      reviewReason: original.reviewReason || 'Replace this signed Whop-hosted video before publishing.',
+    };
+  }
+
+  try {
+    const id = String(original.id || '').trim();
+    const file = id ? await whopApi(session, `files/${encodeURIComponent(id)}`) : original;
+    const visibility = String(file?.visibility || original.visibility || '').toLowerCase();
+    const uploadStatus = String(file?.upload_status || original.upload_status || (file?.url || original.url ? 'ready' : 'unknown')).toLowerCase();
+    const ready = uploadStatus === 'ready';
+    const url = /^https:\/\//i.test(String(file?.url || original.url || '')) ? String(file?.url || original.url) : null;
+    return {
+      id: String(file?.id || id),
+      filename: String(file?.filename || original.filename || 'attachment'),
+      contentType: String(file?.content_type || original.content_type || ''),
       visibility: visibility || 'unknown',
-      uploadStatus: String(file?.upload_status || 'unknown'),
+      uploadStatus: uploadStatus || 'unknown',
       url,
+      role: original.role || 'attachment',
       durable: visibility === 'public' && ready && Boolean(url),
       reviewReason: visibility === 'private'
-        ? 'Private Whop file uses an expiring signed URL. Re-upload it before publishing.'
+        ? 'Private Whop file uses an expiring signed URL. Copy it to SniperPlug-owned storage before publishing.'
         : !ready
           ? 'Whop file is not ready yet.'
           : !url
             ? 'Whop did not return a usable file URL.'
             : visibility !== 'public'
-              ? 'Whop did not confirm a permanent public URL.'
+              ? 'Whop did not confirm a permanent public URL. Copy it to SniperPlug-owned storage before publishing.'
               : null,
     };
   } catch (error) {
     return {
-      id: fileId,
-      filename: 'attachment',
-      contentType: '',
+      id: String(original.id || ''),
+      filename: String(original.filename || 'attachment'),
+      contentType: String(original.content_type || ''),
       visibility: 'unknown',
       uploadStatus: 'unknown',
       url: null,
+      role: original.role || 'attachment',
       durable: false,
       reviewReason: error?.message || 'Attachment could not be verified.',
     };
