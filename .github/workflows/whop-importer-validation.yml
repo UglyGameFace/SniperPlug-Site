@@ -28,3 +28,14 @@ jobs:
         run: npm install --ignore-scripts
       - name: Run full build and regression suite
         run: npm run build
+      - name: Package validated source for active-task inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sniperplug-source-${{ github.sha }}
+          path: |
+            .
+            !.git
+            !node_modules
+          include-hidden-files: true
+          retention-days: 1
