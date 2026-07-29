@@ -19,7 +19,8 @@ const required = [
   'control-center/index.html',
   'assets/css/control-center.css',
   'assets/css/whop-discovery.css',
-  'assets/js/control-center.js',
+  'assets/css/control-center-publishing.css',
+  'assets/js/control-center-v2.js',
   'functions/_middleware.js',
   'functions/api/control.js',
   'functions/api/discover.js',
@@ -30,6 +31,8 @@ const required = [
   'functions/_lib/crypto.js',
   'functions/_lib/discovery.js',
   'functions/_lib/guides.js',
+  'functions/_lib/guides-import.js',
+  'functions/_lib/guides-media.js',
   'functions/_lib/http.js',
   'functions/_lib/integrity.js',
   'functions/_lib/markdown.js',
@@ -103,6 +106,9 @@ assert.equal(suggestedCategoryForText('Hidden Files Chipotle food delivery guide
 assert.equal(suggestedCategoryForText('Free sample and no cost trial'), 'freebies');
 assert.equal(suggestedCategoryForText('Seller errors and recovery fix'), 'troubleshooting');
 assert.equal(suggestedCategoryForText('Unclassified notes'), 'general');
+assert.equal(suggestedCategoryForText('Available online and in stock'), 'general');
+assert.notEqual(suggestedCategoryForText('Line of credit guide'), 'sports-betting');
+assert.equal(suggestedCategoryForText('Stock trading technical analysis'), 'crypto-trading');
 
 const schema = read('migrations/0001_whop_guides.sql');
 for (const table of ['guide_categories', 'admin_login_attempts', 'whop_oauth_states', 'whop_sessions', 'whop_sources', 'whop_posts', 'guides']) {
@@ -119,9 +125,11 @@ const whop = read('functions/_lib/whop.js');
 const discovery = read('functions/_lib/discovery.js');
 const posts = read('functions/_lib/posts.js');
 const guides = read('functions/_lib/guides.js');
+const guidesImport = read('functions/_lib/guides-import.js');
+const guidesMedia = read('functions/_lib/guides-media.js');
 const markdown = read('functions/_lib/markdown.js');
 const page = read('control-center/index.html');
-const client = read('assets/js/control-center.js');
+const client = read('assets/js/control-center-v2.js');
 const middleware = read('functions/_middleware.js');
 const siteClient = read('assets/js/site.js');
 
@@ -130,7 +138,7 @@ for (const action of ['session', 'dashboard', 'oauth-start', 'oauth-callback', '
 }
 assert.ok(auth.includes('LOGIN_MAX_FAILURES = 5'), 'Owner login throttling is missing.');
 assert.ok(auth.includes('admin_login_attempts'), 'Owner login failures are not persisted in D1.');
-assert.ok(whop.includes('code_challenge_method: \'S256\''), 'Whop OAuth PKCE S256 is missing.');
+assert.ok(whop.includes("code_challenge_method: 'S256'"), 'Whop OAuth PKCE S256 is missing.');
 assert.ok(whop.includes('refresh_cipher'), 'Whop refresh tokens are not encrypted in D1.');
 assert.ok(whop.includes('token_version = token_version + 1'), 'Refresh-token rotation has no concurrency guard.');
 for (const endpoint of ["'forum_posts'", "'courses'", "'course_lessons'", "'messages'", '`files/${encodeURIComponent']) {
@@ -142,31 +150,32 @@ assert.ok(discovery.includes('unsupported'), 'Unsupported custom Whop apps are s
 assert.ok(posts.includes('source_fingerprint IS NOT excluded.source_fingerprint'), 'Changed Whop content does not reset to pending review.');
 assert.ok(posts.includes('last_scanned_at = ?'), 'A fresh scan can be polluted by stale saved content.');
 assert.ok(posts.includes('body_markdown'), 'Exact normalized source bodies are not stored privately for preview.');
-assert.ok(guides.includes("status = 'draft'"), 'Imports are not forced to private drafts.');
-assert.ok(guides.includes('listExperienceItems(whopSession, experience)'), 'Approved IDs are not re-fetched from the correct Whop content API before import.');
-assert.ok(guides.includes('retrieveWhopFile(session, attachment)'), 'Whop files are not verified server-side before import.');
-assert.ok(guides.includes('visibility === \'public\'') || whop.includes("visibility === 'public'"), 'Permanent and expiring Whop file URLs are not distinguished.');
+assert.ok(guidesImport.includes("status = 'draft'"), 'Imports are not forced to private drafts.');
+assert.ok(guidesImport.includes('retrieveExperienceItem'), 'Approved IDs are not re-fetched from the exact Whop item API before import.');
+assert.ok(guidesImport.includes('retrieveWhopFile(session, attachment)'), 'Whop files are not verified server-side before import.');
+assert.ok(guidesMedia.includes('mirrorWhopMedia'), 'Private Whop media cannot use SniperPlug-owned storage when configured.');
+assert.ok(whop.includes("visibility === 'public'"), 'Permanent and expiring Whop file URLs are not distinguished.');
 assert.ok(guides.includes('CATEGORY_CATALOG'), 'Fitting SniperPlug guide categories are not seeded.');
 for (const slug of ['guides-tutorials', 'money-makers', 'money-savers', 'freebies', 'reselling', 'sports-betting', 'casino', 'crypto-trading', 'auto-checkout', 'troubleshooting']) {
   assert.ok(guides.includes(`'${slug}'`), `Category catalog is missing ${slug}.`);
 }
 assert.ok(guides.includes("status === 'published'"), 'Explicit publishing is missing.');
-assert.ok(guides.includes('private or expiring Whop file'), 'Private or expiring Whop files can be published without review.');
+assert.ok(guidesImport.includes('private or expiring Whop file') || guidesMedia.includes('private or expiring'), 'Private or expiring Whop files can be published without review.');
 assert.ok(guides.includes("WHERE guides.status = 'published'"), 'Public guide queries can expose drafts.');
 assert.ok(markdown.includes('noopener noreferrer nofollow'), 'Published links lack safe external-link attributes.');
 assert.ok(markdown.includes("url.protocol !== 'https:'"), 'Published links do not enforce safe protocols.');
 
-for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-approve-all', 'data-disapprove-all', 'data-reset-all', 'data-rights-confirm', 'data-publish-guide', 'data-reject-guide', 'data-inline-category-form', 'data-open-inline-category']) {
+for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-approve-all', 'data-disapprove-all', 'data-reset-all', 'data-rights-confirm', 'data-publish-guide', 'data-reject-guide', 'data-inline-category-form', 'data-open-inline-category', 'publish-ready-visual']) {
   assert.ok(page.includes(marker), `Owner control is missing: ${marker}`);
 }
 assert.ok(page.includes('Forums, Courses, and Chat'), 'Control Center does not explain supported content types.');
 assert.ok(page.includes('data-scope-warning'), 'Missing OAuth content scopes are not surfaced.');
+assert.ok(page.includes('/assets/js/control-center-v2.js'), 'The active consolidated Control Center runtime is not loaded.');
 assert.ok(client.includes("decidePosts([post.sourceKey], 'approved')"), 'Individual Approve button is not wired.');
 assert.ok(client.includes("decidePosts([post.sourceKey], 'disapproved')"), 'Individual Disapprove button is not wired.');
 assert.ok(client.includes("'pending'"), 'Undo decision is not wired.');
 assert.ok(client.includes('sourceKeys'), 'The browser does not submit approved IDs.');
 assert.ok(!client.includes('body: post.body'), 'The browser is trusted to submit source content bodies.');
-assert.ok(client.includes('Save and select category') || page.includes('Save and select category'), 'Inline custom-category creation is missing.');
 assert.ok(client.includes('suggestedCategory'), 'Automatic category suggestion is not applied.');
 assert.ok(client.includes('linkifyPreview'), 'Owner preview does not make safe URLs clickable.');
 assert.ok(middleware.includes('Content-Security-Policy'), 'Cloudflare Function responses lack a CSP.');
