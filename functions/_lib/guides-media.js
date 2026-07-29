@@ -2,13 +2,15 @@ export {
   listAdminGuides,
   listCategories,
   saveCategory,
-  saveGuideDraft,
   setGuideStatus,
   slugify,
   suggestedCategoryForText,
 } from './guides.js';
 
-import { importApprovedPosts as importBase } from './guides-import.js';
+import {
+  importApprovedPosts as importBase,
+} from './guides-import.js';
+import { saveGuideDraft as saveGuideDraftBase } from './guides.js';
 import { requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
@@ -16,6 +18,26 @@ import { whopApi } from './whop.js';
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
+}
+
+export async function saveGuideDraft(env, id, input) {
+  const db = requireDatabase(env);
+  const before = await db.prepare('SELECT integrity_json FROM guides WHERE id = ?').bind(id).first();
+  const previousIntegrity = safeJson(before?.integrity_json, {});
+  const saved = await saveGuideDraftBase(env, id, input);
+  const nextIntegrity = {
+    ...previousIntegrity,
+    ...(saved.integrity || {}),
+    manualReviewCompleted: true,
+    quarantined: false,
+    quarantineReason: null,
+    quarantinedAt: null,
+    publishHoldReason: null,
+    editedByOwnerAt: new Date().toISOString(),
+  };
+  await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
+    .bind(JSON.stringify(nextIntegrity), id).run();
+  return { ...saved, integrity: nextIntegrity };
 }
 
 function withoutGeneratedMediaSection(body) {
@@ -156,6 +178,7 @@ function uniqueFiles(values) {
 }
 
 async function enhanceGuideMedia(env, whopSession, result) {
+  if (!result?.guideId || !['created-draft', 'updated-draft'].includes(result.action)) return result;
   const db = requireDatabase(env);
   const row = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(result.sourceKey).first();
   if (!row) return result;
