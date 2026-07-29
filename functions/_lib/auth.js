@@ -45,39 +45,46 @@ async function loginClientKey(request) {
 async function migrateOwnerWhopSession(env, legacySessionId) {
   const db = requireDatabase(env);
   try {
-    const latest = await db.prepare(`
-      SELECT * FROM whop_sessions
-      ORDER BY CASE WHEN admin_session_id = ? THEN 0 ELSE 1 END, updated_at DESC
-      LIMIT 1
-    `).bind(OWNER_SESSION_ID).first();
-    if (latest && latest.admin_session_id !== OWNER_SESSION_ID) {
-      await db.prepare(`
-        INSERT INTO whop_sessions (
-          admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
-          user_json, token_version, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(admin_session_id) DO UPDATE SET
-          access_cipher = excluded.access_cipher,
-          refresh_cipher = excluded.refresh_cipher,
-          token_type = excluded.token_type,
-          scopes = excluded.scopes,
-          expires_at = excluded.expires_at,
-          user_json = excluded.user_json,
-          token_version = excluded.token_version,
-          updated_at = excluded.updated_at
-      `).bind(
-        OWNER_SESSION_ID,
-        latest.access_cipher,
-        latest.refresh_cipher,
-        latest.token_type,
-        latest.scopes,
-        latest.expires_at,
-        latest.user_json,
-        latest.token_version,
-        latest.created_at,
-        latest.updated_at,
-      ).run();
+    const owner = await db.prepare('SELECT admin_session_id FROM whop_sessions WHERE admin_session_id = ?')
+      .bind(OWNER_SESSION_ID)
+      .first();
+    if (owner) return;
+
+    let legacy = null;
+    if (legacySessionId && legacySessionId !== OWNER_SESSION_ID) {
+      legacy = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?')
+        .bind(legacySessionId)
+        .first();
     }
+    if (!legacy) legacy = await db.prepare('SELECT * FROM whop_sessions ORDER BY updated_at DESC LIMIT 1').first();
+    if (!legacy) return;
+
+    await db.prepare(`
+      INSERT INTO whop_sessions (
+        admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
+        user_json, token_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(admin_session_id) DO UPDATE SET
+        access_cipher = excluded.access_cipher,
+        refresh_cipher = excluded.refresh_cipher,
+        token_type = excluded.token_type,
+        scopes = excluded.scopes,
+        expires_at = excluded.expires_at,
+        user_json = excluded.user_json,
+        token_version = excluded.token_version,
+        updated_at = excluded.updated_at
+    `).bind(
+      OWNER_SESSION_ID,
+      legacy.access_cipher,
+      legacy.refresh_cipher,
+      legacy.token_type,
+      legacy.scopes,
+      legacy.expires_at,
+      legacy.user_json,
+      legacy.token_version,
+      legacy.created_at,
+      legacy.updated_at,
+    ).run();
     await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id <> ?').bind(OWNER_SESSION_ID).run();
   } catch (error) {
     const message = String(error?.message || '').toLowerCase();
