@@ -4,7 +4,7 @@
 Repair the live Cloudflare Pages Whop importer and publishing workflow so SniperPlug imports real top-level guide content instead of user replies, chat chatter, raw links, product-card noise, duplicate posts, stale picks, and incorrectly categorized material. Restore visible publishing progress and replace the unbounded review wall with a usable queue.
 
 ## Status
-Active on `agent/whop-guide-importer`. Implementation and regression coverage are updated. GitHub Actions, Cloudflare deployment, and live authenticated D1 acceptance are still required before this task can be called complete or merged.
+Active on `agent/whop-guide-importer`. The implementation at `e69b67e206e63c2da6a04671d3599bad8d69b71e` passed the complete Node 22 build and regression suite and deployed successfully to the Cloudflare Pages branch preview. The PR remains a draft. Authenticated acceptance against the connected Whop account and private D1 data is the only remaining completion gate.
 
 ## Scope
 - Keep Whop OAuth, exact source approval, republication-rights confirmation, and private D1 storage intact.
@@ -44,20 +44,23 @@ Active on `agent/whop-guide-importer`. Implementation and regression coverage ar
 - Expanded full importer and recovery audits to cover the reported regressions and the active runtime files.
 
 ## Validation
-- Pending: `npm run build` on the branch under Node 22.
-- Pending: JavaScript syntax validation for all Functions, browser scripts, and audits.
-- Pending: targeted quality, category, cleanup, publishing-progress, responsive-layout, media, auth, discovery, bulk-job, and public-guide regression audits.
-- Pending: Cloudflare Pages deployment of the final validated commit.
+- Passed: `npm run build` under Node 22 in the permanent **Verify SniperPlug** workflow.
+- Passed: JavaScript syntax validation for all Functions, browser scripts, and audit files.
+- Passed: importer quality, category regression, full D1 reconciliation, duplicate cleanup, publishing-progress, responsive layout, media preservation, authentication, discovery, bulk-job recovery, undo history, and public-guide isolation audits.
+- Passed: Cloudflare Pages deployed implementation commit `e69b67e206e63c2da6a04671d3599bad8d69b71e` successfully to the branch preview.
+- Passed: PR conflict inspection reports the draft PR is mergeable against `main`.
 - Pending: authenticated preview acceptance against the connected Whop account and live D1 data.
 
 ## Cleanup
 - Removed the redundant importer implementation from `functions/_lib/guides.js` instead of layering another policy patch over both import paths.
 - Kept the compatibility reconciliation export so existing callers use the stronger cleanup without duplicate code.
+- Confirmed the obsolete `quarantineUnsafePublishedGuides` reference is absent.
+- Confirmed active import callers use `guides-import.js` and `guides-media.js`; the complete regression suite validates every JavaScript module and caller path.
 - Kept quarantined records private and reversible rather than deleting source material.
 - No temporary browser script, mock publishing state, or public plaintext content was added.
 
 ## Blockers
-- The authenticated Control Center and private D1 contents cannot be acceptance-tested through GitHub alone. After Actions and Cloudflare succeed, the final pass must confirm the connected account’s queue shrinks correctly and a known valid guide appears on `/guides/` after publishing.
+- The authenticated Control Center and private D1 contents cannot be acceptance-tested through GitHub alone. The final pass must confirm that refreshing the connected Control Center removes the old junk from normal review and public results, that the publish audit displays visible progress and counts, and that a known valid guide appears on `/guides/` after publishing.
 
 ## Backlog
-- None. Do not switch tasks until validation, deployment, authenticated acceptance, cleanup inspection, and conflict inspection are complete.
+- None. Do not switch tasks until authenticated acceptance is complete.
