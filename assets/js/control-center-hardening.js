@@ -1,4 +1,11 @@
 (() => {
+  if (!document.querySelector('link[href="/assets/css/control-center-hardening.css"]')) {
+    const stylesheet = document.createElement('link');
+    stylesheet.rel = 'stylesheet';
+    stylesheet.href = '/assets/css/control-center-hardening.css';
+    document.head.append(stylesheet);
+  }
+
   const root = document.querySelector('[data-control-root]');
   if (!root) return;
 
@@ -23,7 +30,7 @@
     const list = group.querySelector('.discovered-source-list');
     const unsupported = group.querySelector('.unsupported-sources');
     if (list) list.hidden = collapsed;
-    if (unsupported) unsupported.hidden = collapsed;
+    if (unsupported) unsupported.hidden = collapsed || unsupported.dataset.filtered === 'hidden';
     const button = group.querySelector('[data-toggle-group]');
     if (button) {
       button.textContent = collapsed ? 'Expand' : 'Collapse';
@@ -83,7 +90,10 @@
       }
       const unsupported = group.querySelector('.unsupported-sources');
       const unsupportedMatch = filter === 'all' && (!query || groupMatch || unsupported?.textContent.toLowerCase().includes(query));
-      if (unsupported) unsupported.dataset.filtered = unsupportedMatch ? 'visible' : 'hidden';
+      if (unsupported) {
+        unsupported.dataset.filtered = unsupportedMatch ? 'visible' : 'hidden';
+        unsupported.hidden = group.dataset.collapsed === 'true' || !unsupportedMatch;
+      }
       group.hidden = visible === 0 && !unsupportedMatch;
       const meta = group.querySelector(':scope > header p');
       if (meta) meta.dataset.visibleCount = String(visible);
