@@ -2,6 +2,9 @@ import { requireDatabase } from './http.js';
 
 const SPORTS_BET_PATTERN = /\b(?:prizepicks?|sleeper|underdog|sports?book|parlay|prop(?:s)?|pick(?:s)?|odds?|bet(?:ting|s)?|wager|lineup|moneyline|spread|over\/?under|taco|free square|protected play|discount play|cash(?:ed|es)|units?)\b/i;
 const TIME_SIGNAL_PATTERN = /\b(?:today|tonight|tomorrow|this morning|this afternoon|this evening|live now|lock(?:ed)? in|last minute|kickoff|tipoff|first pitch|starts? at|game time|expires?|limited time|this week|weekend)\b/i;
+const GUIDE_SIGNAL_PATTERN = /\b(?:how to|step(?:s)?|guide|tutorial|method|walkthrough|setup|blueprint|roadmap|checklist|requirements?|instructions?|strategy|playbook|start here|onboarding|lesson|course|troubleshoot|fix|workflow|process|what you need|before you begin)\b/i;
+const NOISE_TITLE_PATTERN = /^(?:announcement(?:s)?|general|public forum|content guidelines?|rules?|welcome|test|testing|chat item for review|untitled whop post|imported whop content|daily chat|lounge|random|off topic)$/i;
+const PROMO_CHATTER_PATTERN = /\b(?:dm me|tap in|join now|code is|use code|link in bio|who wants|drop(?:ping)? now|live call|voice call|good morning|good night|congrats|let'?s go|wen|lol|lmao)\b/i;
 const MAX_SPORTS_PICK_AGE_HOURS = 72;
 
 function safeJson(value, fallback = null) {
@@ -63,9 +66,7 @@ function renderBlock(node, depth = 0) {
     const level = Math.max(1, Math.min(6, Number(node.attrs?.level || 2)));
     return `${'#'.repeat(level)} ${children.map(inlineNode).join('').trim()}`;
   }
-  if (type === 'blockquote') {
-    return renderBlocks(children, depth + 1).split('\n').map((line) => `> ${line}`).join('\n');
-  }
+  if (type === 'blockquote') return renderBlocks(children, depth + 1).split('\n').map((line) => `> ${line}`).join('\n');
   if (type === 'bulletList' || type === 'orderedList') {
     const ordered = type === 'orderedList';
     return children.map((item, index) => renderListItem(item, ordered, index, depth)).join('\n');
@@ -82,10 +83,7 @@ function renderBlock(node, depth = 0) {
 }
 
 function renderBlocks(nodes, depth = 0) {
-  return (Array.isArray(nodes) ? nodes : [])
-    .map((node) => renderBlock(node, depth))
-    .filter((value) => String(value || '').trim())
-    .join('\n\n');
+  return (Array.isArray(nodes) ? nodes : []).map((node) => renderBlock(node, depth)).filter((value) => String(value || '').trim()).join('\n\n');
 }
 
 export function whopContentToMarkdown(value) {
@@ -122,6 +120,25 @@ function meaningful(value) {
   return /[\p{L}\p{N}]/u.test(String(value || ''));
 }
 
+function structureSignals(markdown) {
+  const text = String(markdown || '');
+  return {
+    headings: (text.match(/^\s{0,3}#{1,6}\s+/gm) || []).length,
+    lists: (text.match(/^\s{0,3}(?:[-+*]|\d+[.)])\s+/gm) || []).length,
+    links: (text.match(/\[[^\]]+\]\([^)]+\)/g) || []).length,
+  };
+}
+
+function attachmentCount(value) {
+  if (Array.isArray(value)) return value.length;
+  if (Array.isArray(value?.files)) return value.files.length;
+  return 0;
+}
+
+function policy(autoPublishEligible, blocked, code, reason, extra = {}) {
+  return { autoPublishEligible, blocked, code, reason, ...extra };
+}
+
 export function classifyWhopItem(item, now = Date.now()) {
   const sourceType = String(item?.sourceType || 'forum');
   const markdown = whopContentToMarkdown(item?.content);
@@ -129,55 +146,68 @@ export function classifyWhopItem(item, now = Date.now()) {
   const title = String(item?.title || '').trim();
   const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
   const sourceMeta = item?.sourceMeta || {};
-  const combined = `${title}\n${plain}`;
+  const sourceTitle = String(sourceMeta.experienceTitle || '').trim();
+  const combined = `${sourceTitle}\n${title}\n${plain}`;
   const sportsPick = SPORTS_BET_PATTERN.test(combined);
   const timeSensitive = sportsPick && (TIME_SIGNAL_PATTERN.test(combined) || sourceType === 'chat');
   const hoursOld = ageHours(item?.created_at, now);
   const expiresAt = timeSensitive && Number.isFinite(Date.parse(String(item?.created_at || '')))
     ? new Date(Date.parse(item.created_at) + MAX_SPORTS_PICK_AGE_HOURS * 3_600_000).toISOString()
     : null;
+  const signals = structureSignals(markdown);
+  const guideSignal = GUIDE_SIGNAL_PATTERN.test(combined) || signals.headings > 0 || signals.lists >= 2;
 
-  if (sourceType === 'chat' && sourceMeta.replyingTo) {
-    return { autoPublishEligible: false, blocked: true, code: 'chat_reply', reason: 'Chat replies and comments stay in Whop and are never turned into standalone guides.', timeSensitive, expiresAt };
+  if (sourceType === 'chat' && sourceMeta.replyingTo) return policy(false, true, 'chat_reply', 'Chat replies stay in Whop and never become standalone guides.', { timeSensitive, expiresAt });
+  if (!plain && !attachments.length) return policy(false, true, 'empty_content', 'This item has no guide content or attached file.', { timeSensitive, expiresAt });
+  if (!meaningful(title) && plain.length < 40 && !attachments.length) return policy(false, true, 'low_signal', 'This item is punctuation-only or too small to become a useful guide.', { timeSensitive, expiresAt });
+  if (timeSensitive && (hoursOld === null || hoursOld > MAX_SPORTS_PICK_AGE_HOURS)) return policy(false, true, 'expired_sports_pick', 'This sports pick is older than 72 hours and is no longer useful as a current guide.', { timeSensitive, expiresAt });
+
+  if (sourceType === 'chat') return policy(false, false, 'chat_manual_only', 'Chat messages remain available for manual review but are never auto-published as guides.', { timeSensitive, expiresAt });
+  if (sourceType === 'course' && sourceMeta.detailDeferred === true) return policy(true, false, 'course_detail_pending', 'The exact course lesson will be re-fetched and revalidated before import.', { timeSensitive, expiresAt });
+
+  if (sourceType === 'course') {
+    const placeholder = /^Course lesson from .+\.$/i.test(plain);
+    if (placeholder && !attachments.length) return policy(false, false, 'course_placeholder', 'This course card has a title but no lesson body or attached media.', { timeSensitive, expiresAt });
+    if (plain.length >= 120 || attachments.length > 0 || guideSignal) return policy(true, false, 'guide_ready', 'This course lesson passed the guide-quality gate.', { timeSensitive, expiresAt });
+    return policy(false, false, 'course_manual_review', 'This course lesson needs manual review because it contains very little instructional content.', { timeSensitive, expiresAt });
   }
-  if (!plain && !attachments.length) {
-    return { autoPublishEligible: false, blocked: true, code: 'empty_content', reason: 'This item has no guide content or attached file.', timeSensitive, expiresAt };
-  }
-  if (!meaningful(title) && plain.length < 40 && !attachments.length) {
-    return { autoPublishEligible: false, blocked: true, code: 'low_signal', reason: 'This item is punctuation-only or too small to become a useful guide.', timeSensitive, expiresAt };
-  }
-  if (timeSensitive && (hoursOld === null || hoursOld > MAX_SPORTS_PICK_AGE_HOURS)) {
-    return { autoPublishEligible: false, blocked: true, code: 'expired_sports_pick', reason: 'This sports pick is older than 72 hours and is no longer useful as a current guide.', timeSensitive, expiresAt };
-  }
-  if (sourceType === 'chat') {
-    const substantial = plain.length >= 320 || (attachments.length > 0 && plain.length >= 60);
-    if (!sourceMeta.pinned && !substantial) {
-      return { autoPublishEligible: false, blocked: false, code: 'manual_review', reason: 'Short chat messages remain available for manual review but are excluded from automatic publishing.', timeSensitive, expiresAt };
-    }
-  }
-  if (sourceType === 'forum' && plain.length < 80 && !attachments.length) {
-    return { autoPublishEligible: false, blocked: false, code: 'manual_review', reason: 'This short forum post needs manual review before it can become a guide.', timeSensitive, expiresAt };
-  }
-  return { autoPublishEligible: true, blocked: false, code: 'guide_ready', reason: 'Long-form source content passed the automatic guide-quality gate.', timeSensitive, expiresAt };
+
+  if (NOISE_TITLE_PATTERN.test(title) || /\b(?:announcement|content guidelines?|public forum|daily chat|lounge)\b/i.test(sourceTitle)) return policy(false, false, 'source_manual_review', 'Announcements and general discussion sources stay manual so they cannot flood the guide library.', { timeSensitive, expiresAt });
+  if (PROMO_CHATTER_PATTERN.test(combined) && plain.length < 500 && !guideSignal) return policy(false, false, 'forum_chatter', 'This looks like community chatter or a short promotion, not a durable guide.', { timeSensitive, expiresAt });
+  if (plain.length >= 420) return policy(true, false, 'guide_ready', 'Long-form forum content passed the guide-quality gate.', { timeSensitive, expiresAt });
+  if (plain.length >= 220 && guideSignal) return policy(true, false, 'guide_ready', 'Structured forum content passed the guide-quality gate.', { timeSensitive, expiresAt });
+  if (attachments.length > 0 && plain.length >= 140 && guideSignal) return policy(true, false, 'guide_ready', 'Instructional forum content with supporting media passed the guide-quality gate.', { timeSensitive, expiresAt });
+  return policy(false, false, 'forum_manual_review', 'This forum item remains available for manual review but is not strong enough for automatic publishing.', { timeSensitive, expiresAt });
 }
 
-export function quarantineReasonForGuide(row, now = Date.now()) {
+export function rejectionReasonForGuide(row, now = Date.now()) {
   const body = String(row?.body_markdown || '').trim();
   const title = String(row?.title || '').trim();
   const integrity = safeJson(row?.integrity_json, {}) || {};
   const attachments = safeJson(row?.attachment_json, {}) || {};
   const sourceType = String(integrity.sourceType || attachments.sourceType || '');
   const sourceMeta = integrity.sourceMeta || {};
+  const importPolicy = integrity.importPolicy || sourceMeta.importPolicy || integrity.policy || {};
   const plain = plainContent(body);
+  const count = attachmentCount(attachments);
   const parsed = body.startsWith('{') ? safeJson(body) : null;
-  if (parsed?.type === 'doc' || Array.isArray(parsed?.content)) return 'Raw Whop structured JSON was published instead of rendered guide content.';
-  if (sourceType === 'chat' && sourceMeta.replyingTo) return 'Chat reply/comment was incorrectly published as a standalone guide.';
-  if ((!meaningful(title) || title.length < 3) && plain.length < 80) return 'Guide title and content are too small or punctuation-only.';
-  if (sourceType === 'chat' && SPORTS_BET_PATTERN.test(`${title}\n${plain}`)) {
-    const hoursOld = ageHours(row?.source_created_at, now);
-    if (hoursOld === null || hoursOld > MAX_SPORTS_PICK_AGE_HOURS) return 'Expired sports pick is older than the 72-hour freshness window.';
+
+  if (integrity.manualReviewCompleted === true) return null;
+  if (parsed?.type === 'doc' || Array.isArray(parsed?.content)) return 'Raw Whop structured JSON was imported instead of rendered guide content.';
+  if (sourceType === 'chat') return 'Chat content requires explicit manual review and cannot remain in the normal guide queue.';
+  if (['chat_reply', 'empty_content', 'low_signal', 'expired_sports_pick', 'course_placeholder', 'forum_chatter'].includes(importPolicy.code)) return importPolicy.reason || 'This item failed the guide-quality gate.';
+  if (/^(?:chat item for review|untitled whop post|imported whop content)$/i.test(title)) return 'Fallback title indicates this was not a complete guide.';
+  if ((!meaningful(title) || title.length < 3) && plain.length < 100) return 'Guide title and content are too small or punctuation-only.';
+  if (sourceType === 'course' && /^Course lesson from .+\.$/i.test(plain) && count === 0) return 'Course card has no lesson body or attached media.';
+  if (sourceType === 'forum') {
+    const result = classifyWhopItem({ sourceType, title, content: body, attachments: Array.isArray(attachments.files) ? attachments.files : [], sourceMeta, created_at: row?.source_created_at }, now);
+    if (result.autoPublishEligible !== true) return result.reason;
   }
   return null;
+}
+
+export function quarantineReasonForGuide(row, now = Date.now()) {
+  return rejectionReasonForGuide(row, now);
 }
 
 export async function quarantineUnsafePublishedGuides(env) {
@@ -192,12 +222,11 @@ export async function quarantineUnsafePublishedGuides(env) {
   const updates = [];
   const now = new Date().toISOString();
   for (const row of rows.results || []) {
-    const reason = quarantineReasonForGuide(row);
+    const reason = rejectionReasonForGuide(row);
     if (!reason) continue;
     const integrity = safeJson(row.integrity_json, {}) || {};
     updates.push(db.prepare(`
-      UPDATE guides
-      SET status = 'draft', published_at = NULL, updated_at = ?, integrity_json = ?
+      UPDATE guides SET status = 'rejected', published_at = NULL, updated_at = ?, integrity_json = ?
       WHERE id = ? AND status = 'published'
     `).bind(now, JSON.stringify({ ...integrity, quarantined: true, quarantineReason: reason, quarantinedAt: now }), row.id));
   }
