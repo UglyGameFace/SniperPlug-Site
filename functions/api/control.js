@@ -31,6 +31,7 @@ import {
   savePostDecision,
   scanApprovedSource,
 } from '../_lib/posts.js';
+import { assertGuidePublishable } from '../_lib/publish.js';
 import {
   listSourceOptions,
   saveSourceDecision,
@@ -188,7 +189,9 @@ async function guideStatus(request, env) {
   const body = await readJson(request);
   const id = Number.parseInt(body.id, 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
-  return json({ guide: await setGuideStatus(env, id, String(body.status || '')) });
+  const status = String(body.status || '');
+  if (status === 'published') await assertGuidePublishable(env, id);
+  return json({ guide: await setGuideStatus(env, id, status) });
 }
 
 export async function onRequest(context) {
