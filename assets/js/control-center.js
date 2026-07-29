@@ -3,6 +3,7 @@
   if (!root) return;
 
   const $ = (selector, parent = document) => parent.querySelector(selector);
+  const $$ = (selector, parent = document) => [...parent.querySelectorAll(selector)];
   const elements = {
     loginPanel: $('[data-login-panel]'),
     loginForm: $('[data-login-form]'),
@@ -13,6 +14,7 @@
     whopState: $('[data-whop-state]'),
     whopConnect: $('[data-whop-connect]'),
     whopDisconnect: $('[data-whop-disconnect]'),
+    scopeWarning: $('[data-scope-warning]'),
     sourceOptions: $('[data-source-options]'),
     sourceForm: $('[data-source-form]'),
     sourceReview: $('[data-source-review]'),
@@ -22,7 +24,6 @@
     sourceApprove: $('[data-source-approve]'),
     sourceDisapprove: $('[data-source-disapprove]'),
     sourceScan: $('[data-source-scan]'),
-    discoveryStatus: $('[data-discovery-status]'),
     discoverySummary: $('[data-discovery-summary]'),
     discoveryMessage: $('[data-discovery-message]'),
     discoveryBulk: $('[data-discovery-bulk]'),
@@ -46,6 +47,8 @@
     importCategory: $('[data-import-category]'),
     rights: $('[data-rights-confirm]'),
     importApproved: $('[data-import-approved]'),
+    inlineCategoryForm: $('[data-inline-category-form]'),
+    cancelInlineCategory: $('[data-cancel-inline-category]'),
     categoryForm: $('[data-category-form]'),
     categoryList: $('[data-category-list]'),
     refresh: $('[data-refresh-dashboard]'),
@@ -73,8 +76,10 @@
     sourceInput: '',
     source: null,
     experience: null,
+    sourceType: null,
     posts: [],
     selectedGuideId: null,
+    categoryTarget: 'import',
     busy: false,
   };
 
@@ -97,11 +102,7 @@
   async function discoveryApi() {
     const response = await fetch('/api/discover', { credentials: 'same-origin', cache: 'no-store' });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(data.error || `Discovery failed (${response.status}).`);
-      error.status = response.status;
-      throw error;
-    }
+    if (!response.ok) throw new Error(data.error || `Discovery failed (${response.status}).`);
     return data;
   }
 
@@ -133,10 +134,7 @@
     state.busy = value;
     updateImportButton();
     updateDiscoveryButtons();
-  }
-
-  function sourceLabel(source) {
-    return source?.label || state.experience?.company?.title || state.experience?.name || 'Whop group';
+    renderSourceReview();
   }
 
   function decisionText(decision) {
@@ -144,6 +142,25 @@
     if (decision === 'disapproved') return 'Disapproved';
     if (decision === 'blocked') return 'Blocked';
     return 'Needs decision';
+  }
+
+  function typeLabel(type) {
+    if (type === 'course') return 'Course';
+    if (type === 'chat') return 'Chat';
+    if (type === 'forum') return 'Forum';
+    return 'Whop app';
+  }
+
+  function sourceLabel(source) {
+    return source?.label || state.experience?.company?.title || state.experience?.name || 'Whop source';
+  }
+
+  function allDiscoveredSources() {
+    return (state.discovery?.groups || []).flatMap((group) => group.sources || []);
+  }
+
+  function sourceEntryById(experienceId) {
+    return allDiscoveredSources().find((entry) => entry.experience?.id === experienceId) || null;
   }
 
   function renderWhop() {
@@ -171,14 +188,6 @@
     }
   }
 
-  function allDiscoveredSources() {
-    return (state.discovery?.groups || []).flatMap((group) => group.sources || []);
-  }
-
-  function sourceEntryById(experienceId) {
-    return allDiscoveredSources().find((entry) => entry.experience?.id === experienceId) || null;
-  }
-
   function updateDiscoveryButtons() {
     const count = state.selectedSources.size;
     elements.approveSelected.disabled = state.busy || count === 0;
@@ -199,17 +208,40 @@
     renderDiscovery();
   }
 
+  function capabilityMeta(entry) {
+    const capability = entry.capability || {};
+    const pieces = [typeLabel(capability.sourceType), entry.experience.id, decisionText(entry.source.decision)];
+    if (!capability.scopeGranted && capability.requiredScope) pieces.push(`Reconnect for ${capability.requiredScope}`);
+    return pieces.join(' · ');
+  }
+
+  function renderUnsupported(group, card) {
+    if (!(group.unsupported || []).length) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'unsupported-sources';
+    const heading = document.createElement('strong');
+    heading.textContent = 'Other active Whop modules';
+    wrapper.append(heading);
+    for (const entry of group.unsupported) {
+      const row = document.createElement('p');
+      row.textContent = `${entry.experience.name} · ${entry.capability.appName}. Whop does not expose a generic read API for this app type.`;
+      wrapper.append(row);
+    }
+    card.append(wrapper);
+  }
+
   function renderDiscovery() {
     elements.discoveredGroups.replaceChildren();
     const connected = Boolean(state.dashboard?.whop?.connected);
     if (!connected) {
-      elements.discoverySummary.textContent = 'Connect Whop to load groups.';
+      elements.discoverySummary.textContent = 'Connect Whop to load sources.';
       elements.discoveryMessage.textContent = '';
       elements.discoveryBulk.hidden = true;
+      elements.scopeWarning.hidden = true;
       return;
     }
     if (!state.discovery) {
-      elements.discoverySummary.textContent = 'Finding your joined groups…';
+      elements.discoverySummary.textContent = 'Finding your active Whop content…';
       elements.discoveryMessage.textContent = '';
       elements.discoveryBulk.hidden = true;
       return;
@@ -217,9 +249,15 @@
 
     const groups = state.discovery.groups || [];
     const counts = state.discovery.counts || {};
-    elements.discoverySummary.textContent = `${counts.groups || 0} joined group${counts.groups === 1 ? '' : 's'} · ${counts.forums || 0} readable forum${counts.forums === 1 ? '' : 's'}`;
-    elements.discoveryMessage.textContent = counts.forums ? 'Select one, several, or every default forum.' : 'No readable forums were returned.';
+    elements.discoverySummary.textContent = `${counts.groups || 0} active group${counts.groups === 1 ? '' : 's'} · ${counts.sources || 0} readable source${counts.sources === 1 ? '' : 's'}`;
+    elements.discoveryMessage.textContent = `${counts.forums || 0} forum · ${counts.courses || 0} course · ${counts.chats || 0} chat${counts.unsupported ? ` · ${counts.unsupported} unsupported app module${counts.unsupported === 1 ? '' : 's'}` : ''}`;
     elements.discoveryBulk.hidden = groups.length === 0;
+
+    const missingScopes = state.discovery.missingScopes || [];
+    elements.scopeWarning.hidden = missingScopes.length === 0;
+    elements.scopeWarning.textContent = missingScopes.length
+      ? `Your saved Whop token is missing ${missingScopes.join(', ')}. Enable those read permissions in the Whop app, then disconnect and reconnect once.`
+      : '';
 
     for (const group of groups) {
       const card = document.createElement('article');
@@ -229,11 +267,11 @@
       const header = document.createElement('header');
       const copy = document.createElement('div');
       const eyebrow = document.createElement('small');
-      eyebrow.textContent = group.builtIn ? 'DEFAULT GROUP' : 'JOINED GROUP';
+      eyebrow.textContent = group.builtIn ? 'PRIORITY GROUP' : 'ACTIVE GROUP';
       const title = document.createElement('h3');
       title.textContent = group.company.title;
       const meta = document.createElement('p');
-      meta.textContent = `${(group.sources || []).length} readable forum${group.sources?.length === 1 ? '' : 's'} · ${(group.company.products || []).length} membership product${group.company.products?.length === 1 ? '' : 's'}`;
+      meta.textContent = `${(group.sources || []).length} readable source${group.sources?.length === 1 ? '' : 's'} · ${(group.company.products || []).length} membership product${group.company.products?.length === 1 ? '' : 's'}`;
       copy.append(eyebrow, title, meta);
 
       const groupActions = document.createElement('div');
@@ -267,6 +305,7 @@
         const source = document.createElement('div');
         source.className = 'discovered-source';
         source.dataset.state = entry.source.decision || 'pending';
+        source.dataset.type = entry.capability?.sourceType || 'unknown';
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -278,7 +317,7 @@
         const sourceTitle = document.createElement('strong');
         sourceTitle.textContent = entry.experience.name;
         const sourceMeta = document.createElement('small');
-        sourceMeta.textContent = `${entry.experience.id} · ${decisionText(entry.source.decision)}`;
+        sourceMeta.textContent = capabilityMeta(entry);
         sourceCopy.append(sourceTitle, sourceMeta);
 
         const actions = document.createElement('div');
@@ -286,7 +325,7 @@
         const choose = document.createElement('button');
         choose.type = 'button';
         choose.className = 'btn ghost';
-        choose.textContent = entry.source.decision === 'approved' ? 'Review posts' : 'Review source';
+        choose.textContent = entry.source.decision === 'approved' ? 'Review content' : 'Review source';
         choose.addEventListener('click', () => chooseDiscoveredSource(entry));
         const approve = document.createElement('button');
         approve.type = 'button';
@@ -305,6 +344,7 @@
         list.append(source);
       }
       card.append(list);
+      renderUnsupported(group, card);
       elements.discoveredGroups.append(card);
     }
     updateDiscoveryButtons();
@@ -316,7 +356,7 @@
       renderDiscovery();
       return;
     }
-    elements.discoverySummary.textContent = 'Finding your joined groups…';
+    elements.discoverySummary.textContent = 'Finding your active Whop content…';
     elements.discoveryMessage.textContent = '';
     elements.discoveredGroups.replaceChildren();
     try {
@@ -357,10 +397,6 @@
         method: 'POST',
         body: JSON.stringify({ experienceId: id, decision }),
       }));
-      for (const id of ids) {
-        const entry = sourceEntryById(id);
-        if (entry) entry.source.decision = decision;
-      }
       state.selectedSources = new Set([...state.selectedSources].filter((id) => !ids.includes(id)));
       await loadDashboard({ refreshDiscovery: false });
       await loadDiscovery();
@@ -409,19 +445,32 @@
     }
   }
 
+  function openInlineCategory(target) {
+    state.categoryTarget = target || 'import';
+    elements.inlineCategoryForm.hidden = false;
+    elements.inlineCategoryForm.querySelector('input[name="label"]').focus();
+    elements.inlineCategoryForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function closeInlineCategory() {
+    elements.inlineCategoryForm.hidden = true;
+    elements.inlineCategoryForm.reset();
+  }
+
   function renderSourceReview() {
     if (!state.source || !state.experience) {
       elements.sourceReview.hidden = true;
       return;
     }
     elements.sourceReview.hidden = false;
-    elements.sourceTitle.textContent = sourceLabel(state.source);
+    elements.sourceTitle.textContent = state.experience.name || sourceLabel(state.source);
     elements.sourceState.dataset.state = state.source.decision || 'pending';
     elements.sourceState.textContent = decisionText(state.source.decision);
+    const appName = state.experience?.app?.name || 'Whop app';
     elements.sourceDetail.textContent = state.source.decision === 'approved'
-      ? 'This exact forum can be scanned and imported.'
+      ? `This exact ${appName} source can be scanned and imported.`
       : state.source.decision === 'disapproved'
-        ? 'This exact forum is blocked until you approve it again.'
+        ? `This exact ${appName} source is blocked until you approve it again.`
         : `${state.source.suggested ? `Recognized as ${state.source.builtInLabel}. ` : ''}Approve or disapprove this exact source.`;
     elements.sourceApprove.disabled = state.busy || state.source.decision === 'approved';
     elements.sourceDisapprove.disabled = state.busy || state.source.decision === 'disapproved';
@@ -454,16 +503,34 @@
     return button;
   }
 
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]);
+  }
+
+  function linkifyPreview(value) {
+    const escaped = escapeHtml(value);
+    return escaped.replace(/(https?:\/\/[^\s<]+)/gi, (raw) => {
+      let target = raw;
+      let suffix = '';
+      while (/[.,!?;:]$/.test(target)) {
+        suffix = target.slice(-1) + suffix;
+        target = target.slice(0, -1);
+      }
+      return `<a href="${target}" target="_blank" rel="noopener noreferrer nofollow">${target}</a>${suffix}`;
+    }).replace(/\n/g, '<br>');
+  }
+
   function openPreview(post) {
     elements.previewTitle.textContent = post.title;
-    elements.previewMeta.textContent = `${post.author?.username || post.author?.name || 'Unknown author'} · ${post.sourceUpdatedAt ? new Date(post.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;
-    elements.previewBody.textContent = post.body || 'The exact body is loaded again during import.';
+    elements.previewMeta.textContent = `${typeLabel(post.contentType)} · ${post.author?.username || post.author?.name || 'No named author'} · ${post.sourceUpdatedAt ? new Date(post.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;
+    elements.previewBody.innerHTML = linkifyPreview(post.body || 'The exact body is loaded again during import.');
     elements.preview.hidden = false;
     document.body.style.overflow = 'hidden';
   }
 
   function closePreview() {
     elements.preview.hidden = true;
+    elements.previewBody.replaceChildren();
     document.body.style.overflow = '';
   }
 
@@ -488,12 +555,13 @@
       const card = document.createElement('article');
       card.className = 'post-card';
       card.dataset.state = post.decision;
+      card.dataset.type = post.contentType || state.sourceType || 'forum';
       const header = document.createElement('header');
       const copy = document.createElement('div');
       const title = document.createElement('h3');
       title.textContent = post.title;
       const meta = document.createElement('small');
-      meta.textContent = `${post.author?.username || post.author?.name || 'Unknown author'}${post.sourceUpdatedAt ? ` · ${new Date(post.sourceUpdatedAt).toLocaleDateString()}` : ''}`;
+      meta.textContent = `${typeLabel(post.contentType)}${post.author?.username || post.author?.name ? ` · ${post.author.username || post.author.name}` : ''}${post.sourceUpdatedAt ? ` · ${new Date(post.sourceUpdatedAt).toLocaleDateString()}` : ''}`;
       copy.append(title, meta);
       const pill = document.createElement('strong');
       pill.className = 'state-pill';
@@ -504,7 +572,9 @@
       excerpt.textContent = post.integrity?.blocked ? post.integrity.error : post.excerpt || 'No preview text.';
       const diagnostics = document.createElement('div');
       diagnostics.className = 'post-diagnostics';
-      diagnostics.textContent = post.integrity?.blocked ? `Blocked · ${post.integrity.code || 'format error'}` : `${post.integrity?.structure?.lines || 0} lines · ${(post.attachments || []).length} attachment${(post.attachments || []).length === 1 ? '' : 's'} · exact formatting checked`;
+      diagnostics.textContent = post.integrity?.blocked
+        ? `Blocked · ${post.integrity.code || 'format error'}`
+        : `${typeLabel(post.contentType)} · ${post.integrity?.structure?.lines || 0} lines · ${(post.attachments || []).length} file${(post.attachments || []).length === 1 ? '' : 's'} · formatting checked`;
       const actions = document.createElement('div');
       actions.className = 'post-actions';
       const approve = createDecisionButton('Approve', 'approve', () => decidePosts([post.sourceKey], 'approved'));
@@ -513,7 +583,7 @@
       disapprove.disabled = post.decision === 'disapproved' || post.decision === 'blocked';
       const undo = createDecisionButton('Undo', '', () => decidePosts([post.sourceKey], 'pending'));
       undo.hidden = !['approved', 'disapproved'].includes(post.decision);
-      const preview = createDecisionButton('Preview', '', () => openPreview(post));
+      const preview = createDecisionButton('Preview links & formatting', '', () => openPreview(post));
       actions.append(approve, disapprove, undo, preview);
       card.append(header, excerpt, diagnostics, actions);
       elements.postList.append(card);
@@ -638,9 +708,13 @@
       const output = await api('scan', { method: 'POST', body: JSON.stringify({ experienceId: state.experience.id }) });
       state.posts = output.posts;
       state.source = output.source;
+      state.sourceType = output.sourceType;
+      if ([...elements.importCategory.options].some((option) => option.value === output.suggestedCategory)) {
+        elements.importCategory.value = output.suggestedCategory;
+      }
       elements.postPanel.hidden = false;
-      elements.postTitle.textContent = `${sourceLabel(state.source)} posts`;
-      elements.postSummary.textContent = `${output.counts.total} top-level posts · approve only what should become a private SniperPlug draft.`;
+      elements.postTitle.textContent = `${state.experience.name || sourceLabel(state.source)} · ${typeLabel(output.sourceType)} content`;
+      elements.postSummary.textContent = `${output.counts.total} current item${output.counts.total === 1 ? '' : 's'} · approve only what should become a private SniperPlug draft.`;
       renderPosts();
       elements.postPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (error) {
@@ -694,6 +768,9 @@
     setBusy(true);
     try {
       await api('whop-disconnect', { method: 'DELETE', body: '{}' });
+      state.source = null;
+      state.experience = null;
+      state.posts = [];
       await loadDashboard();
       showStatus('Whop disconnected.');
     } catch (error) {
@@ -740,8 +817,33 @@
         method: 'POST',
         body: JSON.stringify({ experienceId: state.experience.id, sourceKeys, category: elements.importCategory.value, rightsConfirmed: elements.rights.checked }),
       });
-      showStatus(`${output.imported} draft${output.imported === 1 ? '' : 's'} imported${output.attachmentReviews ? `; ${output.attachmentReviews} attachment${output.attachmentReviews === 1 ? '' : 's'} need review` : ''}.`);
+      showStatus(`${output.imported} draft${output.imported === 1 ? '' : 's'} imported${output.attachmentReviews ? `; ${output.attachmentReviews} file${output.attachmentReviews === 1 ? '' : 's'} need permanent replacement before publishing` : ''}.`);
       await loadDashboard();
+    } catch (error) {
+      showStatus(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  $$('[data-open-inline-category]').forEach((button) => button.addEventListener('click', () => openInlineCategory(button.dataset.categoryTarget)));
+  elements.cancelInlineCategory.addEventListener('click', closeInlineCategory);
+  elements.inlineCategoryForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(elements.inlineCategoryForm);
+    setBusy(true);
+    try {
+      const output = await api('category-save', {
+        method: 'POST',
+        body: JSON.stringify({ label: form.get('label'), description: form.get('description'), sortOrder: form.get('sortOrder') }),
+      });
+      state.dashboard.categories = output.categories;
+      renderCategories();
+      const select = state.categoryTarget === 'draft' ? elements.draftEditor.elements.category : elements.importCategory;
+      select.value = output.category.slug;
+      closeInlineCategory();
+      updateImportButton();
+      showStatus(`Category ${output.category.label} saved and selected.`);
     } catch (error) {
       showStatus(error.message, 'error');
     } finally {
@@ -812,7 +914,7 @@
   elements.publishGuide.addEventListener('click', () => changeGuideStatus('published'));
   elements.rejectGuide.addEventListener('click', () => changeGuideStatus('rejected'));
   elements.returnDraft.addEventListener('click', () => changeGuideStatus('draft'));
-  document.querySelectorAll('[data-close-preview]').forEach((button) => button.addEventListener('click', closePreview));
+  $$('[data-close-preview]').forEach((button) => button.addEventListener('click', closePreview));
   elements.preview.addEventListener('click', (event) => { if (event.target === elements.preview) closePreview(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !elements.preview.hidden) closePreview(); });
 
