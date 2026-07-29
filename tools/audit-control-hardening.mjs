@@ -17,6 +17,7 @@ const hardening = read('assets/js/control-center-hardening.js');
 const density = read('assets/js/control-center-density.js');
 const bulkBrowser = read('assets/js/bulk-publish.js');
 const html = read('control-center/index.html');
+const controlCss = read('assets/css/control-center.css');
 const hardeningCss = read('assets/css/control-center-hardening.css');
 const discoveryCss = read('assets/css/whop-discovery.css');
 const guideSearch = read('functions/_lib/guide-search.js');
@@ -62,9 +63,17 @@ assert.ok(density.includes('compactSourceDecisions') && density.includes('Manage
 assert.ok(html.includes('<details class="bulk-publish-box"') && html.includes('data-bulk-workflow-summary'), 'The complete workflow is not collapsed by default.');
 assert.ok(html.includes('data-selected-source-count'), 'The compact bulk action bar does not show its selection count.');
 assert.ok(discoveryCss.includes('.bulk-publish-box summary') && discoveryCss.includes('.source-summary-copy'), 'Compact workflow and source-summary styling are missing.');
-assert.ok(hardeningCss.includes('.bulk-selection-bar') && hardeningCss.includes('position:sticky'), 'The compact mobile action bar is not sticky.');
-assert.ok(!hardeningCss.includes('.discovery-bulk{position:sticky'), 'The entire oversized bulk workflow must not be sticky.');
 assert.ok(html.includes('/assets/css/control-center-hardening.css'), 'Control Center hardening styles are not loaded.');
+
+const layoutCss = `${controlCss}\n${discoveryCss}\n${hardeningCss}`;
+for (const selector of ['discovery-bulk', 'bulk-selection-bar', 'bulk-publish-box', 'bulk-publish-content', 'import-bar', 'editor-actions']) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const floatingRule = new RegExp(`\\.${escaped}[^\\{]*\\{[^\\}]*position\\s*:\\s*(?:sticky|fixed|absolute)`, 'is');
+  assert.ok(!floatingRule.test(layoutCss), `${selector} must remain in normal document flow on every viewport.`);
+}
+assert.ok(hardeningCss.includes('position:static!important') && hardeningCss.includes('inset:auto!important'), 'Dynamic Control Center modules do not have an explicit normal-flow safeguard.');
+assert.ok(hardeningCss.includes('@media(max-width:480px)') && hardeningCss.includes('.bulk-selection-bar{grid-template-columns:1fr}'), 'Very narrow screens do not stack the bulk selection controls.');
+assert.ok(hardeningCss.includes('.button-row>*') && hardeningCss.includes('max-width:100%'), 'Wrapped action controls can still escape their owning module.');
 
 assert.ok(guideSearch.includes('LIMIT ? OFFSET ?') && guideSearch.includes('COUNT(*) AS total'), 'Public guide search is not paginated.');
 assert.ok(guideIndex.includes("url.searchParams.get('q')") && guideIndex.includes("url.searchParams.get('page')"), 'Guide endpoint does not accept search and page parameters.');
@@ -98,7 +107,9 @@ console.log('✓ Duplicate job steps are lease-protected and source failures rem
 console.log('✓ Manual and bulk publishing block internal, temporary, and unverified Whop links.');
 console.log('✓ Verified permanent attachments remain publishable.');
 console.log('✓ Unsaved draft edits warn before destructive actions and keep a local recovery copy.');
-console.log('✓ Source groups collapse, source and draft lists filter, and compact mobile actions stay reachable.');
+console.log('✓ Source groups collapse and source and draft lists filter cleanly.');
+console.log('✓ Dynamic Control Center modules stay in normal document flow at every viewport.');
+console.log('✓ Narrow action rows stack without covering adjacent or following modules.');
 console.log('✓ The connection panel shows decision counts instead of an unbounded source-chip wall.');
 console.log('✓ The complete workflow stays collapsed until the owner deliberately opens it.');
 console.log('✓ Public guides support search, category filters, result counts, and pagination.');
