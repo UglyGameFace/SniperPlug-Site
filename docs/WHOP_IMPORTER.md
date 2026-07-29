@@ -54,17 +54,18 @@ Never commit real secret values. Saving or changing a Cloudflare secret requires
 2. Connect through Whop.
 3. SniperPlug loads current access-granting memberships and every readable Forum, Course, and Chat experience.
 4. Select one source, several sources, or every Black Box and Hidden Files source.
-5. Approve or disapprove sources individually or in bulk.
-6. Open an approved source and review each post, lesson, or message with Approve, Disapprove, Undo, Approve all ready, or Disapprove all.
-7. Accept the suggested category, choose another fitting category, or create a custom category directly in the import panel.
-8. Confirm republication rights and import approved items as private drafts.
-9. Review formatting, links, and files, then separately Publish or Reject each draft.
+5. Use the normal review flow for individual control, or confirm republication rights and press **Approve, import & publish selected**.
+6. The complete bulk workflow approves each selected source, scans current content, approves every non-blocked item, applies the best-fit category for that source, imports in bounded batches, and publishes every safe guide.
+7. Anything with an unresolved private/expiring file, blocked integrity, or failed source request remains private and is reported instead of being silently published.
+8. **Publish all ready drafts** publishes every safe imported draft left from earlier manual or bulk runs.
+
+The ordinary controls remain available: Approve, Disapprove, Undo, Approve all ready, Disapprove all, custom category creation, private draft review, and individual Publish or Reject.
 
 Black Box, Black Box Clips, and Hidden Files are prioritized automatically. Other active joined groups remain available. Canceled, expired, unresolved, and drafted historical memberships stay hidden. Manual `exp_...` entry remains under the Advanced fallback only.
 
 ## Categories and links
 
-The live category catalog includes announcements, tutorials, money makers, money savers, freebies, deals, food and delivery, retail, reselling, sports betting, casino, crypto and trading, auto checkout, bots and automation, troubleshooting, and community resources. The server suggests a category from the source and content, but the owner remains in control.
+The live category catalog includes announcements, tutorials, money makers, money savers, freebies, deals, food and delivery, retail, reselling, sports betting, casino, crypto and trading, auto checkout, bots and automation, troubleshooting, and community resources. The server suggests a category from each source and its current content, but the owner remains in control during manual review.
 
 Both Markdown links and plain `http://`, `https://`, or `www.` URLs become clickable on published guides. Only safe HTTP or HTTPS protocols are accepted. External links open in a new tab with safe `noopener`, `noreferrer`, and `nofollow` attributes. URLs inside code remain code.
 
@@ -84,7 +85,9 @@ The importer does not falsely label a temporary Whop URL as permanent. Permanent
 - Changed Whop content returns to Needs decision.
 - Fresh scans show the current source response rather than stale previously saved items.
 - The browser submits only exact source and content IDs; the server re-fetches authoritative Whop content from the correct API before import.
-- Imports always enter as drafts and are never featured automatically.
+- Complete bulk runs are owner-initiated, same-origin protected, bounded, and require explicit republication-rights confirmation.
+- Source failures are isolated so one bad source does not erase successful work on the others.
+- Imports enter as unfeatured drafts before the safe bulk publisher evaluates them.
 - Duplicate source items update the existing draft instead of creating copies.
 - Unicode, emoji, punctuation, paragraphs, Markdown hard breaks, headings, lists, tables, links, blockquotes, and fenced code pass through the integrity gate.
 - Ambiguous corruption, unsafe rendered content, dangerous links, and malformed fences are blocked.
@@ -96,4 +99,4 @@ Only import or republish content you own or have explicit permission or a licens
 
 ## Build settings
 
-Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs importer, runtime-configuration, and automatic-discovery audits before deployment.
+Use `npm run build` as the Cloudflare Pages build command and `.` as the output directory. The build runs importer, runtime-configuration, automatic-discovery, and complete bulk-publishing audits before deployment.
