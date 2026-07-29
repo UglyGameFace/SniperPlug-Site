@@ -7,6 +7,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const page = read('control-center/index.html');
 const client = read('assets/js/bulk-publish.js');
+const performance = read('assets/js/control-center-performance.js');
 const jobs = read('functions/_lib/bulk-jobs.js');
 const jobsEndpoint = read('functions/api/bulk-jobs.js');
 const publishEndpoint = read('functions/api/publish-ready.js');
@@ -32,8 +33,14 @@ assert.ok(client.includes("action: 'start'") && client.includes("action: 'step'"
 assert.ok(client.includes('restoreMasterSelectionIfNeeded'), 'Restored checked master controls are not synchronized with real source selection.');
 assert.ok(client.includes('masterDefaults.indeterminate'), 'The master source checkbox does not reflect partial selection.');
 assert.ok(client.includes('Progress is saved'), 'Interrupted bulk jobs do not explain recovery.');
-assert.ok(client.includes('setTimeout(() => window.location.reload()'), 'Completed bulk runs do not refresh the owner dashboard.');
+assert.ok(client.includes('Approve, import & publish') && client.includes('selected source'), 'The complete action does not state that it approves, imports, and publishes the selection.');
+assert.ok(client.includes('refreshWithoutReload') && client.includes('refreshDashboard.click()'), 'Completed bulk runs do not refresh the owner dashboard smoothly.');
+assert.ok(!client.includes('window.location.reload()'), 'Bulk completion still forces a disruptive full-page reload.');
 assert.ok(client.includes("fetch('/api/publish-ready'"), 'Publish-all-ready action is missing.');
+assert.ok(performance.includes("decision === 'disapproved'") && performance.includes('bulkWorkflow.open = true'), 'Approved source batches do not stay selected and open the complete workflow.');
+assert.ok(performance.includes('approved and still selected'), 'The owner is not told that approved sources remain selected for publishing.');
+assert.ok(!performance.includes("if (decision === 'approved') {\n        applySelection"), 'Approved sources are still cleared before the complete workflow can use them.');
+assert.ok(client.includes("new MutationObserver(scheduleSyncButtons).observe(groupsRoot, { childList: true })"), 'Bulk controls still watch every nested mutation and can recreate input lag.');
 
 assert.ok(jobs.includes('CREATE TABLE IF NOT EXISTS bulk_jobs'), 'Bulk jobs are not persisted in D1.');
 assert.ok(jobs.includes('lease_until') && jobs.includes('already running'), 'Concurrent duplicate job steps are not prevented.');
@@ -62,10 +69,11 @@ assert.ok(!/\.(?:bulk-selection-bar|bulk-publish-box|bulk-publish-content)[^{]*\
 assert.ok(hardeningStyles.includes('@media(max-width:480px)') && hardeningStyles.includes('.bulk-selection-bar{grid-template-columns:1fr}'), 'Narrow bulk controls do not stack into one column.');
 
 console.log('\nSNIPERPLUG BULK PUBLISH AUDIT PASSED\n');
-console.log('✓ Restored master selection synchronizes with actual selected sources.');
+console.log('✓ Approved source batches remain selected and flow directly into the complete workflow.');
+console.log('✓ The main action explicitly approves, imports, and publishes selected sources.');
 console.log('✓ Bulk runs persist in D1 and resume after refreshes, closed tabs, or dropped connections.');
 console.log('✓ One explicit job continues through source approval, scanning, content approval, categorization, importing, and publishing.');
 console.log('✓ Import batches respect server limits, duplicate steps are lease-protected, and source failures remain isolated.');
 console.log('✓ Unsafe links, unresolved files, and integrity failures remain private drafts.');
+console.log('✓ Completed jobs refresh dashboard data without a disruptive full-page reload.');
 console.log('✓ Bulk controls stay in normal document flow and stack on narrow screens.');
-console.log('✓ Owners can also publish every ready imported draft in one action.');
