@@ -8,6 +8,13 @@ const MAX_MEMBERSHIPS = 1000;
 const MAX_ITEMS_PER_PRODUCT = 250;
 const MAX_COMPANIES = 100;
 const CONCURRENCY = 5;
+const ACCESS_GRANTING_MEMBERSHIP_STATUSES = new Set([
+  'active',
+  'trialing',
+  'canceling',
+  'past_due',
+  'completed',
+]);
 const DEFAULT_GROUPS = new Map([
   ['black box', 0],
   ['hidden files', 1],
@@ -20,6 +27,10 @@ function normalize(value) {
 function exactExperienceId(value) {
   const id = String(value || '').trim();
   return /^exp_[A-Za-z0-9_-]+$/.test(id) ? id : '';
+}
+
+export function membershipGrantsAccess(membership) {
+  return ACCESS_GRANTING_MEMBERSHIP_STATUSES.has(String(membership?.status || '').trim().toLowerCase());
 }
 
 async function allPages(session, path, query, maxItems, label) {
@@ -59,6 +70,7 @@ async function mapConcurrent(values, mapper, concurrency = CONCURRENCY) {
 export function membershipCompanies(memberships) {
   const companies = new Map();
   for (const membership of memberships) {
+    if (!membershipGrantsAccess(membership)) continue;
     const companyId = String(membership?.company?.id || '').trim();
     if (!companyId) continue;
     const status = String(membership?.status || '').trim().toLowerCase();
@@ -70,7 +82,7 @@ export function membershipCompanies(memberships) {
       products: new Map(),
       memberships: 0,
     };
-    if (status) current.statuses.add(status);
+    current.statuses.add(status);
     const productId = String(membership?.product?.id || '').trim();
     if (productId) current.products.set(productId, String(membership?.product?.title || 'Whop product').trim());
     current.memberships += 1;
@@ -78,7 +90,7 @@ export function membershipCompanies(memberships) {
   }
   const values = [...companies.values()];
   if (values.length > MAX_COMPANIES) {
-    throw new HttpError(422, `Whop returned more than ${MAX_COMPANIES} joined companies. Narrow the connected account before continuing.`);
+    throw new HttpError(422, `Whop returned more than ${MAX_COMPANIES} active joined companies. Narrow the connected account before continuing.`);
   }
   return values;
 }
@@ -207,7 +219,8 @@ export async function discoverWhopSources(session, env) {
     throw error;
   }
 
-  const companies = membershipCompanies(memberships);
+  const activeMemberships = memberships.filter(membershipGrantsAccess);
+  const companies = membershipCompanies(activeMemberships);
   const results = await mapConcurrent(companies, (company) => discoverCompanyForumSources(session, env, company));
   const groups = results.map(({ company, sources, experienceTypes, error }) => ({
     company: {
@@ -223,7 +236,7 @@ export async function discoverWhopSources(session, env) {
     sources,
     experienceTypes,
     error,
-  })).filter((group) => group.sources.length || group.builtIn || group.error);
+  })).filter((group) => group.sources.length || group.builtIn);
 
   groups.sort((left, right) => left.defaultRank - right.defaultRank || left.company.title.localeCompare(right.company.title));
   const sources = groups.flatMap((group) => group.sources);
@@ -231,7 +244,8 @@ export async function discoverWhopSources(session, env) {
   return {
     groups,
     counts: {
-      memberships: memberships.length,
+      memberships: activeMemberships.length,
+      ignoredMemberships: memberships.length - activeMemberships.length,
       groups: groups.length,
       forums: sources.length,
       approved: sources.filter((entry) => entry.source.decision === 'approved').length,
