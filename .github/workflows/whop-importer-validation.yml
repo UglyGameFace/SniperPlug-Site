@@ -1,74 +1,30 @@
-name: SniperPlug importer validation
+name: Verify SniperPlug
 
 on:
+  pull_request:
+    branches: [main]
   push:
-    branches: [agent/whop-guide-importer]
-
-concurrency:
-  group: sniperplug-whop-importer-validation
-  cancel-in-progress: true
+    branches: [main, agent/whop-guide-importer]
 
 permissions:
   contents: read
-  pull-requests: write
-  issues: write
+
+concurrency:
+  group: verify-sniperplug-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  audit:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@v4
-      - name: Set up Node
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Validate importer
-        id: validate
-        shell: bash
-        run: |
-          set +e
-          npm run build > importer-audit.log 2>&1
-          status=$?
-          cat importer-audit.log
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Report validation to PR
-        if: always()
-        uses: actions/github-script@v7
-        env:
-          AUDIT_STATUS: ${{ steps.validate.outputs.status }}
-        with:
-          script: |
-            const fs = require('fs');
-            const marker = '<!-- sniperplug-whop-importer-validation -->';
-            const log = fs.readFileSync('importer-audit.log', 'utf8');
-            const tail = log.split('\n').slice(-80).join('\n').slice(-12000);
-            const passed = process.env.AUDIT_STATUS === '0';
-            const body = `${marker}\n## Whop importer validation ${passed ? '✅' : '❌'}\n\nCommit: \`${context.sha}\`\n\n\`npm run build\` ${passed ? 'passed' : 'failed'}.\n\n<details><summary>Audit output</summary>\n\n\`\`\`text\n${tail}\n\`\`\`\n</details>`;
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: 2,
-              per_page: 100,
-            });
-            const previous = comments.find((comment) => comment.user.type === 'Bot' && comment.body.includes(marker));
-            if (previous) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: previous.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: 2,
-                body,
-              });
-            }
-      - name: Require validation success
-        shell: bash
-        run: test "${{ steps.validate.outputs.status }}" = "0"
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+      - name: Run full build and regression suite
+        run: npm run build
