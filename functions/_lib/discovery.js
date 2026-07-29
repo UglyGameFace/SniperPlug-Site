@@ -42,8 +42,11 @@ function scopeSet(session) {
 
 export function membershipGrantsAccess(membership) {
   const status = String(membership?.status || '').trim().toLowerCase();
+  const cancelationStatus = String(membership?.cancelation_status || membership?.cancellation_status || '').trim().toLowerCase();
   if (!ACCESS_GRANTING_MEMBERSHIP_STATUSES.has(status)) return false;
+  if (cancelationStatus === 'left') return false;
   if (membership?.user === null || membership?.member === null) return false;
+  if (Object.prototype.hasOwnProperty.call(membership || {}, 'joined_at') && membership.joined_at === null) return false;
   return true;
 }
 
