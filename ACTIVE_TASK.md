@@ -4,7 +4,7 @@
 Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls feel responsive, the review queue does not freeze the browser, stale client code cannot survive deployment, and the existing guide-quality/publishing safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`. Root-cause fixes, cleanup, targeted browser interaction checks, and the complete local regression suite pass. GitHub Actions, Cloudflare Pages deployment, conflict inspection, and authenticated acceptance against the connected Whop account/private D1 remain before merge or completion.
+Active on `agent/whop-guide-importer`. The interaction/performance implementation is committed at `bd4cf821ffd284d9677ad89acb0129c9f3308ea3`; the permanent verification workflow was restored at `c82c27572cfc09e49549df9e4b1c5a9af9685f1c`. The full Node 22 regression suite passed, Cloudflare Pages deployed the verified branch, and PR #2 remains draft and mergeable. Authenticated acceptance against the connected Whop account/private D1 is the only remaining completion gate.
 
 ## Scope
 - Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, content quality checks, media preservation, safe publishing, and 48-hour undo.
@@ -41,26 +41,26 @@ Active on `agent/whop-guide-importer`. Root-cause fixes, cleanup, targeted brows
 - Updated regression audits to inspect the active runtime, local group feedback, lazy guide detail, bounded review rendering, persistent maintenance throttling, modal query scope, versioned assets, observer removal, and optimized public filtering.
 
 ## Validation
-- Passed: full `npm run build` under Node 22 locally.
+- Passed: full `npm run build` under Node 22 locally and in the permanent **Verify SniperPlug** GitHub Actions workflow.
 - Passed: JavaScript syntax validation across Functions, browser scripts, and audit scripts.
 - Passed: official Whop content paths, authoritative re-fetching, quality classification, categories, formatting, safe links, media preservation, auth, active membership discovery, bulk publishing, recovery, undo, public-guide isolation, and responsive normal-flow audits.
 - Passed: targeted headless Chromium interaction test with 500 guide summaries on a 412×915 mobile viewport. Only 60 guide cards rendered initially; **Select group** updated `0/19` to `19/19`, changed the button to **Group selected**, updated the global total, and loaded exact guide content on demand without a page error.
 - Passed: three repeated Chromium interaction runs; measured click completion was approximately 111–170 ms in the headless test harness, including Playwright actionability overhead.
 - Passed: dead-runtime reference scan; active HTML loads only `control-center-v2.js` and `control-center-lifecycle.js`.
-- Pending: GitHub Actions on the final branch commit.
-- Pending: Cloudflare Pages deployment of that exact commit.
-- Pending: PR mergeability/conflict recheck.
+- Passed: Cloudflare Pages deployed verified branch commit `c82c27572cfc09e49549df9e4b1c5a9af9685f1c` successfully.
+- Passed: PR conflict inspection; PR #2 remains draft and mergeable against `main`.
 - Pending: authenticated live check with the user’s connected Whop account and private D1 data.
 
 ## Cleanup
 - One active Control Center interaction runtime remains.
 - Draft safety remains separate but event-driven and observer-free.
-- The temporary source-artifact workflow step used for repository inspection was removed.
-- No mock data, browser test fixture, imported content, token, or secret is being committed.
+- Temporary source-artifact and one-shot repair workflow steps were removed; the permanent read-only verification workflow is restored.
+- The incidental empty generated `package-lock.json` was removed.
+- No mock data, browser test fixture, imported content, token, or secret was committed.
 - Quarantined guide content remains private and reversible rather than being deleted.
 
 ## Blockers
-- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center or inspect private D1 rows. After final deployment, live acceptance must confirm group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
+- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center or inspect private D1 rows. Live acceptance must confirm group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
 
 ## Backlog
-- None. Do not switch tasks until final CI, deployment, conflict inspection, authenticated acceptance, and cleanup inspection pass.
+- None. Do not switch tasks until authenticated acceptance and final cleanup inspection pass.
