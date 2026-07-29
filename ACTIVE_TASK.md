@@ -1,59 +1,63 @@
 # Active Task
 
 ## Task
-Build an authorized Whop-to-SniperPlug content importer with secure OAuth, complete active-source discovery, explicit source and content approval, exact formatting preservation, safe links, file verification, private draft storage, category-aware review, duplicate/update protection, and explicit publishing to the SniperPlug website.
+Repair the live Cloudflare Pages Whop importer and publishing workflow so SniperPlug imports real top-level guide content instead of user replies, chat chatter, raw links, product-card noise, duplicate posts, stale picks, and incorrectly categorized material. Restore visible publishing progress and replace the unbounded review wall with a usable queue.
 
 ## Status
-Active on `agent/whop-guide-importer`. The correct `UglyGameFace/SniperPlug-Site` Cloudflare Pages preview has the D1 binding, initialized schema, runtime secrets, multi-content importer, fitting categories, safe links, and a permanent green GitHub verification workflow.
+Active on `agent/whop-guide-importer`. Implementation and regression coverage are updated. GitHub Actions, Cloudflare deployment, and live authenticated D1 acceptance are still required before this task can be called complete or merged.
 
 ## Scope
-- Use Whop OAuth 2.1 with PKCE and `openid profile email forum:read courses:read chat:read member:basic:read member:email:read`; never collect or store a Whop password.
-- Discover only current access-granting memberships: active, trialing, canceling, past_due, and completed.
-- Hide canceled, expired, unresolved, and drafted historical membership records.
-- Query each membership product independently so member-accessible experiences are not lost to company-wide enumeration restrictions.
-- Treat Black Box, Black Box Clips, and Hidden Files as priority suggestions while requiring approval for every exact `exp_...` experience ID.
-- Support official Whop read APIs for Forums, Courses, and Chat.
-- Show custom/third-party app modules honestly as unsupported when Whop exposes no generic content API.
-- Make source and content decisions obvious and reversible: Approve, Disapprove, Undo, Approve all ready, and Disapprove all.
-- Preserve Unicode, emoji, punctuation, paragraphs, Markdown hard breaks, headings, lists, tables, links, blockquotes, and fenced code.
-- Render safe Markdown and plain HTTP/HTTPS URLs as clickable links without linkifying code or allowing dangerous protocols.
-- Repair only deterministic transport defects and block ambiguous corruption, unsafe rendered content, dangerous links, or malformed fences.
-- Store OAuth tokens, source policies, content decisions, drafts, categories, and published guides in private Cloudflare D1 storage.
-- Re-fetch approved content IDs from the correct live Whop API immediately before import; never trust source bodies submitted by browser JavaScript.
-- Verify Whop file durability. Preserve permanent public files and flag private, signed, expiring, hosted-video, unready, or unverified files for replacement before publishing.
-- Seed fitting SniperPlug guide categories, suggest a category from content, and allow custom category creation directly during import or draft editing.
-- Require explicit republication-rights confirmation.
-- Import as drafts only. Publishing requires a separate explicit owner action.
-- Serve published guide indexes and detail pages from D1 while preserving the existing SniperPlug deal site.
+- Keep Whop OAuth, exact source approval, republication-rights confirmation, and private D1 storage intact.
+- Read official Whop Forums, Courses, and Chat APIs without trusting browser-submitted source bodies.
+- Import top-level durable guide content only; replies remain attached to their original Whop discussion.
+- Keep Chat available for explicit manual review but never automatically publish it as standalone guides.
+- Block raw URLs, identifiers, punctuation-only items, empty posts, expired picks, promotional chatter, placeholders, and weak unstructured forum content.
+- Re-fetch every approved item immediately before import and re-run the quality policy on the exact content.
+- Preserve authorized pictures, video, audio, PDFs, files, links, formatting, Unicode, and emoji through the existing media and integrity paths.
+- Auto-fit categories without allowing ordinary words such as “online” or “line of credit” to become Sports Betting.
+- Reconcile old imported drafts and published records across the full active queue, not only recent bulk-job output.
+- Quarantine invalid and duplicate imports, remove them from normal review, and unpublish unsafe existing records.
+- Keep owner-corrected drafts publishable after an explicit manual save.
+- Show visible working, success, warning, and error states for “Audit & publish ready drafts.”
+- Keep the normal review queue bounded, scrollable, one-column, and responsive on phone, tablet, and desktop.
 - Maintain permanent regression tests and Cloudflare Pages validation.
 
 ## Findings
-- `UglyGameFace/SniperPlug-Site` is the correct website repository and Cloudflare Pages deployment source.
-- Whop membership access and importer OAuth permissions are separate. A connected user can see content in Whop while the importer still needs the matching API read scope.
-- Existing categories in `data/deals.json` are deal categories, so guide categories use a separate owner-managed registry.
-- The repository is public. Imported drafts remain in private D1 storage and are never committed as plaintext.
-- Public Whop files can have permanent CDN URLs; private files and hosted course video playback use expiring or signed access and must not be silently published as durable links.
-- Telegram, Discord, Wheels, and arbitrary third-party Whop apps require app-specific authorized APIs; there is no safe universal scraper fallback.
+- Current Whop scans already filtered newly fetched forum replies and Chat replies, but old imported records remained in D1 and continued appearing in the dashboard and public guide index.
+- The previous cleanup only inspected guide IDs from bulk jobs created within the last 72 hours, leaving older bad drafts and published junk untouched.
+- The previous forum policy automatically accepted any post over 420 characters, even when it was a product listing, community comment, promotion, or other non-guide content.
+- Legacy records could lack an explicit source type, so cleanup now derives Forum, Course, or Chat from the saved source key when necessary.
+- The Sports Betting category expression contained `line\b`, which matched the end of “online” and forced unrelated product posts into Sports Betting.
+- The resumable bulk workflow had a detailed progress bar, but the separate “Publish all ready drafts” path only changed a line of text and had no persistent visual evidence.
+- Responsive CSS removed the draft-list height limit and changed it to two columns below 900px, creating the giant wall shown in the screenshots.
+- `functions/_lib/guides.js` still contained a redundant older importer implementation even though the real runtime uses `guides-import.js` and `guides-media.js`.
+
+## Changes
+- Hardened content classification for forum replies, Chat, raw references, low-signal content, stale sports picks, chatter, placeholders, and unstructured product-style posts.
+- Replaced recent-only cleanup with unified reconciliation of active imported drafts and published guides, including exact duplicate handling and D1 decision synchronization.
+- Unified public detail-page cleanup with the same reconciliation used by the dashboard and public search.
+- Rebuilt category matching with explicit bounded phrases and added retail-shopping coverage.
+- Removed the obsolete duplicate importer from `guides.js`; active imports remain in `guides-import.js` and media preservation remains in `guides-media.js`.
+- Added a visible publish-ready progress track and direct public-guides verification link.
+- Defaulted Review & Publish to “Needs review,” removed the unusable rejected filter from the normal queue, and clarified what automatic quarantine removes.
+- Added a bounded, scrollable one-column draft queue at every viewport.
+- Expanded full importer and recovery audits to cover the reported regressions and the active runtime files.
 
 ## Validation
-- `npm run build` passes on GitHub Actions under Node 22.
-- Full content audit covers Forums, Courses, Chat, files, safe links, formatting, categories, authoritative re-fetching, hidden drafts, and publishing isolation.
-- Runtime audit covers D1, all required private secrets, all supported OAuth scopes, and both callback URLs.
-- Discovery audit covers product-scoped enumeration, active membership filtering, unsupported-module diagnostics, priority groups, bulk controls, and mobile layout.
-- Cloudflare Pages deployed the branch preview successfully from the latest validated branch.
-- `SNIPERPLUG_DB` is configured through `wrangler.toml` with the owner-provided D1 database UUID.
-- `migrations/0001_whop_guides.sql` was applied successfully; the database reports seven application tables.
+- Pending: `npm run build` on the branch under Node 22.
+- Pending: JavaScript syntax validation for all Functions, browser scripts, and audits.
+- Pending: targeted quality, category, cleanup, publishing-progress, responsive-layout, media, auth, discovery, bulk-job, and public-guide regression audits.
+- Pending: Cloudflare Pages deployment of the final validated commit.
+- Pending: authenticated preview acceptance against the connected Whop account and live D1 data.
 
 ## Cleanup
-- Work is isolated to the correct `UglyGameFace/SniperPlug-Site` repository.
-- Imported Whop content and runtime secrets remain outside GitHub.
-- One permanent verification workflow owns branch, PR, and main validation.
-- Obsolete forum-only discovery-loader code was removed.
+- Removed the redundant importer implementation from `functions/_lib/guides.js` instead of layering another policy patch over both import paths.
+- Kept the compatibility reconciliation export so existing callers use the stronger cleanup without duplicate code.
+- Kept quarantined records private and reversible rather than deleting source material.
+- No temporary browser script, mock publishing state, or public plaintext content was added.
 
-## Remaining acceptance step
-- Enable `courses:read` and `chat:read` in the Whop application, deploy the validated branch, disconnect and reconnect Whop once, then confirm active Forums, Courses, Chat, links, files, categories, draft import, and separate publishing in the Cloudflare preview.
-- Republishing still requires ownership or explicit permission for every selected source item.
+## Blockers
+- The authenticated Control Center and private D1 contents cannot be acceptance-tested through GitHub alone. After Actions and Cloudflare succeed, the final pass must confirm the connected account’s queue shrinks correctly and a known valid guide appears on `/guides/` after publishing.
 
 ## Backlog
-- Optional future enhancement: add authorized SniperPlug-owned object storage so private Whop files can be copied permanently after rights confirmation instead of requiring manual replacement.
-- Do not switch tasks until the acceptance step is complete.
+- None. Do not switch tasks until validation, deployment, authenticated acceptance, cleanup inspection, and conflict inspection are complete.
