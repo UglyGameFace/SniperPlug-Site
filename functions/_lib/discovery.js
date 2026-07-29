@@ -1,11 +1,15 @@
 import { HttpError } from './http.js';
 import { sourceDecision } from './source-policy.js';
-import { whopApi } from './whop.js';
+import {
+  requiredScopeForExperience,
+  whopApi,
+  whopExperienceType,
+} from './whop.js';
 
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_MEMBERSHIPS = 1000;
-const MAX_ITEMS_PER_PRODUCT = 250;
+const MAX_ITEMS_PER_PRODUCT = 500;
 const MAX_COMPANIES = 100;
 const CONCURRENCY = 5;
 const ACCESS_GRANTING_MEMBERSHIP_STATUSES = new Set([
@@ -17,8 +21,11 @@ const ACCESS_GRANTING_MEMBERSHIP_STATUSES = new Set([
 ]);
 const DEFAULT_GROUPS = new Map([
   ['black box', 0],
+  ['black box clips', 0],
   ['hidden files', 1],
 ]);
+const SUPPORTED_TYPES = new Set(['forum', 'course', 'chat']);
+const REQUIRED_CONTENT_SCOPES = ['forum:read', 'courses:read', 'chat:read'];
 
 function normalize(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
@@ -27,6 +34,10 @@ function normalize(value) {
 function exactExperienceId(value) {
   const id = String(value || '').trim();
   return /^exp_[A-Za-z0-9_-]+$/.test(id) ? id : '';
+}
+
+function scopeSet(session) {
+  return new Set(String(session?.scopes || '').replaceAll('::', ':').split(/\s+/).map((scope) => scope.trim()).filter(Boolean));
 }
 
 export function membershipGrantsAccess(membership) {
@@ -103,38 +114,23 @@ function companySummary(company) {
   };
 }
 
-function forumExperience(forum, company) {
-  const id = exactExperienceId(forum?.experience?.id || forum?.id);
+function listedExperience(experience, company, fallbackAppName = null) {
+  const id = exactExperienceId(experience?.experience?.id || experience?.id);
   if (!id) return null;
+  const raw = experience?.experience || experience;
   return {
+    ...raw,
     id,
-    name: String(forum?.experience?.name || forum?.name || 'Forum').trim(),
-    is_public: Boolean(forum?.experience?.is_public),
+    name: String(raw?.name || experience?.name || 'Whop experience').trim(),
     company: companySummary(company),
-    app: {
-      id: forum?.experience?.app?.id || null,
-      name: forum?.experience?.app?.name || 'Forums',
+    app: raw?.app ? {
+      id: raw.app.id || null,
+      name: raw.app.name || fallbackAppName,
+    } : {
+      id: null,
+      name: fallbackAppName,
     },
   };
-}
-
-function listedExperience(experience, company) {
-  const id = exactExperienceId(experience?.id);
-  if (!id) return null;
-  return {
-    ...experience,
-    id,
-    name: String(experience?.name || 'Whop experience').trim(),
-    company: companySummary(company),
-    app: experience?.app ? {
-      id: experience.app.id || null,
-      name: experience.app.name || null,
-    } : null,
-  };
-}
-
-function isForumExperience(experience) {
-  return normalize(experience?.app?.name || '').includes('forum');
 }
 
 function discoveryFailure(label, error) {
@@ -144,7 +140,19 @@ function discoveryFailure(label, error) {
   return `${label} failed${message ? `: ${message}` : ''}`;
 }
 
-async function discoverCompanyForumSources(session, env, company) {
+function capability(experience, grantedScopes) {
+  const sourceType = whopExperienceType(experience);
+  const requiredScope = requiredScopeForExperience(experience);
+  return {
+    sourceType,
+    supported: SUPPORTED_TYPES.has(sourceType),
+    requiredScope,
+    scopeGranted: !requiredScope || grantedScopes.has(requiredScope),
+    appName: String(experience?.app?.name || 'Unknown app').trim() || 'Unknown app',
+  };
+}
+
+async function discoverCompanySources(session, env, company, grantedScopes) {
   const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
   const scopes = membershipProducts.length ? membershipProducts : [{ id: null, title: 'company access' }];
   const attempts = await mapConcurrent(scopes, async (product) => {
@@ -167,43 +175,46 @@ async function discoverCompanyForumSources(session, env, company) {
   }, Math.min(3, CONCURRENCY));
 
   const discovered = new Map();
-  const experienceTypes = new Set();
   const failures = new Set();
   for (const attempt of attempts) {
     for (const failure of attempt.failures) failures.add(failure);
     for (const forum of attempt.forums) {
-      const experience = forumExperience(forum, company);
+      const experience = listedExperience(forum, company, 'Forums');
       if (experience) discovered.set(experience.id, experience);
     }
     for (const raw of attempt.experiences) {
       const experience = listedExperience(raw, company);
-      if (!experience) continue;
-      const appName = String(experience.app?.name || 'Unknown app').trim() || 'Unknown app';
-      experienceTypes.add(appName);
-      if (isForumExperience(experience)) discovered.set(experience.id, experience);
+      if (experience) discovered.set(experience.id, experience);
     }
   }
 
   const sources = [];
+  const unsupported = [];
   for (const experience of discovered.values()) {
-    sources.push({ experience, source: await sourceDecision(env, experience, experience.id) });
+    const details = capability(experience, grantedScopes);
+    if (!details.supported) {
+      unsupported.push({ experience, capability: details });
+      continue;
+    }
+    sources.push({
+      experience,
+      capability: details,
+      source: await sourceDecision(env, experience, experience.id),
+    });
   }
 
   let error = null;
-  if (!sources.length) {
-    if (experienceTypes.size) {
-      error = `No native Whop forum is attached to this membership product. Available experience types: ${[...experienceTypes].sort().join(', ')}.`;
-    } else if (failures.size) {
-      error = `Whop found the membership, but product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`;
-    } else {
-      error = 'Whop found the membership product, but it has no readable forum or experience modules attached.';
-    }
+  if (!sources.length && !unsupported.length) {
+    error = failures.size
+      ? `Whop found the membership, but product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`
+      : 'Whop found the membership product, but it has no readable experiences attached.';
   }
 
   return {
     company,
     sources,
-    experienceTypes: [...experienceTypes].sort(),
+    unsupported,
+    failures: [...failures],
     error,
   };
 }
@@ -219,10 +230,11 @@ export async function discoverWhopSources(session, env) {
     throw error;
   }
 
+  const grantedScopes = scopeSet(session);
   const activeMemberships = memberships.filter(membershipGrantsAccess);
   const companies = membershipCompanies(activeMemberships);
-  const results = await mapConcurrent(companies, (company) => discoverCompanyForumSources(session, env, company));
-  const groups = results.map(({ company, sources, experienceTypes, error }) => ({
+  const results = await mapConcurrent(companies, (company) => discoverCompanySources(session, env, company, grantedScopes));
+  const groups = results.map(({ company, sources, unsupported, failures, error }) => ({
     company: {
       id: company.id,
       title: company.title,
@@ -234,20 +246,31 @@ export async function discoverWhopSources(session, env) {
     builtIn: DEFAULT_GROUPS.has(normalize(company.title)),
     defaultRank: DEFAULT_GROUPS.get(normalize(company.title)) ?? 100,
     sources,
-    experienceTypes,
+    unsupported,
+    failures,
     error,
-  })).filter((group) => group.sources.length || group.builtIn);
+  })).filter((group) => group.sources.length || group.unsupported.length || group.builtIn);
 
   groups.sort((left, right) => left.defaultRank - right.defaultRank || left.company.title.localeCompare(right.company.title));
   const sources = groups.flatMap((group) => group.sources);
+  const unsupported = groups.flatMap((group) => group.unsupported);
+  const countsByType = sources.reduce((counts, entry) => {
+    counts[entry.capability.sourceType] = (counts[entry.capability.sourceType] || 0) + 1;
+    return counts;
+  }, {});
 
   return {
     groups,
+    missingScopes: REQUIRED_CONTENT_SCOPES.filter((scope) => !grantedScopes.has(scope)),
     counts: {
       memberships: activeMemberships.length,
       ignoredMemberships: memberships.length - activeMemberships.length,
       groups: groups.length,
-      forums: sources.length,
+      sources: sources.length,
+      forums: countsByType.forum || 0,
+      courses: countsByType.course || 0,
+      chats: countsByType.chat || 0,
+      unsupported: unsupported.length,
       approved: sources.filter((entry) => entry.source.decision === 'approved').length,
       disapproved: sources.filter((entry) => entry.source.decision === 'disapproved').length,
       pending: sources.filter((entry) => entry.source.decision === 'pending').length,
