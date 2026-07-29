@@ -35,6 +35,7 @@ import { assertGuidePublishable } from '../_lib/publish.js';
 import {
   listSourceOptions,
   saveSourceDecision,
+  saveSourceDecisions,
   sourceDecision,
 } from '../_lib/source-policy.js';
 import {
@@ -47,8 +48,40 @@ import {
   whopSessionSummary,
 } from '../_lib/whop.js';
 
+const MAX_BATCH_SOURCES = 100;
+const SOURCE_LOOKUP_CONCURRENCY = 6;
+
 function action(request) {
   return String(new URL(request.url).searchParams.get('action') || '').trim();
+}
+
+async function mapConcurrent(values, mapper, concurrency = SOURCE_LOOKUP_CONCURRENCY) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, values.length)) }, () => worker()));
+  return output;
+}
+
+function requestedSourceValues(body) {
+  if (!Array.isArray(body?.experienceIds)) {
+    const single = String(body?.source || body?.experienceId || '').trim();
+    if (!single) throw new HttpError(422, 'Choose at least one Whop source.');
+    return [single];
+  }
+  const values = [...new Set(body.experienceIds.map((value) => String(value || '').trim()).filter(Boolean))];
+  if (!values.length) throw new HttpError(422, 'Choose at least one Whop source.');
+  if (values.length > MAX_BATCH_SOURCES) throw new HttpError(422, `Choose at most ${MAX_BATCH_SOURCES} Whop sources at once.`);
+  for (const value of values) {
+    if (!/^exp_[A-Za-z0-9_-]+$/.test(value)) throw new HttpError(422, 'Bulk source decisions require exact Whop experience IDs.');
+  }
+  return values;
 }
 
 async function login(request, env) {
@@ -124,11 +157,15 @@ async function sourceCheck(request, env, admin) {
 async function sourceSave(request, env, admin) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
-  const body = await readJson(request);
+  const body = await readJson(request, { maxBytes: 50_000 });
+  const decision = String(body.decision || '');
+  const values = requestedSourceValues(body);
   const whop = await requireWhopSession(request, env, admin);
-  const experience = await retrieveExperience(whop, body.source || body.experienceId);
-  const source = await saveSourceDecision(env, experience, experience.id, String(body.decision || ''));
-  return json({ source, sources: await listSourceOptions(env) });
+  const experiences = await mapConcurrent(values, (value) => retrieveExperience(whop, value));
+  const saved = values.length === 1
+    ? [await saveSourceDecision(env, experiences[0], experiences[0].id, decision)]
+    : await saveSourceDecisions(env, experiences.map((experience) => ({ experience, requestedId: experience.id })), decision);
+  return json({ source: saved[0], saved, sources: await listSourceOptions(env) });
 }
 
 async function scan(request, env, admin) {
