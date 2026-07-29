@@ -10,7 +10,6 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const page = read('control-center/index.html');
-const control = read('assets/js/control-center.js');
 const hardening = read('assets/js/control-center-hardening.js');
 const density = read('assets/js/control-center-density.js');
 const performance = read('assets/js/control-center-performance.js');
@@ -36,7 +35,7 @@ assert.ok(hardeningCss.includes('content-visibility:auto'), 'Offscreen source an
 assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls do not use a low-latency touch path.');
 
 assert.ok(page.includes('Imported automatically') && page.includes('External app module'), 'Source capability explanation is missing.');
-assert.ok(page.includes('It is not a missing Whop permission'), 'External app limitations are not explained plainly.');
+assert.ok(/it is not a missing Whop permission/i.test(page), 'External app limitations are not explained plainly.');
 assert.ok(page.includes('<option value="external">External app modules</option>'), 'External app filter is missing.');
 assert.ok(hardening.includes('Separate connection required'), 'External modules still look like generic importer failures.');
 assert.ok(hardening.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
