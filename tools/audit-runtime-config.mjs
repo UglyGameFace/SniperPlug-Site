@@ -9,6 +9,7 @@ const middleware = read('functions/_middleware.js');
 const example = read('.dev.vars.example');
 const docs = read('docs/WHOP_IMPORTER.md');
 const wrangler = read('wrangler.toml');
+const vercel = JSON.parse(read('vercel.json'));
 
 const requiredPrivate = [
   'SNIPERPLUG_DB',
@@ -23,6 +24,7 @@ for (const name of requiredPrivate) {
   assert.ok(docs.includes(`\`${name}\``), `Setup documentation is missing ${name}.`);
 }
 
+assert.ok(wrangler.includes('pages_build_output_dir = "."'), 'Cloudflare Pages output directory is not explicit.');
 assert.ok(wrangler.includes('WHOP_CLIENT_ID = "app_JCFpN1nv4khSkx"'), 'Public Whop client ID is not pinned in Wrangler configuration.');
 for (const scope of ['forum:read', 'courses:read', 'chat:read', 'member:basic:read', 'member:email:read']) {
   assert.ok(wrangler.includes(scope), `Whop OAuth scope is missing: ${scope}`);
@@ -34,9 +36,12 @@ assert.ok(docs.includes('sniperplug.com/api/whop/oauth/callback'), 'Production c
 assert.ok(middleware.includes('missing.join'), 'Runtime setup failures are not consolidated into one message.');
 assert.ok(middleware.includes('both Preview and Production'), 'Runtime error does not explain both Cloudflare environments.');
 assert.ok(middleware.includes('missing,'), 'Runtime response does not include the machine-readable missing-variable list.');
+assert.equal(vercel.ignoreCommand, 'node -e "process.exit(0)"', 'Duplicate Vercel projects can still build the Cloudflare-only site and report false deployment failures.');
+assert.ok(!('outputDirectory' in vercel), 'Vercel must not publish the repository root or expose source files as a fake static deployment.');
 
 console.log('\nSNIPERPLUG RUNTIME CONFIG AUDIT PASSED\n');
 console.log('✓ D1 and every required private secret are checked together.');
 console.log('✓ Forum, Course, Chat, and membership discovery scopes ship through Wrangler.');
 console.log('✓ Preview and Production OAuth callbacks are explicit and documented.');
 console.log('✓ Missing settings are reported in one redacted response.');
+console.log('✓ Cloudflare Pages remains the only deployment runtime; duplicate Vercel builds are ignored safely.');
