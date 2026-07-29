@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/assets/css/styles.css">
   <link rel="stylesheet" href="/assets/css/control-center.css">
   <link rel="stylesheet" href="/assets/css/whop-discovery.css">
+  <link rel="stylesheet" href="/assets/css/control-center-hardening.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -43,10 +44,10 @@
         <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
         <div class="button-row"><a class="btn primary" href="/api/control?action=oauth-start" data-whop-connect>Continue with Whop</a><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect</button></div>
         <p class="scope-warning" data-scope-warning hidden></p>
-        <div class="source-chips" data-source-options></div>
+        <div class="source-summary" data-source-options aria-live="polite"></div>
       </section>
 
-      <section class="control-panel" data-discovery-panel>
+      <section class="control-panel" id="source-browser" data-discovery-panel>
         <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and API-readable Forums, Courses, and Chat experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
@@ -55,21 +56,24 @@
           <div class="button-row"><button class="btn ghost" type="button" data-expand-priority>Expand priority</button><button class="btn ghost" type="button" data-collapse-groups>Collapse all</button></div>
         </div>
         <div class="discovery-bulk" data-discovery-bulk hidden>
-          <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files source</span></label>
-          <div class="button-row"><button class="decision approve" type="button" data-approve-selected disabled>Approve selected</button><button class="decision disapprove" type="button" data-disapprove-selected disabled>Disapprove selected</button><button class="btn ghost" type="button" data-clear-selected disabled>Clear selection</button></div>
-          <div class="bulk-publish-box">
-            <div>
-              <strong>Complete resumable workflow</strong>
-              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
-            </div>
-            <label class="rights-check"><input type="checkbox" data-bulk-rights><span>I own the selected content or have explicit permission to republish it on SniperPlug.</span></label>
-            <button class="btn primary" type="button" data-bulk-publish disabled>Start bulk workflow</button>
-            <p class="bulk-progress" data-bulk-progress role="status" aria-live="polite"></p>
-            <div class="bulk-job-panel" data-bulk-job-panel hidden>
-              <div><strong data-bulk-job-title>Bulk job</strong><span data-bulk-job-summary></span></div>
-              <div class="button-row"><button class="btn primary" type="button" data-resume-bulk-job>Resume</button><button class="btn ghost" type="button" data-cancel-bulk-job>Cancel job</button></div>
-            </div>
+          <div class="bulk-selection-bar">
+            <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files source</span></label>
+            <strong class="selection-count" data-selected-source-count>0 selected</strong>
+            <div class="button-row"><button class="decision approve" type="button" data-approve-selected disabled>Approve selected</button><button class="decision disapprove" type="button" data-disapprove-selected disabled>Disapprove selected</button><button class="btn ghost" type="button" data-clear-selected disabled>Clear selection</button></div>
           </div>
+          <details class="bulk-publish-box" data-bulk-workflow>
+            <summary><span>Complete resumable workflow</span><small data-bulk-workflow-summary>Open when ready to import and publish</small></summary>
+            <div class="bulk-publish-content">
+              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
+              <label class="rights-check"><input type="checkbox" data-bulk-rights><span>I own the selected content or have explicit permission to republish it on SniperPlug.</span></label>
+              <button class="btn primary" type="button" data-bulk-publish disabled>Start bulk workflow</button>
+              <p class="bulk-progress" data-bulk-progress role="status" aria-live="polite"></p>
+              <div class="bulk-job-panel" data-bulk-job-panel hidden>
+                <div><strong data-bulk-job-title>Bulk job</strong><span data-bulk-job-summary></span></div>
+                <div class="button-row"><button class="btn primary" type="button" data-resume-bulk-job>Resume</button><button class="btn ghost" type="button" data-cancel-bulk-job>Cancel job</button></div>
+              </div>
+            </div>
+          </details>
         </div>
         <div class="discovered-groups" data-discovered-groups></div>
         <details class="manual-source">
@@ -154,6 +158,7 @@
   <script src="/assets/js/control-center.js" defer></script>
   <script src="/assets/js/control-center-lifecycle.js" defer></script>
   <script src="/assets/js/control-center-hardening.js" defer></script>
+  <script src="/assets/js/control-center-density.js" defer></script>
   <script src="/assets/js/bulk-publish.js" defer></script>
 </body>
 </html>
