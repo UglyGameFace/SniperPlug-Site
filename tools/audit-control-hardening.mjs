@@ -14,9 +14,11 @@ const publish = read('functions/_lib/publish.js');
 const control = read('functions/api/control.js');
 const lifecycle = read('assets/js/control-center-lifecycle.js');
 const hardening = read('assets/js/control-center-hardening.js');
+const density = read('assets/js/control-center-density.js');
 const bulkBrowser = read('assets/js/bulk-publish.js');
 const html = read('control-center/index.html');
 const hardeningCss = read('assets/css/control-center-hardening.css');
+const discoveryCss = read('assets/css/whop-discovery.css');
 const guideSearch = read('functions/_lib/guide-search.js');
 const guideIndex = read('functions/guides/index.js');
 const templates = read('functions/_lib/templates.js');
@@ -53,8 +55,16 @@ assert.ok(html.includes('/assets/js/control-center-lifecycle.js'), 'Draft safety
 assert.ok(html.includes('data-source-search') && html.includes('data-source-filter'), 'Source search and filtering controls are missing.');
 assert.ok(hardening.includes('data-toggle-group') && hardening.includes('setCollapsed'), 'Large source groups cannot be collapsed.');
 assert.ok(html.includes('data-draft-search') && html.includes('data-draft-status-filter'), 'Draft search and status filtering are missing.');
-assert.ok(hardeningCss.includes('position:sticky') && hardeningCss.includes('.discovery-bulk'), 'Mobile bulk controls are not sticky.');
 assert.ok(html.includes('data-bulk-job-panel') && html.includes('data-resume-bulk-job'), 'Resumable job status controls are missing.');
+
+assert.ok(html.includes('class="source-summary"') && html.includes('/assets/js/control-center-density.js'), 'Compact source decision summary is not loaded.');
+assert.ok(density.includes('compactSourceDecisions') && density.includes('Manage sources'), 'The connection panel still repeats every source decision.');
+assert.ok(html.includes('<details class="bulk-publish-box"') && html.includes('data-bulk-workflow-summary'), 'The complete workflow is not collapsed by default.');
+assert.ok(html.includes('data-selected-source-count'), 'The compact bulk action bar does not show its selection count.');
+assert.ok(discoveryCss.includes('.bulk-publish-box summary') && discoveryCss.includes('.source-summary-copy'), 'Compact workflow and source-summary styling are missing.');
+assert.ok(hardeningCss.includes('.bulk-selection-bar') && hardeningCss.includes('position:sticky'), 'The compact mobile action bar is not sticky.');
+assert.ok(!hardeningCss.includes('.discovery-bulk{position:sticky'), 'The entire oversized bulk workflow must not be sticky.');
+assert.ok(html.includes('/assets/css/control-center-hardening.css'), 'Control Center hardening styles are not loaded.');
 
 assert.ok(guideSearch.includes('LIMIT ? OFFSET ?') && guideSearch.includes('COUNT(*) AS total'), 'Public guide search is not paginated.');
 assert.ok(guideIndex.includes("url.searchParams.get('q')") && guideIndex.includes("url.searchParams.get('page')"), 'Guide endpoint does not accept search and page parameters.');
@@ -75,6 +85,7 @@ const syntaxFiles = [
   'assets/js/bulk-publish.js',
   'assets/js/control-center-lifecycle.js',
   'assets/js/control-center-hardening.js',
+  'assets/js/control-center-density.js',
 ];
 for (const file of syntaxFiles) {
   const result = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
@@ -82,11 +93,13 @@ for (const file of syntaxFiles) {
 }
 
 console.log('\nSNIPERPLUG CONTROL HARDENING AUDIT PASSED\n');
-console.log('✓ Bulk source work persists in D1 and resumes after refreshes or dropped connections.');
+console.log('✓ Bulk source work persists in D1 and resumes after refreshes, logins, or dropped connections.');
 console.log('✓ Duplicate job steps are lease-protected and source failures remain isolated.');
 console.log('✓ Manual and bulk publishing block internal, temporary, and unverified Whop links.');
 console.log('✓ Verified permanent attachments remain publishable.');
 console.log('✓ Unsaved draft edits warn before destructive actions and keep a local recovery copy.');
-console.log('✓ Source groups collapse, source and draft lists filter, and mobile actions stay reachable.');
+console.log('✓ Source groups collapse, source and draft lists filter, and compact mobile actions stay reachable.');
+console.log('✓ The connection panel shows decision counts instead of an unbounded source-chip wall.');
+console.log('✓ The complete workflow stays collapsed until the owner deliberately opens it.');
 console.log('✓ Public guides support search, category filters, result counts, and pagination.');
 console.log('✓ Public guide pages hide private source-group names and show review metadata.');
