@@ -21,7 +21,7 @@
 }
 .source-capability-note{
   display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
+  grid-template-columns:repeat(3,minmax(0,1fr));
   gap:.75rem;
 }
 .source-capability-note>div{
@@ -33,10 +33,16 @@
   border-radius:15px;
   background:rgba(53,194,255,.055);
 }
-.source-capability-note>div+div{border-color:rgba(255,209,102,.22);background:rgba(255,209,102,.055)}
+.source-capability-note>div:nth-child(2){border-color:rgba(255,209,102,.22);background:rgba(255,209,102,.055)}
 .source-capability-note strong{color:var(--brand2)}
-.source-capability-note>div+div strong{color:#ffe39a}
+.source-capability-note>div:nth-child(2) strong{color:#ffe39a}
 .source-capability-note p{margin:0;color:var(--muted);line-height:1.5}
+.source-capability-note [data-media-readiness][data-state="ready"]{border-color:rgba(84,235,139,.32);background:rgba(84,235,139,.075)}
+.source-capability-note [data-media-readiness][data-state="ready"] strong{color:#71f2a2}
+.source-capability-note [data-media-readiness][data-state="missing"]{border-color:rgba(255,118,118,.3);background:rgba(255,118,118,.07)}
+.source-capability-note [data-media-readiness][data-state="missing"] strong{color:#ff9a9a}
+.source-capability-note [data-media-readiness][data-state="warning"]{border-color:rgba(255,209,102,.3);background:rgba(255,209,102,.07)}
+.source-capability-note [data-media-readiness][data-state="warning"] strong{color:#ffe39a}
 .control-app,.control-panel,#source-browser,.discovery-bulk,.bulk-selection-bar,.bulk-publish-box,.bulk-publish-content,.discovered-groups,.discovered-group,.discovered-source-list,.discovered-source,.import-bar,.draft-layout,.draft-editor,.editor-actions{
   min-width:0;
   max-width:100%;
@@ -111,8 +117,10 @@ button[data-pressed="true"],.btn[data-pressed="true"]{transform:scale(.985)}
 .draft-editor[data-dirty="true"]{box-shadow:0 0 0 2px rgba(255,209,102,.16);border-radius:18px}
 .draft-item[hidden],.discovered-source[hidden],.discovered-group[hidden]{display:none!important}
 @media(prefers-reduced-motion:reduce){button,.btn,a.btn{transition:none}}
+@media(max-width:1050px){.source-capability-note{grid-template-columns:1fr 1fr}.source-capability-note [data-media-readiness]{grid-column:1/-1}}
 @media(max-width:900px){
   .source-browser-tools,.draft-tools,.source-capability-note{grid-template-columns:1fr}
+  .source-capability-note [data-media-readiness]{grid-column:auto}
   .bulk-job-panel{display:grid}
   .bulk-job-panel .button-row>*{flex:1}
   .control-panel{padding:1rem}
