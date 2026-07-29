@@ -76,6 +76,9 @@
   .import-bar,.editor-actions{padding-top:.85rem;box-shadow:none;backdrop-filter:none}
 }
 @media(max-width:480px){
+  .bulk-selection-bar{grid-template-columns:1fr}
+  .bulk-selection-bar>.rights-check,.bulk-selection-bar>.selection-count,.bulk-selection-bar>.button-row{grid-column:1}
+  .selection-count{justify-self:start}
   .source-browser-tools .button-row,.bulk-job-panel .button-row,.button-row,.decision-row,.editor-actions{
     display:grid;
     grid-template-columns:1fr;
