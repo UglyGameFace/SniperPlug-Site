@@ -4,16 +4,29 @@ const MAX_MEDIA_BYTES = 500 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 45_000;
 
 function safeFilename(value) {
-  const filename = String(value || 'media-file').normalize('NFKC').replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(-120);
+  const filename = String(value || 'media-file')
+    .normalize('NFKC')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(-120);
   return filename || 'media-file';
 }
 
-function whopMediaUrl(value) {
+function blockedHostname(hostname) {
+  const host = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (host === 'metadata.google.internal' || host === '169.254.169.254') return true;
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
+  const private172 = host.match(/^172\.(\d{1,3})\./);
+  if (private172 && Number(private172[1]) >= 16 && Number(private172[1]) <= 31) return true;
+  if (host === '::1' || host.startsWith('fe80:') || host.startsWith('fc') || host.startsWith('fd')) return true;
+  return false;
+}
+
+function safeRemoteMediaUrl(value) {
   try {
     const url = new URL(String(value || ''));
-    const host = url.hostname.toLowerCase();
-    if (url.protocol !== 'https:') return null;
-    if (host !== 'whop.com' && !host.endsWith('.whop.com')) return null;
+    if (url.protocol !== 'https:' || blockedHostname(url.hostname)) return null;
     return url;
   } catch {
     return null;
@@ -34,23 +47,36 @@ export function mediaMarkdown(file) {
   if (!url) return '';
   const kind = mediaKind(file?.contentType);
   if (kind === 'image') return `![${label}](${url})`;
-  if (kind === 'video') return `[Video: ${label}](${url})`;
-  if (kind === 'audio') return `[Audio: ${label}](${url})`;
+  if (kind === 'video') return `![video: ${label}](${url})`;
+  if (kind === 'audio') return `![audio: ${label}](${url})`;
   return `- [${label}](${url})`;
 }
 
+function boundedStream(body) {
+  let bytes = 0;
+  return body.pipeThrough(new TransformStream({
+    transform(chunk, controller) {
+      bytes += Number(chunk?.byteLength || 0);
+      if (bytes > MAX_MEDIA_BYTES) {
+        controller.error(new Error('This media file is larger than the 500 MB automatic-copy limit.'));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  }));
+}
+
 export async function mirrorWhopMedia(env, file, sourceKey) {
+  if (file?.durable && file?.url) return { ...file, mirrored: false, reviewReason: null };
   if (!env?.SNIPERPLUG_MEDIA) {
     return {
       ...file,
       mirrored: false,
-      reviewReason: file?.durable
-        ? null
-        : 'SniperPlug media storage is not connected. Bind the SNIPERPLUG_MEDIA R2 bucket so private Whop images, videos, audio, and files can be copied permanently.',
+      reviewReason: 'SniperPlug media storage is not connected. Bind the SNIPERPLUG_MEDIA R2 bucket so private Whop images, videos, audio, and files can be copied permanently.',
     };
   }
 
-  const sourceUrl = whopMediaUrl(file?.url);
+  const sourceUrl = safeRemoteMediaUrl(file?.url);
   if (!sourceUrl) {
     return {
       ...file,
@@ -75,20 +101,30 @@ export async function mirrorWhopMedia(env, file, sourceKey) {
     };
   }
 
+  const declaredSize = Number(file?.size || 0);
+  if (declaredSize > MAX_MEDIA_BYTES) {
+    return {
+      ...file,
+      mirrored: false,
+      reviewReason: 'This media file is larger than the 500 MB automatic-copy limit.',
+    };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(sourceUrl.toString(), {
       method: 'GET',
-      redirect: 'error',
+      redirect: 'follow',
       signal: controller.signal,
       headers: { accept: '*/*' },
     });
     if (!response.ok || !response.body) throw new Error(`Whop media download failed (${response.status}).`);
-    const length = Number(response.headers.get('content-length') || file?.size || 0);
+    if (!safeRemoteMediaUrl(response.url)) throw new Error('Whop media redirected to an unsafe destination.');
+    const length = Number(response.headers.get('content-length') || declaredSize || 0);
     if (length > MAX_MEDIA_BYTES) throw new Error('This media file is larger than the 500 MB automatic-copy limit.');
     const contentType = String(response.headers.get('content-type') || file?.contentType || 'application/octet-stream').split(';')[0].trim();
-    await env.SNIPERPLUG_MEDIA.put(key, response.body, {
+    await env.SNIPERPLUG_MEDIA.put(key, boundedStream(response.body), {
       httpMetadata: {
         contentType,
         cacheControl: 'public, max-age=31536000, immutable',
@@ -106,6 +142,7 @@ export async function mirrorWhopMedia(env, file, sourceKey) {
       ...file,
       filename,
       contentType,
+      size: length || declaredSize || null,
       url: `/media/${encodeURIComponent(key)}`,
       durable: true,
       mirrored: true,
