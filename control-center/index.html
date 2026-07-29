@@ -33,7 +33,7 @@
 
     <section class="control-app container" data-control-app hidden>
       <header class="control-hero">
-        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and content, import hidden drafts, then publish separately or run the complete bulk workflow.</p></div>
+        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and content, import hidden drafts, then publish separately or run a resumable complete workflow.</p></div>
         <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">View public guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
       </header>
 
@@ -49,17 +49,26 @@
       <section class="control-panel" data-discovery-panel>
         <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and API-readable Forums, Courses, and Chat experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
+        <div class="source-browser-tools" data-source-browser-tools hidden>
+          <label><span>Find a source</span><input type="search" data-source-search placeholder="Search group, course, forum, or chat"></label>
+          <label><span>Show</span><select data-source-filter><option value="all">All sources</option><option value="pending">Needs decision</option><option value="approved">Approved</option><option value="disapproved">Disapproved</option><option value="course">Courses</option><option value="forum">Forums</option><option value="chat">Chat</option></select></label>
+          <div class="button-row"><button class="btn ghost" type="button" data-expand-priority>Expand priority</button><button class="btn ghost" type="button" data-collapse-groups>Collapse all</button></div>
+        </div>
         <div class="discovery-bulk" data-discovery-bulk hidden>
           <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files source</span></label>
           <div class="button-row"><button class="decision approve" type="button" data-approve-selected disabled>Approve selected</button><button class="decision disapprove" type="button" data-disapprove-selected disabled>Disapprove selected</button><button class="btn ghost" type="button" data-clear-selected disabled>Clear selection</button></div>
           <div class="bulk-publish-box">
             <div>
-              <strong>Complete bulk workflow</strong>
-              <p>Approve selected sources, scan all current content, approve every non-blocked item, use the best-fit category for each source, import drafts, and publish every safe guide.</p>
+              <strong>Complete resumable workflow</strong>
+              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
             </div>
             <label class="rights-check"><input type="checkbox" data-bulk-rights><span>I own the selected content or have explicit permission to republish it on SniperPlug.</span></label>
-            <button class="btn primary" type="button" data-bulk-publish disabled>Approve, import &amp; publish selected</button>
+            <button class="btn primary" type="button" data-bulk-publish disabled>Start bulk workflow</button>
             <p class="bulk-progress" data-bulk-progress role="status" aria-live="polite"></p>
+            <div class="bulk-job-panel" data-bulk-job-panel hidden>
+              <div><strong data-bulk-job-title>Bulk job</strong><span data-bulk-job-summary></span></div>
+              <div class="button-row"><button class="btn primary" type="button" data-resume-bulk-job>Resume</button><button class="btn ghost" type="button" data-cancel-bulk-job>Cancel job</button></div>
+            </div>
           </div>
         </div>
         <div class="discovered-groups" data-discovered-groups></div>
@@ -109,8 +118,12 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you publish it. Bulk publishing skips anything with unresolved files or failed integrity checks.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you publish it. Publishing blocks unresolved files, failed integrity checks, internal Whop pages, and temporary Whop URLs.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
+        <div class="draft-tools">
+          <label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label>
+          <label><span>Status</span><select data-draft-status-filter><option value="all">All</option><option value="draft">Drafts</option><option value="published">Published</option><option value="rejected">Rejected</option></select></label>
+        </div>
         <div class="draft-layout">
           <aside class="draft-list" data-draft-list></aside>
           <div class="draft-empty" data-draft-empty><strong>No draft selected</strong><p>Choose an imported guide to review its exact content.</p></div>
@@ -139,6 +152,8 @@
   </div>
 
   <script src="/assets/js/control-center.js" defer></script>
+  <script src="/assets/js/control-center-lifecycle.js" defer></script>
+  <script src="/assets/js/control-center-hardening.js" defer></script>
   <script src="/assets/js/bulk-publish.js" defer></script>
 </body>
 </html>
