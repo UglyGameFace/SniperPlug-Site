@@ -40,7 +40,7 @@ async function verifyAttachments(session, attachments) {
         : `- [${label}](${file.url})`);
     } else {
       reviewCount += 1;
-      lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Copy this file to SniperPlug-owned storage before publishing.'}`);
+      lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Resolve this private or expiring Whop file by copying it to SniperPlug-owned storage before publishing.'}`);
     }
   }
   return { verified, reviewCount, markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '' };
