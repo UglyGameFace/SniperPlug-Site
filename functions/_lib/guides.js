@@ -2,11 +2,38 @@ import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { renderMarkdown } from './markdown.js';
-import { listForumPosts, retrieveWhopFile } from './whop.js';
+import {
+  listExperienceItems,
+  retrieveExperience,
+  retrieveWhopFile,
+  sourceKeyForWhopItem,
+  whopExperienceType,
+} from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 const MAX_IMPORT = 50;
 const MAX_BODY_BYTES = 1_000_000;
+const CATEGORY_CATALOG = Object.freeze([
+  ['general', 'General', 'Guides that do not fit a more specific category yet.', 10],
+  ['announcements', 'Announcements', 'Important updates, notices, launches, and changes.', 20],
+  ['guides-tutorials', 'Guides & Tutorials', 'Step-by-step instructions, onboarding, and educational material.', 30],
+  ['money-makers', 'Money Makers', 'Income methods, side hustles, flips, and earning opportunities.', 40],
+  ['money-savers', 'Money Savers', 'Discounts, savings methods, rebates, and cost-cutting strategies.', 50],
+  ['freebies', 'Freebies', 'Free products, trials, credits, samples, and no-cost opportunities.', 60],
+  ['deals-promos', 'Deals & Promos', 'Current deals, promotional offers, and limited-time opportunities.', 70],
+  ['food-delivery', 'Food & Delivery', 'Food, restaurants, delivery apps, grocery, and dining methods.', 80],
+  ['retail-shopping', 'Retail & Shopping', 'Retailers, online shopping, product sourcing, and store methods.', 90],
+  ['reselling', 'Reselling', 'Sourcing, resale platforms, marketplace tactics, and profitable flips.', 100],
+  ['sports-betting', 'Sports Betting', 'Sports books, arbitrage, lines, picks, and betting education.', 110],
+  ['casino', 'Casino', 'Casino offers, entries, promotions, and casino-related methods.', 120],
+  ['crypto-trading', 'Crypto & Trading', 'Crypto, markets, calls, trading, and financial education.', 130],
+  ['auto-checkout', 'Auto Checkout', 'Checkout automation, monitoring, forms, and purchasing workflows.', 140],
+  ['bots-automation', 'Bots & Automation', 'Bots, scripts, automation tools, and technical workflows.', 150],
+  ['troubleshooting', 'Errors & Troubleshooting', 'Fixes, seller errors, account issues, and recovery steps.', 160],
+  ['community-resources', 'Community Resources', 'Shared resources, templates, references, and community material.', 170],
+]);
+const LEGACY_CATEGORY_SLUGS = ['electronics', 'home', 'kitchen', 'outdoor', 'smart-home', 'tools'];
+let catalogEnsured = false;
 
 export function slugify(value) {
   return String(value || '')
@@ -38,9 +65,34 @@ function safeAttachmentLabel(value) {
   return String(value || 'Attachment').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Attachment';
 }
 
+async function ensureCategoryCatalog(env) {
+  if (catalogEnsured) return;
+  const db = requireDatabase(env);
+  const now = new Date().toISOString();
+  const statements = CATEGORY_CATALOG.map(([slug, label, description, sortOrder]) => db.prepare(`
+    INSERT INTO guide_categories (slug, label, description, sort_order, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 1, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+      label = excluded.label,
+      description = excluded.description,
+      sort_order = excluded.sort_order,
+      active = 1,
+      updated_at = excluded.updated_at
+  `).bind(slug, label, description, sortOrder, now, now));
+  await db.batch(statements);
+  const legacyPlaceholders = LEGACY_CATEGORY_SLUGS.map(() => '?').join(',');
+  await db.prepare(`
+    UPDATE guide_categories
+    SET active = 0, updated_at = ?
+    WHERE slug IN (${legacyPlaceholders})
+      AND NOT EXISTS (SELECT 1 FROM guides WHERE guides.category_slug = guide_categories.slug)
+  `).bind(now, ...LEGACY_CATEGORY_SLUGS).run();
+  catalogEnsured = true;
+}
+
 async function verifyAttachments(session, attachments) {
   const values = Array.isArray(attachments) ? attachments : [];
-  const verified = await Promise.all(values.map((attachment) => retrieveWhopFile(session, attachment.id)));
+  const verified = await Promise.all(values.map((attachment) => retrieveWhopFile(session, attachment)));
   const lines = [];
   let reviewCount = 0;
   for (const file of verified) {
@@ -51,17 +103,18 @@ async function verifyAttachments(session, attachments) {
         : `- [${label}](${file.url})`);
     } else {
       reviewCount += 1;
-      lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Re-upload this file before publishing.'}`);
+      lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Copy this file to SniperPlug-owned storage before publishing.'}`);
     }
   }
   return {
     verified,
     reviewCount,
-    markdown: lines.length ? `\n\n## Attachments\n\n${lines.join('\n\n')}` : '',
+    markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '',
   };
 }
 
 async function category(env, slug) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const row = await db.prepare('SELECT * FROM guide_categories WHERE slug = ? AND active = 1').bind(slug).first();
   if (!row) throw new HttpError(422, 'Choose an active SniperPlug guide category.');
@@ -69,6 +122,7 @@ async function category(env, slug) {
 }
 
 export async function listCategories(env, { includeInactive = false } = {}) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const rows = await db.prepare(`
     SELECT * FROM guide_categories
@@ -79,6 +133,7 @@ export async function listCategories(env, { includeInactive = false } = {}) {
 }
 
 export async function saveCategory(env, input) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const label = String(input?.label || '').trim().slice(0, 60);
   const slug = slugify(input?.slug || label).slice(0, 48);
@@ -108,16 +163,37 @@ async function uniqueSlug(db, title, sourceKey, existingSlug = null) {
   return `${base.slice(0, 62)}-${(await sha256(sourceKey)).slice(0, 8)}`;
 }
 
-function sourceKeyFor(post) {
-  return `forum-post:${String(post?.id || '')}`;
+export function suggestedCategoryForText(value) {
+  const text = String(value || '').normalize('NFKC').toLowerCase();
+  const rules = [
+    ['sports-betting', /sports?|bet(?:ting)?|arbitrage|sportsbook|pick\b|odds|line\b/],
+    ['casino', /casino|slots?|blackjack|roulette|poker/],
+    ['crypto-trading', /crypto|bitcoin|ethereum|trading|signals?|calls?\b|forex|stock/],
+    ['auto-checkout', /auto checkout|checkout|aco\b|monitor|forms?\b/],
+    ['bots-automation', /\bbot\b|automation|script|webhook|api\b/],
+    ['troubleshooting', /error|fix|troubleshoot|failed|issue|problem|recovery/],
+    ['food-delivery', /food|chipotle|restaurant|grocery|delivery|doordash|uber eats/],
+    ['freebies', /freebie|free trial|free sample|no cost|giveaway/],
+    ['money-savers', /money saver|save money|discount|rebate|cashback|coupon/],
+    ['money-makers', /money maker|make money|income|side hustle|profit|earn/],
+    ['reselling', /resell|seller|flip|sourcing|marketplace|ebay|amazon/],
+    ['deals-promos', /deal|promo|promotion|offer|sale\b/],
+    ['announcements', /announcement|update|notice|launch|important/],
+    ['guides-tutorials', /guide|tutorial|course|lesson|start here|onboarding|how to/],
+  ];
+  return rules.find(([, pattern]) => pattern.test(text))?.[0] || 'general';
+}
+
+function itemBySourceKey(items) {
+  return new Map(items.map((item) => [sourceKeyForWhopItem(item), item]));
 }
 
 export async function importApprovedPosts(env, whopSession, input) {
-  if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm that you own these posts or have explicit permission to republish them.');
+  if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm that you own this content or have explicit permission to republish it.');
   const experienceId = String(input?.experienceId || '').trim();
   const sourceKeys = [...new Set((Array.isArray(input?.sourceKeys) ? input.sourceKeys : []).map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!sourceKeys.length) throw new HttpError(422, 'Approve at least one post before importing.');
-  if (sourceKeys.length > MAX_IMPORT) throw new HttpError(422, `Import at most ${MAX_IMPORT} posts at once.`);
+  if (!sourceKeys.length) throw new HttpError(422, 'Approve at least one content item before importing.');
+  if (sourceKeys.length > MAX_IMPORT) throw new HttpError(422, `Import at most ${MAX_IMPORT} content items at once.`);
   const selectedCategory = await category(env, String(input?.category || '').trim());
   const source = await requireApprovedSource(env, experienceId);
   const db = requireDatabase(env);
@@ -129,26 +205,29 @@ export async function importApprovedPosts(env, whopSession, input) {
   `).bind(experienceId, ...sourceKeys).all();
   const decisions = new Map((rows.results || []).map((row) => [row.source_key, row]));
   if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) {
-    throw new HttpError(409, 'One or more posts are no longer approved. Scan the group again.');
+    throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
   }
 
-  const livePosts = await listForumPosts(whopSession, experienceId);
-  const liveByKey = new Map(livePosts.map((post) => [sourceKeyFor(post), post]));
+  const experience = await retrieveExperience(whopSession, experienceId);
+  const sourceType = whopExperienceType(experience);
+  const liveItems = await listExperienceItems(whopSession, experience);
+  const liveByKey = itemBySourceKey(liveItems);
   const results = [];
 
   for (const sourceKey of sourceKeys) {
-    const post = liveByKey.get(sourceKey);
-    if (!post) throw new HttpError(409, 'An approved Whop post is no longer available. Scan the group again.');
-    const preparedOriginal = await prepareGuideBody(String(post.content || ''), { source: `Whop post ${post.id}` });
-    const attachmentInfo = await verifyAttachments(whopSession, post.attachments || []);
-    const prepared = await prepareGuideBody(`${preparedOriginal.body}${attachmentInfo.markdown}`, { source: `Whop post ${post.id}` });
-    if (new TextEncoder().encode(prepared.body).byteLength > MAX_BODY_BYTES) throw new HttpError(422, `${post.title || post.id} is too large to import safely.`);
+    const item = liveByKey.get(sourceKey);
+    if (!item) throw new HttpError(409, 'An approved Whop content item is no longer available. Scan the source again.');
+    const preparedOriginal = await prepareGuideBody(String(item.content || ''), { source: `Whop ${sourceType} item ${item.id}` });
+    const attachmentInfo = await verifyAttachments(whopSession, item.attachments || []);
+    const prepared = await prepareGuideBody(`${preparedOriginal.body}${attachmentInfo.markdown}`, { source: `Whop ${sourceType} item ${item.id}` });
+    if (new TextEncoder().encode(prepared.body).byteLength > MAX_BODY_BYTES) throw new HttpError(422, `${item.title || item.id} is too large to import safely.`);
     const sourceFingerprint = await sha256(JSON.stringify({
-      postId: post.id,
-      title: post.title || '',
+      sourceKey,
+      title: item.title || '',
       body: prepared.body,
       attachments: attachmentInfo.verified,
-      updatedAt: post.updated_at || post.created_at || null,
+      updatedAt: item.updated_at || item.created_at || null,
+      sourceType,
     }));
 
     const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
@@ -157,15 +236,15 @@ export async function importApprovedPosts(env, whopSession, input) {
       continue;
     }
 
-    const title = String(post.title || decisions.get(sourceKey)?.title || 'Imported Whop post').trim().slice(0, 140);
+    const title = String(item.title || decisions.get(sourceKey)?.title || 'Imported Whop content').trim().slice(0, 140);
     const description = excerpt(preparedOriginal.body) || `Imported from ${source.label} for review.`;
     const slug = await uniqueSlug(db, title, sourceKey, existing?.slug || null);
     const now = new Date().toISOString();
     const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
-    const author = post.user ? {
-      id: post.user.id || null,
-      name: post.user.name || null,
-      username: post.user.username || null,
+    const author = item.user ? {
+      id: item.user.id || null,
+      name: item.user.name || null,
+      username: item.user.username || null,
     } : {};
 
     await db.prepare(`
@@ -202,13 +281,13 @@ export async function importApprovedPosts(env, whopSession, input) {
       sourceKey,
       source.label,
       experienceId,
-      String(post.id || ''),
+      String(item.id || ''),
       sourceFingerprint,
-      JSON.stringify({ files: attachmentInfo.verified, reviewCount: attachmentInfo.reviewCount }),
-      JSON.stringify(integrity),
+      JSON.stringify({ files: attachmentInfo.verified, reviewCount: attachmentInfo.reviewCount, sourceType }),
+      JSON.stringify({ ...integrity, sourceType, sourceMeta: item.sourceMeta || {} }),
       JSON.stringify(author),
-      post.created_at || null,
-      post.updated_at || post.created_at || null,
+      item.created_at || null,
+      item.updated_at || item.created_at || null,
       existing?.imported_at || now,
       now,
     ).run();
@@ -220,6 +299,7 @@ export async function importApprovedPosts(env, whopSession, input) {
       title: saved.title,
       action: existing ? 'updated-draft' : 'created-draft',
       attachmentReviewCount: attachmentInfo.reviewCount,
+      sourceType,
     });
   }
   return {
@@ -256,6 +336,7 @@ function normalizeGuideRow(row) {
 }
 
 export async function listAdminGuides(env) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const rows = await db.prepare(`
     SELECT guides.*, guide_categories.label AS category_label
@@ -287,7 +368,7 @@ export async function saveGuideDraft(env, id, input) {
     String(input.category),
     prepared.body,
     JSON.stringify(attachments),
-    JSON.stringify(prepared),
+    JSON.stringify({ ...prepared, sourceType: attachments.sourceType || safeJson(current.integrity_json || '{}', {}).sourceType || null }),
     input?.featured === true ? 1 : 0,
     new Date().toISOString(),
     id,
@@ -302,7 +383,7 @@ export async function setGuideStatus(env, id, status) {
   if (!current) throw new HttpError(404, 'Guide not found.');
   const attachments = safeJson(current.attachment_json || '{}', {});
   if (status === 'published' && Number(attachments.reviewCount || 0) > 0) {
-    throw new HttpError(422, 'Resolve or replace every flagged Whop attachment before publishing.');
+    throw new HttpError(422, 'Resolve or replace every flagged private or expiring Whop file before publishing.');
   }
   const now = new Date().toISOString();
   await db.prepare(`
@@ -312,6 +393,7 @@ export async function setGuideStatus(env, id, status) {
 }
 
 export async function publicGuides(env, { category: categorySlug = null } = {}) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const query = `
     SELECT guides.*, guide_categories.label AS category_label
@@ -324,6 +406,7 @@ export async function publicGuides(env, { category: categorySlug = null } = {}) 
 }
 
 export async function publicGuide(env, slug) {
+  await ensureCategoryCatalog(env);
   const db = requireDatabase(env);
   const row = await db.prepare(`
     SELECT guides.*, guide_categories.label AS category_label
