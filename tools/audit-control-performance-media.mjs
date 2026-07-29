@@ -10,11 +10,9 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const page = read('control-center/index.html');
-const hardening = read('assets/js/control-center-hardening.js');
-const density = read('assets/js/control-center-density.js');
-const performance = read('assets/js/control-center-performance.js');
-const mediaReadiness = read('assets/js/media-readiness.js');
+const runtime = read('assets/js/control-center-v2.js');
 const hardeningCss = read('assets/css/control-center-hardening.css');
+const historyCss = read('assets/css/bulk-history.css');
 const mediaCss = read('assets/css/guide-media.css');
 const media = read('functions/_lib/media.js');
 const guideMedia = read('functions/_lib/guides-media.js');
@@ -25,32 +23,35 @@ const mediaRoute = read('functions/media/[key].js');
 const middleware = read('functions/_middleware.js');
 const templates = read('functions/_lib/templates.js');
 
-assert.ok(page.includes('/assets/js/control-center-performance.js'), 'Fast interaction runtime is not loaded.');
-assert.ok(performance.includes("addEventListener('click'") && performance.includes('true);'), 'Group selection is not intercepted before the old full-rerender handlers.');
-assert.ok(performance.includes('stopImmediatePropagation'), 'Slow legacy selection handlers can still run after the fast path.');
-assert.ok(performance.includes('requestAnimationFrame'), 'Selection summaries are not frame-coalesced.');
-assert.ok(performance.includes('experienceIds: ids') && performance.includes("fetch('/api/control?action=source-decision'"), 'Bulk source decisions are not sent in one request.');
-assert.equal((performance.match(/\/api\/control\?action=source-decision/g) || []).length, 1, 'The fast source-decision path issues more than one request.');
-assert.ok(!performance.includes('mapLimited'), 'The fast source-decision path still loops network requests.');
+assert.ok(page.includes('/assets/js/control-center-v2.js'), 'Consolidated fast interaction runtime is not loaded.');
+assert.ok(!page.includes('/assets/js/control-center.js') && !page.includes('/assets/js/control-center-performance.js') && !page.includes('/assets/js/control-center-density.js') && !page.includes('/assets/js/control-center-hardening.js') && !page.includes('/assets/js/bulk-publish.js'), 'Legacy runtimes can still attach duplicate handlers and observers.');
+assert.equal((runtime.match(/root\.addEventListener\('click'/g) || []).length, 1, 'Controls do not share one delegated click path.');
+assert.equal((runtime.match(/root\.addEventListener\('change'/g) || []).length, 1, 'Controls do not share one delegated change path.');
+assert.ok(runtime.includes('requestIdleCallback') && runtime.includes('appendChunk'), 'Large content scans do not yield between render chunks.');
+assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen cards are still fully laid out and painted.');
+assert.ok(runtime.includes('state.sourceCards') && runtime.includes('updateSourceDecision'), 'Source decisions still require full source-tree rerenders.');
+assert.ok(runtime.includes('updatePostCard') && runtime.includes('updateGuideListItem'), 'Post or guide actions still rebuild complete lists.');
+assert.ok(runtime.includes('state.selectedSources') && runtime.includes('setSelected'), 'Selection is not maintained in memory as one batched state change.');
+assert.ok(runtime.includes('experienceIds: unique'), 'Bulk source decisions are not sent in one request.');
+assert.equal((runtime.match(/source-decision/g) || []).length, 1, 'The source-decision browser path is duplicated.');
+assert.ok(!runtime.includes('MutationObserver'), 'Broad mutation observation can recreate input lag.');
+assert.ok(runtime.includes('requestAnimationFrame(filterSources)') && runtime.includes('requestAnimationFrame(filterGuides)'), 'Search filtering is not frame-coalesced.');
+assert.ok(runtime.includes('dataset.filterText') && runtime.includes('dataset.filterStatus'), 'Draft filtering does not cache searchable text and status.');
 assert.ok(controlApi.includes('saveSourceDecisions') && controlApi.includes('requestedSourceValues'), 'The server does not accept validated multi-source decisions.');
 assert.ok(controlApi.includes('MAX_BATCH_SOURCES = 100'), 'Source-decision request size is not bounded.');
 assert.ok(sourcePolicy.includes('MAX_SOURCE_DECISIONS = 100') && sourcePolicy.includes('await db.batch(statements)'), 'Source decisions are not written through one bounded database batch.');
-assert.ok(hardening.includes('requestAnimationFrame') && hardening.includes('groupRecords'), 'Source filtering still rescans live DOM on every keystroke.');
-assert.ok(hardening.includes('dataset.filterText') && hardening.includes('dataset.filterStatus'), 'Draft filtering does not cache searchable text.');
-assert.ok(!hardening.includes("{ childList: true, subtree: true }"), 'Broad subtree mutation observation can recreate button lag.');
-assert.ok(density.includes('selectionFrame') && density.includes('compactFrame'), 'Summary updates are not coalesced.');
-assert.ok(hardeningCss.includes('content-visibility:auto'), 'Offscreen source and post cards are still fully rendered.');
+assert.ok(hardeningCss.includes('content-visibility:auto'), 'CSS fallback does not skip offscreen source and post rendering.');
 assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls do not use a low-latency touch path.');
 
 assert.ok(page.includes('Imported automatically') && page.includes('External app module'), 'Source capability explanation is missing.');
-assert.ok(/it is not a missing Whop permission/i.test(page), 'External app limitations are not explained plainly.');
+assert.ok(/needs that service.s own authorized importer/i.test(page), 'External app limitations are not explained plainly.');
 assert.ok(page.includes('<option value="external">External app modules</option>'), 'External app filter is missing.');
-assert.ok(hardening.includes('Separate connection required'), 'External modules still look like generic importer failures.');
-assert.ok(hardening.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
+assert.ok(runtime.includes('Separate connection required'), 'External modules still look like generic importer failures.');
+assert.ok(runtime.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
 assert.ok(!page.toLowerCase().includes('unsupported'), 'Owner-facing Control Center markup still uses the vague unsupported label.');
-assert.ok(hardening.includes('/assets/js/media-readiness.js'), 'Media-storage readiness is not loaded.');
-assert.ok(mediaReadiness.includes('data.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
-assert.ok(mediaReadiness.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
+assert.ok(page.includes('data-media-readiness'), 'Media-storage readiness is missing from the Control Center.');
+assert.ok(runtime.includes('state.dashboard.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
+assert.ok(runtime.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
 assert.ok(controlApi.includes('mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA)'), 'The server does not report real media-storage readiness.');
 
 const image = mediaMarkdown({ filename: 'proof.png', contentType: 'image/png', url: '/media/whop-0123456789abcdef0123456789abcdef-proof.png' });
@@ -77,17 +78,18 @@ assert.ok(mediaRoute.includes('SNIPERPLUG_MEDIA'), 'Public media route is not co
 assert.ok(middleware.includes("media-src 'self' https:"), 'Content security policy blocks guide media playback.');
 assert.ok(templates.includes('/assets/css/guide-media.css'), 'Public guides do not load responsive media styles.');
 assert.ok(mediaCss.includes('.guide-media video') && mediaCss.includes('.guide-media audio'), 'Video and audio players are not responsive.');
+assert.ok(historyCss.includes('.bulk-progress-track') && historyCss.includes('.recent-action'), 'Progress and reversal controls are not styled.');
 
 for (const file of [
-  'assets/js/control-center-hardening.js',
-  'assets/js/control-center-density.js',
-  'assets/js/control-center-performance.js',
-  'assets/js/media-readiness.js',
+  'assets/js/control-center-v2.js',
+  'assets/js/control-center-lifecycle.js',
   'functions/_lib/source-policy.js',
   'functions/_lib/media.js',
   'functions/_lib/guides-media.js',
   'functions/_lib/markdown.js',
   'functions/_lib/bulk-jobs.js',
+  'functions/_lib/recent-actions.js',
+  'functions/api/recent-actions.js',
   'functions/api/control.js',
   'functions/media/[key].js',
   'functions/_middleware.js',
@@ -98,12 +100,12 @@ for (const file of [
 }
 
 console.log('\nSNIPERPLUG PERFORMANCE, CLARITY, AND MEDIA AUDIT PASSED\n');
-console.log('✓ Long source lists filter and summarize at most once per animation frame.');
-console.log('✓ Group selection stays local and bulk source decisions use one bounded request and D1 batch.');
-console.log('✓ Offscreen source and post cards skip unnecessary rendering work.');
+console.log('✓ One delegated runtime replaces duplicate listeners, helpers, and observers.');
+console.log('✓ Source, post, and guide actions update only affected controls and cards.');
+console.log('✓ Long lists render lazily and yield between chunks.');
+console.log('✓ Searches are frame-coalesced and use cached guide metadata.');
 console.log('✓ External app modules are explained as separate integrations, not missing access.');
-console.log('✓ The Control Center reports the real SniperPlug media-storage binding state.');
+console.log('✓ The Control Center reports real SniperPlug media-storage readiness without another dashboard request.');
 console.log('✓ Forum, course, and chat pictures, video, audio, PDFs, and files remain in the import path.');
-console.log('✓ Private signed media can be copied to SniperPlug-owned R2 storage.');
 console.log('✓ Images render inline and video/audio render as responsive playable controls.');
 console.log('✓ Ranged media responses support Chrome and Samsung Browser seeking.');
