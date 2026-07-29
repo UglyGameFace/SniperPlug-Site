@@ -4,7 +4,7 @@ compatibility_date = "2026-07-28"
 
 [vars]
 WHOP_CLIENT_ID = "app_JCFpN1nv4khSkx"
-WHOP_OAUTH_SCOPES = "openid profile email forum:read member:basic:read member:email:read"
+WHOP_OAUTH_SCOPES = "openid profile email forum:read courses:read chat:read member:basic:read member:email:read"
 
 [[d1_databases]]
 binding = "SNIPERPLUG_DB"
