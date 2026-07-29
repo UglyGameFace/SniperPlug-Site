@@ -49,13 +49,9 @@
       </section>
 
       <section class="control-panel" id="source-browser" data-discovery-panel>
-        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Source lists stay collapsed until opened so every tap remains responsive.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
-        <div class="source-capability-note">
-          <div><strong>Imported automatically</strong><p>Whop Forums, Courses, Chat, and their attached pictures, videos, audio, PDFs, and files.</p></div>
-          <div><strong>External app module</strong><p>Your access is valid, but content living in Telegram, Discord, or another service needs that service’s own authorized importer.</p></div>
-          <div data-media-readiness><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
-        </div>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Source lists stay collapsed until opened so every tap remains responsive.</p></div><button class="btn ghost panel-action" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
+        <div class="media-readiness-inline" data-media-readiness><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
           <label><span>Find a source</span><input type="search" data-source-search placeholder="Search group, course, forum, chat, or external app"></label>
           <label><span>Show</span><select data-source-filter><option value="all">All sources</option><option value="pending">Needs decision</option><option value="approved">Approved</option><option value="disapproved">Disapproved</option><option value="course">Courses</option><option value="forum">Forums</option><option value="chat">Chat</option><option value="external">External app modules</option></select></label>
