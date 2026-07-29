@@ -43,13 +43,14 @@ assert.ok(sourcePolicy.includes('MAX_SOURCE_DECISIONS = 100') && sourcePolicy.in
 assert.ok(hardeningCss.includes('content-visibility:auto'), 'CSS fallback does not skip offscreen source and post rendering.');
 assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls do not use a low-latency touch path.');
 
-assert.ok(page.includes('Imported automatically') && page.includes('External app module'), 'Source capability explanation is missing.');
-assert.ok(/needs that service.s own authorized importer/i.test(page), 'External app limitations are not explained plainly.');
+assert.ok(!page.includes('source-capability-note'), 'Large explanation cards were reinserted into the primary workflow.');
+assert.ok(page.includes('media-readiness-inline') && page.includes('data-media-readiness'), 'Media readiness is not presented as a compact status.');
+assert.ok(page.includes('panel-action') && hardeningCss.includes('.panel-head>.panel-action'), 'Panel actions can still stretch into oversized mobile bars.');
+assert.ok(!hardeningCss.includes('.button-row,.decision-row,.editor-actions{\n    display:grid;\n    grid-template-columns:1fr;'), 'A global mobile rule can still stack every button into one column.');
 assert.ok(page.includes('<option value="external">External app modules</option>'), 'External app filter is missing.');
 assert.ok(runtime.includes('Separate connection required'), 'External modules still look like generic importer failures.');
 assert.ok(runtime.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
 assert.ok(!page.toLowerCase().includes('unsupported'), 'Owner-facing Control Center markup still uses the vague unsupported label.');
-assert.ok(page.includes('data-media-readiness'), 'Media-storage readiness is missing from the Control Center.');
 assert.ok(runtime.includes('state.dashboard.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
 assert.ok(runtime.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
 assert.ok(controlApi.includes('mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA)'), 'The server does not report real media-storage readiness.');
@@ -99,13 +100,15 @@ for (const file of [
   assert.equal(result.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
 }
 
-console.log('\nSNIPERPLUG PERFORMANCE, CLARITY, AND MEDIA AUDIT PASSED\n');
+console.log('\nSNIPERPLUG PERFORMANCE, CLARITY, MEDIA, AND VISUAL AUDIT PASSED\n');
 console.log('✓ One delegated runtime replaces duplicate listeners, helpers, and observers.');
 console.log('✓ Source, post, and guide actions update only affected controls and cards.');
 console.log('✓ Long lists render lazily and yield between chunks.');
 console.log('✓ Searches are frame-coalesced and use cached guide metadata.');
-console.log('✓ External app modules are explained as separate integrations, not missing access.');
-console.log('✓ The Control Center reports real SniperPlug media-storage readiness without another dashboard request.');
+console.log('✓ Primary workflow stays compact without explanatory card clutter.');
+console.log('✓ Mobile controls preserve intentional paired actions instead of stacking every button.');
+console.log('✓ External app modules remain explained inside their relevant group.');
+console.log('✓ The Control Center reports real SniperPlug media-storage readiness compactly.');
 console.log('✓ Forum, course, and chat pictures, video, audio, PDFs, and files remain in the import path.');
 console.log('✓ Images render inline and video/audio render as responsive playable controls.');
 console.log('✓ Ranged media responses support Chrome and Samsung Browser seeking.');
