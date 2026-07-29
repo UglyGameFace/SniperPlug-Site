@@ -8,16 +8,18 @@
   const publishAllButton = root.querySelector('[data-publish-all-ready]');
   const publishAllProgress = root.querySelector('[data-publish-all-progress]');
   const masterDefaults = root.querySelector('[data-select-defaults]');
+  const groupsRoot = root.querySelector('[data-discovered-groups]');
   const jobPanel = root.querySelector('[data-bulk-job-panel]');
   const jobTitle = root.querySelector('[data-bulk-job-title]');
   const jobSummary = root.querySelector('[data-bulk-job-summary]');
   const resumeButton = root.querySelector('[data-resume-bulk-job]');
   const cancelButton = root.querySelector('[data-cancel-bulk-job]');
-  if (!bulkButton || !bulkRights || !bulkProgress || !publishAllButton || !publishAllProgress || !jobPanel || !resumeButton || !cancelButton) return;
+  if (!bulkButton || !bulkRights || !bulkProgress || !publishAllButton || !publishAllProgress || !groupsRoot || !jobPanel || !resumeButton || !cancelButton) return;
 
   let running = false;
   let restoringMaster = false;
   let currentJob = null;
+  let syncFrame = 0;
 
   function sleep(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -52,24 +54,26 @@
     return data;
   }
 
-  function sourceIdFromCard(card) {
-    const match = String(card?.textContent || '').match(/\bexp_[A-Za-z0-9_-]+\b/);
+  function sourceIdFromCheckbox(checkbox) {
+    const direct = String(checkbox?.dataset?.sourceId || '').trim();
+    if (/^exp_[A-Za-z0-9_-]+$/.test(direct)) return direct;
+    const match = String(checkbox?.closest('.discovered-source')?.textContent || '').match(/\bexp_[A-Za-z0-9_-]+\b/);
     return match?.[0] || '';
   }
 
   function sourceCheckboxes() {
-    return [...root.querySelectorAll('.discovered-source input[type="checkbox"]')];
+    return [...groupsRoot.querySelectorAll('.discovered-source input[type="checkbox"]')];
   }
 
   function selectedSourceIds() {
     return [...new Set(sourceCheckboxes()
       .filter((checkbox) => checkbox.checked)
-      .map((checkbox) => sourceIdFromCard(checkbox.closest('.discovered-source')))
+      .map(sourceIdFromCheckbox)
       .filter(Boolean))];
   }
 
   function priorityCheckboxes() {
-    return [...root.querySelectorAll('.discovered-group[data-default-group="true"] .discovered-source input[type="checkbox"]')];
+    return [...groupsRoot.querySelectorAll('.discovered-group[data-default-group="true"] .discovered-source input[type="checkbox"]')];
   }
 
   function restoreMasterSelectionIfNeeded() {
@@ -101,6 +105,7 @@
       `${Number(summary.scanned || 0)} items scanned`,
       `${Number(summary.published || 0)} published`,
     ];
+    if (Number(summary.mirroredMedia || 0)) pieces.push(`${summary.mirroredMedia} media files copied`);
     if (Number(summary.heldFiles || 0)) pieces.push(`${summary.heldFiles} held for file review`);
     if (Number(summary.heldLinks || 0)) pieces.push(`${summary.heldLinks} held for link replacement`);
     if (Number(summary.heldIntegrity || 0)) pieces.push(`${summary.heldIntegrity} held for integrity review`);
@@ -121,7 +126,8 @@
     cancelButton.disabled = running;
   }
 
-  function syncButtons() {
+  function syncButtonsNow() {
+    syncFrame = 0;
     restoreMasterSelectionIfNeeded();
     syncMasterFromChildren();
     const count = selectedSourceIds().length;
@@ -135,6 +141,11 @@
     publishAllButton.disabled = running;
     resumeButton.disabled = running;
     cancelButton.disabled = running;
+  }
+
+  function scheduleSyncButtons() {
+    if (syncFrame) return;
+    syncFrame = requestAnimationFrame(syncButtonsNow);
   }
 
   function publishSummary(result, prefix = '') {
@@ -157,7 +168,7 @@
     running = true;
     bulkProgress.dataset.state = 'working';
     renderJob(job);
-    syncButtons();
+    scheduleSyncButtons();
     try {
       let next = job;
       while (next?.status === 'active') {
@@ -173,20 +184,20 @@
           throw error;
         }
         renderJob(next);
-        await sleep(200);
+        await sleep(100);
       }
       bulkProgress.textContent = next?.status === 'completed'
         ? `${jobSummaryText(next)}. Unsafe links or unresolved files stayed private.`
         : 'Bulk job canceled. Completed source work was kept.';
       bulkProgress.dataset.state = next?.status === 'completed' && !next.failures?.length ? 'ok' : 'warning';
-      setTimeout(() => window.location.reload(), 2200);
+      setTimeout(() => window.location.reload(), 1600);
     } catch (error) {
       bulkProgress.textContent = `${error.message} Progress is saved; press Resume when the connection is stable.`;
       bulkProgress.dataset.state = 'error';
       try { renderJob(await jobApi()); } catch { /* keep last known job */ }
     } finally {
       running = false;
-      syncButtons();
+      scheduleSyncButtons();
     }
   }
 
@@ -216,27 +227,27 @@
   async function publishAllReadyDrafts() {
     if (running) return;
     running = true;
-    syncButtons();
+    scheduleSyncButtons();
     publishAllProgress.dataset.state = 'working';
     publishAllProgress.textContent = 'Auditing links and publishing every ready imported draft…';
     try {
       const result = await publishReady({ allImported: true });
       publishAllProgress.textContent = `${publishSummary(result)}.`;
       publishAllProgress.dataset.state = (result.skippedFiles?.length || result.skippedLinks?.length || result.skippedIntegrity?.length) ? 'warning' : 'ok';
-      setTimeout(() => window.location.reload(), 2500);
+      setTimeout(() => window.location.reload(), 1800);
     } catch (error) {
       publishAllProgress.textContent = error.message;
       publishAllProgress.dataset.state = 'error';
     } finally {
       running = false;
-      syncButtons();
+      scheduleSyncButtons();
     }
   }
 
   async function cancelCurrentJob() {
     if (!currentJob || currentJob.status !== 'active' || running) return;
     running = true;
-    syncButtons();
+    scheduleSyncButtons();
     try {
       renderJob(await jobApi({ action: 'cancel', jobId: currentJob.id }));
       bulkProgress.textContent = 'Bulk job canceled. Any completed imports and publications were preserved.';
@@ -246,7 +257,7 @@
       bulkProgress.dataset.state = 'error';
     } finally {
       running = false;
-      syncButtons();
+      scheduleSyncButtons();
     }
   }
 
@@ -261,24 +272,23 @@
     } catch (error) {
       bulkProgress.textContent = error.status === 401 ? '' : error.message;
     } finally {
-      syncButtons();
+      scheduleSyncButtons();
     }
   }
 
   root.addEventListener('change', (event) => {
-    if (event.target.matches('[data-bulk-rights], [data-select-defaults], .discovered-source input[type="checkbox"]')) {
-      setTimeout(syncButtons, 0);
-    }
+    if (event.target.matches('[data-bulk-rights]')) scheduleSyncButtons();
+    if (!window.__sniperplugSelectionBatch && event.target.matches('[data-select-defaults], .discovered-source input[type="checkbox"]')) scheduleSyncButtons();
   });
+  root.addEventListener('sniperplug:selection-updated', scheduleSyncButtons);
   root.addEventListener('click', (event) => {
-    if (event.target.closest('[data-clear-selected], .discovered-group .btn')) setTimeout(syncButtons, 0);
+    if (event.target.closest('[data-clear-selected], .discovered-group .btn')) scheduleSyncButtons();
   });
   bulkButton.addEventListener('click', startBulkWorkflow);
   resumeButton.addEventListener('click', () => runJob(currentJob));
   cancelButton.addEventListener('click', cancelCurrentJob);
   publishAllButton.addEventListener('click', publishAllReadyDrafts);
 
-  const observer = new MutationObserver(() => syncButtons());
-  observer.observe(root.querySelector('[data-discovered-groups]') || root, { childList: true, subtree: true });
+  new MutationObserver(scheduleSyncButtons).observe(groupsRoot, { childList: true, subtree: true });
   loadJob();
 })();
