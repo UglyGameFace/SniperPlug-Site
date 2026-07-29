@@ -10,6 +10,7 @@
   const sourceOptions = root.querySelector('[data-source-options]');
   const globalStatus = root.querySelector('[data-global-status]');
   const refreshGroups = root.querySelector('[data-refresh-groups]');
+  const bulkWorkflow = root.querySelector('[data-bulk-workflow]');
   if (!groupsRoot || !masterDefaults || !approveSelected || !disapproveSelected || !clearSelected) return;
 
   let changingSelection = false;
@@ -133,10 +134,15 @@
       if (!response.ok) throw new Error(output.error || `Source decision failed (${response.status}).`);
       updateVisibleDecisions(ids, decision);
       renderSavedSourceOptions(output.sources);
-      applySelection(sourceCheckboxes().filter((checkbox) => checkbox.checked), false);
-      masterDefaults.checked = false;
-      masterDefaults.indeterminate = false;
-      showStatus(`${ids.length} Whop source${ids.length === 1 ? '' : 's'} ${decision} in one batch.`, decision === 'approved' ? 'ok' : 'warning');
+      if (decision === 'disapproved') {
+        applySelection(sourceCheckboxes().filter((checkbox) => checkbox.checked), false);
+        masterDefaults.checked = false;
+        masterDefaults.indeterminate = false;
+        showStatus(`${ids.length} Whop source${ids.length === 1 ? '' : 's'} disapproved in one batch.`, 'warning');
+      } else {
+        if (bulkWorkflow) bulkWorkflow.open = true;
+        showStatus(`${ids.length} Whop source${ids.length === 1 ? '' : 's'} approved and still selected. Confirm rights, then run Approve, import & publish selected.`, 'ok');
+      }
       refreshGroups?.click();
     } catch (error) {
       showStatus(String(error?.message || 'The selected Whop sources could not be updated.'), 'error');
