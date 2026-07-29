@@ -7,6 +7,7 @@
   const bulkProgress = root.querySelector('[data-bulk-progress]');
   const publishAllButton = root.querySelector('[data-publish-all-ready]');
   const publishAllProgress = root.querySelector('[data-publish-all-progress]');
+  const refreshDashboard = root.querySelector('[data-refresh-dashboard]');
   const masterDefaults = root.querySelector('[data-select-defaults]');
   const groupsRoot = root.querySelector('[data-discovered-groups]');
   const jobPanel = root.querySelector('[data-bulk-job-panel]');
@@ -55,7 +56,7 @@
   }
 
   function sourceIdFromCheckbox(checkbox) {
-    const direct = String(checkbox?.dataset?.sourceId || '').trim();
+    const direct = String(checkbox?.dataset?.sourceId || checkbox?.closest('.discovered-source')?.dataset?.experienceId || '').trim();
     if (/^exp_[A-Za-z0-9_-]+$/.test(direct)) return direct;
     const match = String(checkbox?.closest('.discovered-source')?.textContent || '').match(/\bexp_[A-Za-z0-9_-]+\b/);
     return match?.[0] || '';
@@ -136,9 +137,9 @@
     bulkButton.textContent = activeJob
       ? 'Finish or cancel the active bulk job first'
       : count
-        ? `Start resumable workflow for ${count} source${count === 1 ? '' : 's'}`
-        : 'Start bulk workflow';
-    publishAllButton.disabled = running;
+        ? `Approve, import & publish ${count} selected source${count === 1 ? '' : 's'}`
+        : 'Approve, import & publish selected';
+    publishAllButton.disabled = running || activeJob;
     resumeButton.disabled = running;
     cancelButton.disabled = running;
   }
@@ -161,6 +162,10 @@
     if (skippedStatus) pieces.push(`${skippedStatus} skipped because of status`);
     if (alreadyPublished) pieces.push(`${alreadyPublished} already published`);
     return `${prefix}${pieces.join(' · ')}`;
+  }
+
+  function refreshWithoutReload() {
+    if (refreshDashboard) refreshDashboard.click();
   }
 
   async function runJob(job) {
@@ -190,7 +195,7 @@
         ? `${jobSummaryText(next)}. Unsafe links or unresolved files stayed private.`
         : 'Bulk job canceled. Completed source work was kept.';
       bulkProgress.dataset.state = next?.status === 'completed' && !next.failures?.length ? 'ok' : 'warning';
-      setTimeout(() => window.location.reload(), 1600);
+      refreshWithoutReload();
     } catch (error) {
       bulkProgress.textContent = `${error.message} Progress is saved; press Resume when the connection is stable.`;
       bulkProgress.dataset.state = 'error';
@@ -212,7 +217,7 @@
       bulkProgress.textContent = 'Confirm republication rights before continuing.';
       return;
     }
-    bulkProgress.textContent = 'Creating a resumable D1 bulk job…';
+    bulkProgress.textContent = `Creating a resumable job for ${ids.length} selected source${ids.length === 1 ? '' : 's'}…`;
     bulkProgress.dataset.state = 'working';
     try {
       const job = await jobApi({ action: 'start', sourceIds: ids, rightsConfirmed: true });
@@ -225,7 +230,7 @@
   }
 
   async function publishAllReadyDrafts() {
-    if (running) return;
+    if (running || currentJob?.status === 'active') return;
     running = true;
     scheduleSyncButtons();
     publishAllProgress.dataset.state = 'working';
@@ -234,7 +239,7 @@
       const result = await publishReady({ allImported: true });
       publishAllProgress.textContent = `${publishSummary(result)}.`;
       publishAllProgress.dataset.state = (result.skippedFiles?.length || result.skippedLinks?.length || result.skippedIntegrity?.length) ? 'warning' : 'ok';
-      setTimeout(() => window.location.reload(), 1800);
+      refreshWithoutReload();
     } catch (error) {
       publishAllProgress.textContent = error.message;
       publishAllProgress.dataset.state = 'error';
@@ -289,6 +294,6 @@
   cancelButton.addEventListener('click', cancelCurrentJob);
   publishAllButton.addEventListener('click', publishAllReadyDrafts);
 
-  new MutationObserver(scheduleSyncButtons).observe(groupsRoot, { childList: true, subtree: true });
+  new MutationObserver(scheduleSyncButtons).observe(groupsRoot, { childList: true });
   loadJob();
 })();
