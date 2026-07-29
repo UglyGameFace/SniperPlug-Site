@@ -29,8 +29,10 @@ assert.ok(!discovery.includes('group.sources.length || group.unsupported.length 
 assert.ok(discovery.includes('emptyGroups'), 'Hidden empty-group count is not retained for diagnostics.');
 assert.ok(discovery.includes('ACCESS_GRANTING_MEMBERSHIP_STATUSES'), 'Current-access membership filtering is missing.');
 assert.ok(discovery.includes("'active'") && discovery.includes("'trialing'") && discovery.includes("'canceling'") && discovery.includes("'past_due'") && discovery.includes("'completed'"), 'Whop access-granting membership statuses are incomplete.');
+assert.ok(discovery.includes('cancelation_status') && discovery.includes("cancelationStatus === 'left'"), 'Whop memberships whose member left can still reappear.');
 assert.ok(discovery.includes('if (!membershipGrantsAccess(membership)) continue;'), 'Historical inactive memberships can still become active groups.');
 assert.ok(discovery.includes('membership?.user === null || membership?.member === null'), 'Deleted users or missing member records can still appear as current access.');
+assert.ok(discovery.includes("'joined_at'") && discovery.includes('membership.joined_at === null'), 'Memberships without a current member relationship can still appear.');
 assert.ok(discovery.includes('values.length > MAX_COMPANIES'), 'Company-limit overflow must fail visibly instead of silently slicing groups.');
 assert.ok(discovery.includes('current.memberships += 1'), 'Merged company cards do not retain their membership-record count.');
 assert.ok(discovery.includes('member:basic:read') && discovery.includes('member:email:read'), 'Missing membership-scope recovery message is incomplete.');
@@ -49,11 +51,15 @@ assert.ok(hardening.includes('It is not a missing Whop permission'), 'External a
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 
 for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed']) {
-  assert.equal(membershipGrantsAccess({ status }), true, `${status} must remain discoverable because it grants access.`);
+  assert.equal(membershipGrantsAccess({ status }), true, `${status} must remain discoverable because it can grant access.`);
 }
 for (const status of ['canceled', 'expired', 'unresolved', 'drafted', '', 'unknown_future_status']) {
   assert.equal(membershipGrantsAccess({ status }), false, `${status || 'blank'} must not appear as a current joined membership.`);
 }
+assert.equal(membershipGrantsAccess({ status: 'completed', cancelation_status: 'left' }), false, 'A completed historical product must not keep a group visible after the member left.');
+assert.equal(membershipGrantsAccess({ status: 'active', cancellation_status: 'left' }), false, 'The alternate cancellation-status spelling must also hide a left member.');
+assert.equal(membershipGrantsAccess({ status: 'completed', cancelation_status: 'won_back' }), true, 'A won-back completed membership can remain discoverable.');
+assert.equal(membershipGrantsAccess({ status: 'active', joined_at: null }), false, 'A membership with no current joined record must not appear.');
 assert.equal(membershipGrantsAccess({ status: 'active', member: null }), false, 'A membership with no current member record must not appear.');
 assert.equal(membershipGrantsAccess({ status: 'active', user: null }), false, 'A membership whose user no longer exists must not appear.');
 
@@ -63,6 +69,7 @@ const memberships = [
   { status: 'trialing', company: { id: 'biz_hidden', title: 'Hidden Files' }, product: { id: 'prod_hidden', title: 'Hidden Files' } },
   { status: 'past_due', company: { id: 'biz_other', title: 'Other Group' }, product: { id: 'prod_other', title: 'Other Product' } },
   { status: 'canceling', company: { id: 'biz_other', title: 'Other Group' }, product: { id: 'prod_extra', title: 'Extra Product' } },
+  { status: 'completed', cancelation_status: 'left', company: { id: 'biz_completed_left', title: 'Completed But Left' }, product: { id: 'prod_completed_left', title: 'Old Product' } },
   { status: 'canceled', company: { id: 'biz_left', title: 'Left Group' }, product: { id: 'prod_left', title: 'Left Product' } },
   { status: 'expired', company: { id: 'biz_expired', title: 'Expired Group' }, product: { id: 'prod_expired', title: 'Expired Product' } },
   { status: 'unresolved', company: { id: 'biz_unresolved', title: 'Unresolved Group' }, product: { id: 'prod_unresolved', title: 'Unresolved Product' } },
@@ -77,15 +84,15 @@ assert.deepEqual([...blackBox.products.keys()].sort(), ['prod_black', 'prod_blac
 assert.deepEqual([...blackBox.statuses].sort(), ['active', 'completed'], 'Valid statuses should remain diagnostic metadata.');
 assert.ok(companies.some((company) => company.id === 'biz_hidden'), 'Trialing Hidden Files membership was removed.');
 assert.deepEqual([...companies.find((company) => company.id === 'biz_other').products.keys()].sort(), ['prod_extra', 'prod_other'], 'Past-due or canceling products were removed even though they still grant access.');
-assert.ok(!companies.some((company) => ['biz_left', 'biz_expired', 'biz_unresolved', 'biz_drafted'].includes(company.id)), 'Historical inactive groups leaked back into current discovery.');
+assert.ok(!companies.some((company) => ['biz_completed_left', 'biz_left', 'biz_expired', 'biz_unresolved', 'biz_drafted'].includes(company.id)), 'Historical or explicitly left groups leaked back into current discovery.');
 
 console.log('\nWHOP MULTI-CONTENT DISCOVERY AUDIT PASSED\n');
 console.log('✓ Company-wide and every membership-product source list are checked and deduplicated.');
 console.log('✓ Forum, Course, and Chat sources are classified with their exact permission requirements.');
 console.log('✓ External app modules remain visible with a separate-integration explanation.');
-console.log('✓ Empty stale groups and missing member records stay out of the source browser.');
-console.log('✓ Active, trialing, canceling, past-due, and completed memberships remain discoverable.');
-console.log('✓ Canceled, expired, unresolved, and drafted historical memberships stay hidden.');
+console.log('✓ Empty stale groups, left members, and missing member records stay out of the source browser.');
+console.log('✓ Active, trialing, canceling, past-due, and completed memberships remain discoverable only while access remains current.');
+console.log('✓ Canceled, expired, unresolved, drafted, and explicitly left historical memberships stay hidden.');
 console.log('✓ Black Box, Black Box Clips, and Hidden Files remain prioritized.');
 console.log('✓ Individual and bulk source decisions remain available.');
 console.log('✓ Manual experience IDs remain an advanced fallback.');
