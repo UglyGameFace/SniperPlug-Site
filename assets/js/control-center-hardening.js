@@ -1,11 +1,4 @@
 (() => {
-  if (!document.querySelector('link[href="/assets/css/control-center-hardening.css"]')) {
-    const stylesheet = document.createElement('link');
-    stylesheet.rel = 'stylesheet';
-    stylesheet.href = '/assets/css/control-center-hardening.css';
-    document.head.append(stylesheet);
-  }
-
   const root = document.querySelector('[data-control-root]');
   if (!root) return;
 
@@ -20,17 +13,28 @@
   const draftStatus = root.querySelector('[data-draft-status-filter]');
   if (!groupsRoot || !sourceTools || !sourceSearch || !sourceFilter || !draftList || !draftSearch || !draftStatus) return;
 
+  let groupRecords = [];
+  let sourceFilterFrame = 0;
+  let draftFilterFrame = 0;
+  let prepareFrame = 0;
+
   function groupKey(group) {
     const title = group.querySelector('h3')?.textContent?.trim() || 'group';
     return `sniperplug:group:${title.toLowerCase()}`;
   }
 
+  function setHidden(element, hidden) {
+    if (element && element.hidden !== hidden) element.hidden = hidden;
+  }
+
   function setCollapsed(group, collapsed) {
-    group.dataset.collapsed = collapsed ? 'true' : 'false';
+    const next = collapsed ? 'true' : 'false';
+    if (group.dataset.collapsed === next) return;
+    group.dataset.collapsed = next;
     const list = group.querySelector('.discovered-source-list');
-    const unsupported = group.querySelector('.unsupported-sources');
-    if (list) list.hidden = collapsed;
-    if (unsupported) unsupported.hidden = collapsed || unsupported.dataset.filtered === 'hidden';
+    const external = group.querySelector('.unsupported-sources,.external-apps');
+    setHidden(list, collapsed);
+    if (external) setHidden(external, collapsed || external.dataset.filtered === 'hidden');
     const button = group.querySelector('[data-toggle-group]');
     if (button) {
       button.textContent = collapsed ? 'Expand' : 'Collapse';
@@ -47,7 +51,26 @@
     return group.dataset.defaultGroup !== 'true';
   }
 
-  function prepareGroups() {
+  function buildRecord(group) {
+    const title = group.querySelector('h3')?.textContent?.trim() || '';
+    const sources = [...group.querySelectorAll('.discovered-source')].map((source) => ({
+      element: source,
+      text: source.textContent.toLocaleLowerCase('en-US'),
+      state: source.dataset.state || 'pending',
+      type: source.dataset.type || 'unknown',
+    }));
+    const external = group.querySelector('.unsupported-sources,.external-apps');
+    return {
+      group,
+      title: title.toLocaleLowerCase('en-US'),
+      sources,
+      external,
+      externalText: external?.textContent?.toLocaleLowerCase('en-US') || '',
+    };
+  }
+
+  function prepareGroupsNow() {
+    prepareFrame = 0;
     const groups = [...groupsRoot.querySelectorAll('.discovered-group')];
     sourceTools.hidden = groups.length === 0;
     for (const group of groups) {
@@ -55,75 +78,98 @@
       group.dataset.hardened = 'true';
       const actions = group.querySelector(':scope > header .button-row');
       if (actions) {
+        const [selectButton, clearButton] = actions.querySelectorAll('button');
+        if (selectButton) selectButton.dataset.fastGroupSelect = 'true';
+        if (clearButton) clearButton.dataset.fastGroupClear = 'true';
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'btn ghost';
         toggle.dataset.toggleGroup = 'true';
-        toggle.addEventListener('click', () => setCollapsed(group, group.dataset.collapsed !== 'true'));
+        toggle.textContent = 'Collapse';
+        toggle.setAttribute('aria-expanded', 'true');
         actions.append(toggle);
       }
+      group.dataset.collapsed = initialCollapsed(group) ? 'false' : 'true';
       setCollapsed(group, initialCollapsed(group));
     }
-    filterSources();
+    groupRecords = groups.map(buildRecord);
+    filterSourcesNow();
   }
 
-  function sourceMatches(source, query, filter) {
-    const text = source.textContent.toLowerCase();
-    const state = source.dataset.state || 'pending';
-    const type = source.dataset.type || 'unknown';
-    const queryMatch = !query || text.includes(query);
-    const filterMatch = filter === 'all' || filter === state || filter === type;
-    return queryMatch && filterMatch;
+  function schedulePrepare() {
+    if (prepareFrame) return;
+    prepareFrame = requestAnimationFrame(prepareGroupsNow);
   }
 
-  function filterSources() {
-    const query = sourceSearch.value.trim().toLowerCase();
+  function filterSourcesNow() {
+    sourceFilterFrame = 0;
+    const query = sourceSearch.value.trim().toLocaleLowerCase('en-US');
     const filter = sourceFilter.value;
-    for (const group of groupsRoot.querySelectorAll('.discovered-group')) {
-      const groupText = group.querySelector('h3')?.textContent?.toLowerCase() || '';
-      const groupMatch = query && groupText.includes(query);
+    for (const record of groupRecords) {
+      const groupMatch = Boolean(query && record.title.includes(query));
       let visible = 0;
-      for (const source of group.querySelectorAll('.discovered-source')) {
-        const show = sourceMatches(source, groupMatch ? '' : query, filter);
-        source.hidden = !show;
+      for (const source of record.sources) {
+        const queryMatch = !query || groupMatch || source.text.includes(query);
+        const filterMatch = filter === 'all' || filter === source.state || filter === source.type;
+        const show = queryMatch && filterMatch;
+        setHidden(source.element, !show);
         if (show) visible += 1;
       }
-      const unsupported = group.querySelector('.unsupported-sources');
-      const unsupportedMatch = filter === 'all' && (!query || groupMatch || unsupported?.textContent.toLowerCase().includes(query));
-      if (unsupported) {
-        unsupported.dataset.filtered = unsupportedMatch ? 'visible' : 'hidden';
-        unsupported.hidden = group.dataset.collapsed === 'true' || !unsupportedMatch;
+      const externalMatch = filter === 'all' || filter === 'external';
+      const externalVisible = Boolean(record.external && externalMatch && (!query || groupMatch || record.externalText.includes(query)));
+      if (record.external) {
+        record.external.dataset.filtered = externalVisible ? 'visible' : 'hidden';
+        setHidden(record.external, record.group.dataset.collapsed === 'true' || !externalVisible);
       }
-      group.hidden = visible === 0 && !unsupportedMatch;
-      const meta = group.querySelector(':scope > header p');
+      setHidden(record.group, visible === 0 && !externalVisible);
+      const meta = record.group.querySelector(':scope > header p');
       if (meta) meta.dataset.visibleCount = String(visible);
-      if (query && !group.hidden) setCollapsed(group, false);
+      if (query && !record.group.hidden) setCollapsed(record.group, false);
     }
   }
 
-  function filterDrafts() {
-    const query = draftSearch.value.trim().toLowerCase();
+  function scheduleSourceFilter() {
+    if (sourceFilterFrame) cancelAnimationFrame(sourceFilterFrame);
+    sourceFilterFrame = requestAnimationFrame(filterSourcesNow);
+  }
+
+  function filterDraftsNow() {
+    draftFilterFrame = 0;
+    const query = draftSearch.value.trim().toLocaleLowerCase('en-US');
     const status = draftStatus.value;
     for (const item of draftList.querySelectorAll('.draft-item')) {
-      const text = item.textContent.toLowerCase();
-      const itemStatus = item.querySelector('small')?.textContent?.split('·')[0]?.trim().toLowerCase() || '';
-      item.hidden = Boolean(query && !text.includes(query)) || (status !== 'all' && itemStatus !== status);
+      if (!item.dataset.filterText) item.dataset.filterText = item.textContent.toLocaleLowerCase('en-US');
+      if (!item.dataset.filterStatus) item.dataset.filterStatus = item.querySelector('small')?.textContent?.split('·')[0]?.trim().toLocaleLowerCase('en-US') || '';
+      const hidden = Boolean(query && !item.dataset.filterText.includes(query)) || (status !== 'all' && item.dataset.filterStatus !== status);
+      setHidden(item, hidden);
     }
   }
 
-  sourceSearch.addEventListener('input', filterSources);
-  sourceFilter.addEventListener('change', filterSources);
-  draftSearch.addEventListener('input', filterDrafts);
-  draftStatus.addEventListener('change', filterDrafts);
-  collapseAll?.addEventListener('click', () => {
-    for (const group of groupsRoot.querySelectorAll('.discovered-group:not([hidden])')) setCollapsed(group, true);
-  });
-  expandPriority?.addEventListener('click', () => {
-    for (const group of groupsRoot.querySelectorAll('.discovered-group[data-default-group="true"]')) setCollapsed(group, false);
+  function scheduleDraftFilter() {
+    if (draftFilterFrame) cancelAnimationFrame(draftFilterFrame);
+    draftFilterFrame = requestAnimationFrame(filterDraftsNow);
+  }
+
+  groupsRoot.addEventListener('click', (event) => {
+    const toggle = event.target.closest('[data-toggle-group]');
+    if (!toggle) return;
+    const group = toggle.closest('.discovered-group');
+    if (group) setCollapsed(group, group.dataset.collapsed !== 'true');
   });
 
-  new MutationObserver(prepareGroups).observe(groupsRoot, { childList: true });
-  new MutationObserver(filterDrafts).observe(draftList, { childList: true });
-  prepareGroups();
-  filterDrafts();
+  sourceSearch.addEventListener('input', scheduleSourceFilter, { passive: true });
+  sourceFilter.addEventListener('change', scheduleSourceFilter);
+  draftSearch.addEventListener('input', scheduleDraftFilter, { passive: true });
+  draftStatus.addEventListener('change', scheduleDraftFilter);
+  collapseAll?.addEventListener('click', () => {
+    for (const record of groupRecords) if (!record.group.hidden) setCollapsed(record.group, true);
+  });
+  expandPriority?.addEventListener('click', () => {
+    for (const record of groupRecords) if (record.group.dataset.defaultGroup === 'true') setCollapsed(record.group, false);
+  });
+
+  new MutationObserver(schedulePrepare).observe(groupsRoot, { childList: true });
+  new MutationObserver(scheduleDraftFilter).observe(draftList, { childList: true });
+  schedulePrepare();
+  scheduleDraftFilter();
 })();
