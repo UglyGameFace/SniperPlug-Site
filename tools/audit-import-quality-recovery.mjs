@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { classifyWhopItem, rejectionReasonForGuide } from '../functions/_lib/content-policy.js';
+import { suggestedCategoryForText } from '../functions/_lib/guides.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
@@ -17,6 +18,9 @@ const reconcile = read('functions/_lib/import-reconciliation.js');
 const control = read('functions/api/control.js');
 const bulkApi = read('functions/api/bulk-jobs.js');
 const publicSearch = read('functions/_lib/guide-search.js');
+const publicGuides = read('functions/_lib/guides-public.js');
+const page = read('control-center/index.html');
+const publishingCss = read('assets/css/control-center-publishing.css');
 
 const longChat = classifyWhopItem({
   sourceType: 'chat',
@@ -26,6 +30,24 @@ const longChat = classifyWhopItem({
 });
 assert.equal(longChat.autoPublishEligible, false, 'Even long or pinned Chat messages must remain manual-only.');
 assert.equal(longChat.code, 'chat_manual_only');
+
+const forumReply = classifyWhopItem({
+  sourceType: 'forum',
+  title: 'Reply from another member',
+  content: 'This reply is long enough to look useful but belongs under the original discussion. '.repeat(8),
+  sourceMeta: { parentId: 'post_parent', experienceTitle: 'Community forum' },
+});
+assert.equal(forumReply.blocked, true, 'Forum replies must never become standalone guides.');
+assert.equal(forumReply.code, 'forum_reply');
+
+const rawReference = classifyWhopItem({
+  sourceType: 'forum',
+  title: 'Reference',
+  content: 'https://example.com/some/raw/reference',
+  sourceMeta: { experienceTitle: 'Community forum' },
+});
+assert.equal(rawReference.blocked, true, 'Raw links must not become standalone public guides.');
+assert.equal(rawReference.code, 'raw_reference');
 
 const announcement = classifyWhopItem({
   sourceType: 'forum',
@@ -42,6 +64,14 @@ const chatter = classifyWhopItem({
   sourceMeta: { experienceTitle: 'Public forum' },
 });
 assert.equal(chatter.autoPublishEligible, false, 'Short promotional chatter must remain manual.');
+
+const productWall = classifyWhopItem({
+  sourceType: 'forum',
+  title: 'ASUS Gaming Laptop 16GB RAM 1TB SSD',
+  content: 'Available online. Product listing, specifications, price, seller, shipping and stock details. '.repeat(15),
+  sourceMeta: { experienceTitle: 'Finds' },
+});
+assert.equal(productWall.autoPublishEligible, false, 'A long product listing without instructional structure must not become a guide.');
 
 const guide = classifyWhopItem({
   sourceType: 'forum',
@@ -71,10 +101,23 @@ assert.equal(expired.code, 'expired_sports_pick');
 
 assert.match(rejectionReasonForGuide({
   title: 'Chat item for review',
+  source_key: 'chat-message:message_1',
   body_markdown: 'hello there',
-  integrity_json: JSON.stringify({ sourceType: 'chat' }),
+  integrity_json: '{}',
   attachment_json: '{}',
 }), /Chat content requires explicit manual review/);
+assert.match(rejectionReasonForGuide({
+  title: 'Community reply',
+  source_key: 'forum-post:reply_1',
+  body_markdown: 'A member reply that should stay with the original post.',
+  integrity_json: JSON.stringify({ sourceMeta: { parentId: 'parent_1' } }),
+  attachment_json: '{}',
+}), /Forum replies stay with their parent discussion/);
+
+assert.equal(suggestedCategoryForText('Available online and in stock'), 'general', 'The suffix of online must not trigger Sports Betting.');
+assert.notEqual(suggestedCategoryForText('Line of credit guide'), 'sports-betting', 'A normal use of line must not trigger Sports Betting.');
+assert.equal(suggestedCategoryForText('Stock trading technical analysis guide'), 'crypto-trading');
+assert.equal(suggestedCategoryForText('Walmart marketplace selling guide'), 'reselling');
 
 assert.ok(bulk.includes('const JOB_VERSION = 3'), 'Bulk jobs are not versioned for safe recovery.');
 assert.ok(bulk.includes('cancelLegacyRow'), 'Unsafe active legacy jobs are not canceled automatically.');
@@ -94,21 +137,36 @@ assert.ok(imports.includes("action: 'held-policy'"), 'Exact content that fails r
 assert.ok(imports.includes("action: 'duplicate-held'"), 'Exact duplicate guides are not held.');
 assert.ok(imports.includes('MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM'), 'Attachment-heavy content can still exceed a bounded automatic step.');
 
+assert.ok(reconcile.includes("status IN ('draft', 'published')"), 'Cleanup does not inspect the full active imported guide queue.');
+assert.ok(reconcile.includes('reconcileImportedGuides'), 'Unified imported-guide cleanup is missing.');
+assert.ok(reconcile.includes('cleanupVersion: 3'), 'Current cleanup version is not recorded.');
 assert.ok(reconcile.includes("status = 'rejected'"), 'Junk cleanup does not move items out of the normal review queue.');
-assert.ok(reconcile.includes('Duplicate of'), 'Recent duplicate cleanup is missing.');
-assert.ok(control.includes('reconcileRecentBulkImports'), 'Dashboard does not reconcile the bad bulk run before rendering.');
+assert.ok(reconcile.includes('Duplicate of'), 'Imported duplicate cleanup is missing.');
+assert.ok(!reconcile.includes('LOOKBACK_HOURS'), 'Cleanup is still limited to a recent time window.');
+assert.ok(control.includes('reconcileRecentBulkImports'), 'Dashboard does not reconcile imported junk before rendering.');
 assert.ok(control.includes("guide.status !== 'rejected'"), 'Rejected quarantine still appears in normal Review & Publish.');
-assert.ok(publicSearch.includes('reconcileRecentBulkImports'), 'Public guide search can expose stale bulk junk before cleanup.');
+assert.ok(publicSearch.includes('reconcileRecentBulkImports'), 'Public guide search can expose importer junk before cleanup.');
+assert.ok(publicGuides.includes('reconcileImportedGuides'), 'Public guide detail pages do not use unified cleanup.');
 assert.ok(media.includes('manualReviewCompleted: true'), 'Owner save does not complete manual review.');
 assert.ok(media.includes('quarantined: false'), 'Owner save cannot clear a corrected quarantine.');
 assert.ok(bulkApi.includes('legacyCanceled') && bulkApi.includes('failures: []'), 'Stale legacy errors remain visible after automatic cancellation.');
+
+assert.ok(page.includes('data-publish-all-progress'), 'Publish-ready status text is missing.');
+assert.ok(page.includes('publish-ready-visual'), 'Publish-ready visual progress is missing.');
+assert.ok(page.includes('Audit & publish ready drafts'), 'Publish-ready action is unclear.');
+assert.ok(page.includes('<option value="draft" selected>Needs review</option>'), 'Review queue does not default to drafts.');
+assert.ok(publishingCss.includes('publish-ready-scan'), 'Publish-ready progress has no working animation.');
+assert.ok(publishingCss.includes('max-height:min(70vh,48rem)!important'), 'Draft queue can expand into an unbounded wall.');
+assert.ok(publishingCss.includes('grid-template-columns:1fr!important'), 'Draft queue can return to a confusing two-column wall.');
 
 for (const file of [
   'functions/_lib/content-policy.js',
   'functions/_lib/whop-items.js',
   'functions/_lib/posts.js',
+  'functions/_lib/guides.js',
   'functions/_lib/guides-import.js',
   'functions/_lib/guides-media.js',
+  'functions/_lib/guides-public.js',
   'functions/_lib/import-reconciliation.js',
   'functions/_lib/bulk-jobs.js',
   'functions/api/control.js',
@@ -120,10 +178,11 @@ for (const file of [
 }
 
 console.log('\nSNIPERPLUG IMPORT QUALITY AND RECOVERY AUDIT PASSED\n');
-console.log('✓ Chat, replies, announcements, chatter, placeholders, duplicates, and expired picks cannot flood automatic publishing.');
+console.log('✓ Replies, Chat, chatter, raw references, unstructured product listings, duplicates, and expired picks cannot flood publishing.');
+console.log('✓ Category matching no longer mistakes online products or ordinary uses of line for Sports Betting.');
 console.log('✓ Course scanning avoids per-lesson detail fanout and exact lessons are re-fetched one at a time.');
 console.log('✓ Every bulk Worker step processes at most one exact content item after a bounded source scan.');
 console.log('✓ Missing Whop scopes are held clearly instead of crashing the job.');
-console.log('✓ Unsafe legacy jobs stop automatically while completed publications remain reversible.');
-console.log('✓ Recent junk and duplicates move to rejected quarantine and disappear from normal Review & Publish.');
+console.log('✓ Full imported-guide cleanup removes old bad drafts and public junk, not only recent bulk output.');
+console.log('✓ Review and publish keeps visible progress evidence and a bounded one-column queue.');
 console.log('✓ Owner edits complete manual review without erasing source policy history.');
