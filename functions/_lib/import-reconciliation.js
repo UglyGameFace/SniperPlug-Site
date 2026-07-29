@@ -138,7 +138,7 @@ export async function reconcileImportedGuides(env, { force = false } = {}) {
       return result;
     })
     .catch((error) => {
-      console.warn('Importer reconciliation was deferred so the site can remain available.');
+      console.warn('Optional import reconciliation was deferred so the site can remain available.');
       return {
         checked: 0,
         rejected: 0,
