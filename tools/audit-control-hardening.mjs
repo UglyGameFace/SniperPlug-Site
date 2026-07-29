@@ -56,7 +56,7 @@ assert.ok(lifecycle.includes('confirmDiscard') && lifecycle.includes('.draft-ite
 assert.ok(html.includes('/assets/js/control-center-lifecycle.js'), 'Draft safety script is not loaded.');
 
 assert.ok(html.includes('data-source-search') && html.includes('data-source-filter'), 'Source search and filtering controls are missing.');
-assert.ok(runtime.includes('setGroupExpanded') && runtime.includes("data.action = 'group-toggle'"), 'Large source groups cannot be collapsed.');
+assert.ok(runtime.includes('setGroupExpanded') && runtime.includes("dataset.action = 'group-toggle'"), 'Large source groups cannot be collapsed.');
 assert.ok(html.includes('data-draft-search') && html.includes('data-draft-status-filter'), 'Draft search and status filtering are missing.');
 assert.ok(html.includes('data-bulk-job-panel') && html.includes('data-resume-bulk-job'), 'Resumable job status controls are missing.');
 assert.ok(html.includes('data-progress-bar') && html.includes('data-progress-timeline'), 'Interactive progress details are missing.');
