@@ -1,10 +1,9 @@
-import { requireDatabase } from './http.js';
-
-const SPORTS_BET_PATTERN = /\b(?:prizepicks?|sleeper|underdog|sports?book|parlay|prop(?:s)?|pick(?:s)?|odds?|bet(?:ting|s)?|wager|lineup|moneyline|spread|over\/?under|taco|free square|protected play|discount play|cash(?:ed|es)|units?)\b/i;
+const SPORTS_BET_PATTERN = /\b(?:prizepicks?|sleeper|underdog|sports?book|parlay|prop(?:s)?|pick(?:s)?|odds?|bet(?:ting|s)?|wager|moneyline|point spread|over\/?under|free square|protected play|discount play|units?)\b/i;
 const TIME_SIGNAL_PATTERN = /\b(?:today|tonight|tomorrow|this morning|this afternoon|this evening|live now|lock(?:ed)? in|last minute|kickoff|tipoff|first pitch|starts? at|game time|expires?|limited time|this week|weekend)\b/i;
-const GUIDE_SIGNAL_PATTERN = /\b(?:how to|step(?:s)?|guide|tutorial|method|walkthrough|setup|blueprint|roadmap|checklist|requirements?|instructions?|strategy|playbook|start here|onboarding|lesson|course|troubleshoot|fix|workflow|process|what you need|before you begin)\b/i;
+const GUIDE_SIGNAL_PATTERN = /\b(?:how to|step(?:s)?|guide|tutorial|method|walkthrough|setup|blueprint|roadmap|checklist|requirements?|instructions?|strategy|playbook|start here|onboarding|lesson|course|troubleshoot|fix|workflow|process|what you need|before you begin|frequently asked questions?|faq|documentation|reference)\b/i;
 const NOISE_TITLE_PATTERN = /^(?:announcement(?:s)?|general|public forum|content guidelines?|rules?|welcome|test|testing|chat item for review|untitled whop post|imported whop content|daily chat|lounge|random|off topic)$/i;
 const PROMO_CHATTER_PATTERN = /\b(?:dm me|tap in|join now|code is|use code|link in bio|who wants|drop(?:ping)? now|live call|voice call|good morning|good night|congrats|let'?s go|wen|lol|lmao)\b/i;
+const RAW_REFERENCE_PATTERN = /^(?:(?:https?:\/\/|www\.)\S+|[A-Za-z0-9_-]{18,}|(?:0x)?[a-f0-9]{24,})$/i;
 const MAX_SPORTS_PICK_AGE_HOURS = 72;
 
 function safeJson(value, fallback = null) {
@@ -135,6 +134,23 @@ function attachmentCount(value) {
   return 0;
 }
 
+function sourceTypeFromRow(row, integrity, attachments) {
+  const saved = String(integrity?.sourceType || attachments?.sourceType || '').trim();
+  if (saved) return saved;
+  const key = String(row?.source_key || '');
+  if (key.startsWith('course-lesson:')) return 'course';
+  if (key.startsWith('chat-message:')) return 'chat';
+  if (key.startsWith('forum-post:')) return 'forum';
+  return '';
+}
+
+function looksLikeRawReference(plain, markdown) {
+  const compact = String(plain || '').trim();
+  if (RAW_REFERENCE_PATTERN.test(compact)) return true;
+  const withoutLinks = String(markdown || '').replace(/!?\[[^\]]*\]\([^)]+\)/g, '').trim();
+  return !withoutLinks && structureSignals(markdown).links > 0;
+}
+
 function policy(autoPublishEligible, blocked, code, reason, extra = {}) {
   return { autoPublishEligible, blocked, code, reason, ...extra };
 }
@@ -157,9 +173,11 @@ export function classifyWhopItem(item, now = Date.now()) {
   const signals = structureSignals(markdown);
   const guideSignal = GUIDE_SIGNAL_PATTERN.test(combined) || signals.headings > 0 || signals.lists >= 2;
 
+  if (sourceType === 'forum' && sourceMeta.parentId) return policy(false, true, 'forum_reply', 'Forum replies stay with their parent discussion and never become standalone guides.', { timeSensitive, expiresAt });
   if (sourceType === 'chat' && sourceMeta.replyingTo) return policy(false, true, 'chat_reply', 'Chat replies stay in Whop and never become standalone guides.', { timeSensitive, expiresAt });
   if (!plain && !attachments.length) return policy(false, true, 'empty_content', 'This item has no guide content or attached file.', { timeSensitive, expiresAt });
   if (!meaningful(title) && plain.length < 40 && !attachments.length) return policy(false, true, 'low_signal', 'This item is punctuation-only or too small to become a useful guide.', { timeSensitive, expiresAt });
+  if (looksLikeRawReference(plain, markdown) && !attachments.length) return policy(false, true, 'raw_reference', 'A raw link, identifier, or token is not a complete standalone guide.', { timeSensitive, expiresAt });
   if (timeSensitive && (hoursOld === null || hoursOld > MAX_SPORTS_PICK_AGE_HOURS)) return policy(false, true, 'expired_sports_pick', 'This sports pick is older than 72 hours and is no longer useful as a current guide.', { timeSensitive, expiresAt });
 
   if (sourceType === 'chat') return policy(false, false, 'chat_manual_only', 'Chat messages remain available for manual review but are never auto-published as guides.', { timeSensitive, expiresAt });
@@ -174,9 +192,8 @@ export function classifyWhopItem(item, now = Date.now()) {
 
   if (NOISE_TITLE_PATTERN.test(title) || /\b(?:announcement|content guidelines?|public forum|daily chat|lounge)\b/i.test(sourceTitle)) return policy(false, false, 'source_manual_review', 'Announcements and general discussion sources stay manual so they cannot flood the guide library.', { timeSensitive, expiresAt });
   if (PROMO_CHATTER_PATTERN.test(combined) && plain.length < 500 && !guideSignal) return policy(false, false, 'forum_chatter', 'This looks like community chatter or a short promotion, not a durable guide.', { timeSensitive, expiresAt });
-  if (plain.length >= 420) return policy(true, false, 'guide_ready', 'Long-form forum content passed the guide-quality gate.', { timeSensitive, expiresAt });
-  if (plain.length >= 220 && guideSignal) return policy(true, false, 'guide_ready', 'Structured forum content passed the guide-quality gate.', { timeSensitive, expiresAt });
-  if (attachments.length > 0 && plain.length >= 140 && guideSignal) return policy(true, false, 'guide_ready', 'Instructional forum content with supporting media passed the guide-quality gate.', { timeSensitive, expiresAt });
+  if (!guideSignal) return policy(false, false, 'forum_manual_review', 'This forum item does not contain enough instructional structure to become an automatic public guide.', { timeSensitive, expiresAt });
+  if (plain.length >= 220 || attachments.length > 0 || signals.headings > 0 || signals.lists >= 2) return policy(true, false, 'guide_ready', 'Structured forum content passed the guide-quality gate.', { timeSensitive, expiresAt });
   return policy(false, false, 'forum_manual_review', 'This forum item remains available for manual review but is not strong enough for automatic publishing.', { timeSensitive, expiresAt });
 }
 
@@ -185,7 +202,7 @@ export function rejectionReasonForGuide(row, now = Date.now()) {
   const title = String(row?.title || '').trim();
   const integrity = safeJson(row?.integrity_json, {}) || {};
   const attachments = safeJson(row?.attachment_json, {}) || {};
-  const sourceType = String(integrity.sourceType || attachments.sourceType || '');
+  const sourceType = sourceTypeFromRow(row, integrity, attachments);
   const sourceMeta = integrity.sourceMeta || {};
   const importPolicy = integrity.importPolicy || sourceMeta.importPolicy || integrity.policy || {};
   const plain = plainContent(body);
@@ -195,7 +212,7 @@ export function rejectionReasonForGuide(row, now = Date.now()) {
   if (integrity.manualReviewCompleted === true) return null;
   if (parsed?.type === 'doc' || Array.isArray(parsed?.content)) return 'Raw Whop structured JSON was imported instead of rendered guide content.';
   if (sourceType === 'chat') return 'Chat content requires explicit manual review and cannot remain in the normal guide queue.';
-  if (['chat_reply', 'empty_content', 'low_signal', 'expired_sports_pick', 'course_placeholder', 'forum_chatter'].includes(importPolicy.code)) return importPolicy.reason || 'This item failed the guide-quality gate.';
+  if (['forum_reply', 'chat_reply', 'empty_content', 'low_signal', 'raw_reference', 'expired_sports_pick', 'course_placeholder', 'forum_chatter'].includes(importPolicy.code)) return importPolicy.reason || 'This item failed the guide-quality gate.';
   if (/^(?:chat item for review|untitled whop post|imported whop content)$/i.test(title)) return 'Fallback title indicates this was not a complete guide.';
   if ((!meaningful(title) || title.length < 3) && plain.length < 100) return 'Guide title and content are too small or punctuation-only.';
   if (sourceType === 'course' && /^Course lesson from .+\.$/i.test(plain) && count === 0) return 'Course card has no lesson body or attached media.';
@@ -208,30 +225,6 @@ export function rejectionReasonForGuide(row, now = Date.now()) {
 
 export function quarantineReasonForGuide(row, now = Date.now()) {
   return rejectionReasonForGuide(row, now);
-}
-
-export async function quarantineUnsafePublishedGuides(env) {
-  const db = requireDatabase(env);
-  const rows = await db.prepare(`
-    SELECT id, title, body_markdown, source_created_at, integrity_json, attachment_json
-    FROM guides
-    WHERE status = 'published' AND source_key IS NOT NULL
-    ORDER BY published_at DESC
-    LIMIT 1000
-  `).all();
-  const updates = [];
-  const now = new Date().toISOString();
-  for (const row of rows.results || []) {
-    const reason = rejectionReasonForGuide(row);
-    if (!reason) continue;
-    const integrity = safeJson(row.integrity_json, {}) || {};
-    updates.push(db.prepare(`
-      UPDATE guides SET status = 'rejected', published_at = NULL, updated_at = ?, integrity_json = ?
-      WHERE id = ? AND status = 'published'
-    `).bind(now, JSON.stringify({ ...integrity, quarantined: true, quarantineReason: reason, quarantinedAt: now }), row.id));
-  }
-  if (updates.length) await db.batch(updates);
-  return updates.length;
 }
 
 export const IMPORT_FRESHNESS_HOURS = Object.freeze({ sportsPicks: MAX_SPORTS_PICK_AGE_HOURS });
