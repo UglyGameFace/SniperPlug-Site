@@ -25,7 +25,7 @@ import {
   saveGuideDraft,
   setGuideStatus,
   suggestedCategoryForText,
-} from '../_lib/guides.js';
+} from '../_lib/guides-media.js';
 import {
   listSavedPosts,
   savePostDecision,
