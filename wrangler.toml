@@ -10,3 +10,7 @@ WHOP_OAUTH_SCOPES = "openid profile email forum:read courses:read chat:read memb
 binding = "SNIPERPLUG_DB"
 database_name = "sniperplug-guides"
 database_id = "7e4e8318-f7fa-4a7f-97fb-742656de2834"
+
+[[r2_buckets]]
+binding = "SNIPERPLUG_MEDIA"
+bucket_name = "sniperplug-media"
