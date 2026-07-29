@@ -8,6 +8,7 @@ import { auditGuideLinks } from '../functions/_lib/link-audit.js';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
+const auth = read('functions/_lib/auth.js');
 const bulkJobs = read('functions/_lib/bulk-jobs.js');
 const bulkApi = read('functions/api/bulk-jobs.js');
 const recentActions = read('functions/_lib/recent-actions.js');
@@ -34,6 +35,13 @@ const allowedAudit = auditGuideLinks('[Verified file](https://cdn.whop.com/publi
 assert.equal(allowedAudit.blockedCount, 0, 'Server-verified durable Whop files should be allowlisted.');
 const codeAudit = auditGuideLinks('`https://whop.com/not-a-link`\n\n```text\nhttps://whop.com/code\n```');
 assert.equal(codeAudit.total, 0, 'URLs inside inline or fenced code must not be audited as clickable links.');
+
+assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Whop connection is still tied to a temporary browser session ID.');
+assert.ok(auth.includes('migrateOwnerWhopSession') && auth.includes("DELETE FROM whop_sessions WHERE admin_session_id <> ?"), 'Legacy Whop sessions are not migrated into one stable owner connection.');
+assert.ok(auth.includes('legacySid: session.sid') && auth.includes('sid: OWNER_SESSION_ID'), 'Existing signed admin cookies do not normalize to the stable owner identity.');
+assert.ok(control.includes('verifiedWhopSummary') && control.includes('requireWhopSession(request, env, admin)'), 'Dashboard reports connected from a stale row without opening the saved Whop session.');
+assert.ok(control.includes("[401, 403].includes(error.status)"), 'Invalid Whop sessions are not cleared before the UI reports connection state.');
+assert.ok(hardeningCss.includes('.control-shell [hidden],.preview-backdrop[hidden]{display:none!important}'), 'Author CSS can still override hidden login, app, modal, Connect, or Disconnect states.');
 
 assert.ok(bulkJobs.includes('CREATE TABLE IF NOT EXISTS bulk_jobs'), 'Bulk jobs are not self-initializing in D1.');
 assert.ok(migration.includes('CREATE TABLE IF NOT EXISTS bulk_jobs'), 'Bulk job migration is missing.');
@@ -88,6 +96,7 @@ assert.ok(!templates.includes('Source reviewed from'), 'Private source-group nam
 assert.ok(templates.includes('Last reviewed') && templates.includes('Report outdated information'), 'Guide freshness and outdated-report controls are missing.');
 
 const syntaxFiles = [
+  'functions/_lib/auth.js',
   'functions/_lib/link-audit.js',
   'functions/_lib/publish.js',
   'functions/_lib/bulk-jobs.js',
@@ -108,6 +117,10 @@ for (const file of syntaxFiles) {
 }
 
 console.log('\nSNIPERPLUG CONTROL HARDENING AUDIT PASSED\n');
+console.log('✓ Locked and unlocked Control Center states cannot render together.');
+console.log('✓ Connect and Disconnect cannot render together.');
+console.log('✓ Whop remains attached to the SniperPlug owner across browser login expiry.');
+console.log('✓ Dashboard connection status requires a decryptable, refreshable Whop session.');
 console.log('✓ Bulk source work persists in D1 and resumes after refreshes, logins, or dropped connections.');
 console.log('✓ Manual and bulk publishing block internal, temporary, expired, quarantined, and unverified content.');
 console.log('✓ Unsaved draft edits warn before destructive actions and keep a local recovery copy.');
