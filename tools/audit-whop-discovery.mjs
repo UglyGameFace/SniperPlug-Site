@@ -10,21 +10,27 @@ const discovery = read('functions/_lib/discovery.js');
 const endpoint = read('functions/api/discover.js');
 const page = read('control-center/index.html');
 const client = read('assets/js/control-center.js');
+const hardening = read('assets/js/control-center-hardening.js');
 const styles = read('assets/css/whop-discovery.css');
 
 assert.ok(discovery.includes("'memberships'"), 'Membership discovery endpoint is missing.');
 assert.ok(discovery.includes("'forums'"), 'Forum discovery endpoint is missing.');
-assert.ok(discovery.includes("'experiences'"), 'Product-scoped experience discovery is missing.');
-assert.ok(discovery.includes('product_id: product.id'), 'Forum and experience lookups are not scoped to the exact membership product.');
+assert.ok(discovery.includes("'experiences'"), 'Experience discovery endpoint is missing.');
+assert.ok(discovery.includes("{ id: null, title: 'company-wide access' }"), 'Company-wide Whop modules are not checked.');
+assert.ok(discovery.includes('...membershipProducts'), 'Membership-product discovery is not preserved alongside company-wide discovery.');
+assert.ok(discovery.includes('product_id: product.id'), 'Product-specific forum and experience lookups are missing.');
+assert.ok(discovery.includes('discovered.set(experience.id, experience)'), 'Company-wide and product-scoped results are not deduplicated by exact experience ID.');
 assert.ok(discovery.includes("SUPPORTED_TYPES = new Set(['forum', 'course', 'chat'])"), 'Forum, Course, and Chat sources are not classified together.');
 assert.ok(discovery.includes('requiredScopeForExperience'), 'Discovery does not map content types to their OAuth read scopes.');
 assert.ok(discovery.includes('missingScopes'), 'Missing content-read permissions are not returned to the owner.');
-assert.ok(discovery.includes('unsupported'), 'Unsupported custom Whop app modules are silently discarded.');
-assert.ok(!discovery.includes("allPages(session, 'forums', { company_id: company.id }"), 'Company-wide forum enumeration must not replace membership-product scoping.');
+assert.ok(discovery.includes('externalApps'), 'External custom-app modules are silently discarded.');
+assert.ok(discovery.includes('group.sources.length || group.externalApps.length'), 'Empty stale groups are not removed from the source browser.');
+assert.ok(!discovery.includes('group.sources.length || group.unsupported.length || group.builtIn'), 'Empty priority groups can still linger after access disappears.');
+assert.ok(discovery.includes('emptyGroups'), 'Hidden empty-group count is not retained for diagnostics.');
 assert.ok(discovery.includes('ACCESS_GRANTING_MEMBERSHIP_STATUSES'), 'Current-access membership filtering is missing.');
 assert.ok(discovery.includes("'active'") && discovery.includes("'trialing'") && discovery.includes("'canceling'") && discovery.includes("'past_due'") && discovery.includes("'completed'"), 'Whop access-granting membership statuses are incomplete.');
 assert.ok(discovery.includes('if (!membershipGrantsAccess(membership)) continue;'), 'Historical inactive memberships can still become active groups.');
-assert.ok(discovery.includes('group.sources.length || group.unsupported.length || group.builtIn'), 'Active groups with unsupported modules cannot be diagnosed.');
+assert.ok(discovery.includes('membership?.user === null || membership?.member === null'), 'Deleted users or missing member records can still appear as current access.');
 assert.ok(discovery.includes('values.length > MAX_COMPANIES'), 'Company-limit overflow must fail visibly instead of silently slicing groups.');
 assert.ok(discovery.includes('current.memberships += 1'), 'Merged company cards do not retain their membership-record count.');
 assert.ok(discovery.includes('member:basic:read') && discovery.includes('member:email:read'), 'Missing membership-scope recovery message is incomplete.');
@@ -38,7 +44,8 @@ assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types a
 assert.ok(client.includes("fetch('/api/discover'"), 'Browser does not call automatic discovery.');
 assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
 assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');
-assert.ok(client.includes('Other active Whop modules'), 'Unsupported modules are not shown honestly.');
+assert.ok(hardening.includes('External app content') && hardening.includes('Your membership access is valid'), 'External app modules are not explained clearly.');
+assert.ok(hardening.includes('It is not a missing Whop permission'), 'External app modules can still look like missing Whop access.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 
 for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed']) {
@@ -47,6 +54,8 @@ for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed'
 for (const status of ['canceled', 'expired', 'unresolved', 'drafted', '', 'unknown_future_status']) {
   assert.equal(membershipGrantsAccess({ status }), false, `${status || 'blank'} must not appear as a current joined membership.`);
 }
+assert.equal(membershipGrantsAccess({ status: 'active', member: null }), false, 'A membership with no current member record must not appear.');
+assert.equal(membershipGrantsAccess({ status: 'active', user: null }), false, 'A membership whose user no longer exists must not appear.');
 
 const memberships = [
   { status: 'active', company: { id: 'biz_black', title: 'Black Box Clips' }, product: { id: 'prod_black', title: 'Black Box Main' } },
@@ -71,9 +80,10 @@ assert.deepEqual([...companies.find((company) => company.id === 'biz_other').pro
 assert.ok(!companies.some((company) => ['biz_left', 'biz_expired', 'biz_unresolved', 'biz_drafted'].includes(company.id)), 'Historical inactive groups leaked back into current discovery.');
 
 console.log('\nWHOP MULTI-CONTENT DISCOVERY AUDIT PASSED\n');
-console.log('✓ Every current membership product is checked independently for forums and experiences.');
+console.log('✓ Company-wide and every membership-product source list are checked and deduplicated.');
 console.log('✓ Forum, Course, and Chat sources are classified with their exact permission requirements.');
-console.log('✓ Unsupported active custom-app modules remain visible for diagnosis.');
+console.log('✓ External app modules remain visible with a separate-integration explanation.');
+console.log('✓ Empty stale groups and missing member records stay out of the source browser.');
 console.log('✓ Active, trialing, canceling, past-due, and completed memberships remain discoverable.');
 console.log('✓ Canceled, expired, unresolved, and drafted historical memberships stay hidden.');
 console.log('✓ Black Box, Black Box Clips, and Hidden Files remain prioritized.');
