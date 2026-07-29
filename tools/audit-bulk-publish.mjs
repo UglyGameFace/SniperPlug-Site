@@ -57,7 +57,9 @@ assert.ok(publish.includes('MAX_GUIDES = 500'), 'Bulk publishing has no bounded 
 
 assert.ok(styles.includes('.bulk-publish-box'), 'Complete bulk workflow has no dedicated layout.');
 assert.ok(styles.includes('@media(max-width:1050px)'), 'Bulk publishing controls do not reflow for tablets and mobile screens.');
-assert.ok(hardeningStyles.includes('position:sticky'), 'Mobile bulk controls are not kept reachable.');
+assert.ok(hardeningStyles.includes('position:static!important'), 'Bulk controls do not have a normal-flow safeguard.');
+assert.ok(!/\.(?:bulk-selection-bar|bulk-publish-box|bulk-publish-content)[^{]*\{[^}]*position\s*:\s*(?:sticky|fixed|absolute)/is.test(hardeningStyles), 'Bulk controls can float over following modules.');
+assert.ok(hardeningStyles.includes('@media(max-width:480px)') && hardeningStyles.includes('.bulk-selection-bar{grid-template-columns:1fr}'), 'Narrow bulk controls do not stack into one column.');
 
 console.log('\nSNIPERPLUG BULK PUBLISH AUDIT PASSED\n');
 console.log('✓ Restored master selection synchronizes with actual selected sources.');
@@ -65,4 +67,5 @@ console.log('✓ Bulk runs persist in D1 and resume after refreshes, closed tabs
 console.log('✓ One explicit job continues through source approval, scanning, content approval, categorization, importing, and publishing.');
 console.log('✓ Import batches respect server limits, duplicate steps are lease-protected, and source failures remain isolated.');
 console.log('✓ Unsafe links, unresolved files, and integrity failures remain private drafts.');
+console.log('✓ Bulk controls stay in normal document flow and stack on narrow screens.');
 console.log('✓ Owners can also publish every ready imported draft in one action.');
