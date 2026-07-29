@@ -8,26 +8,36 @@
   const publishAllButton = root.querySelector('[data-publish-all-ready]');
   const publishAllProgress = root.querySelector('[data-publish-all-progress]');
   const masterDefaults = root.querySelector('[data-select-defaults]');
-  if (!bulkButton || !bulkRights || !bulkProgress || !publishAllButton || !publishAllProgress) return;
+  const jobPanel = root.querySelector('[data-bulk-job-panel]');
+  const jobTitle = root.querySelector('[data-bulk-job-title]');
+  const jobSummary = root.querySelector('[data-bulk-job-summary]');
+  const resumeButton = root.querySelector('[data-resume-bulk-job]');
+  const cancelButton = root.querySelector('[data-cancel-bulk-job]');
+  if (!bulkButton || !bulkRights || !bulkProgress || !publishAllButton || !publishAllProgress || !jobPanel || !resumeButton || !cancelButton) return;
 
-  const MAX_IMPORT_CHUNK = 50;
   let running = false;
   let restoringMaster = false;
+  let currentJob = null;
 
   function sleep(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
   }
 
-  async function controlApi(action, body) {
-    const response = await fetch(`/api/control?action=${encodeURIComponent(action)}`, {
-      method: 'POST',
+  async function jobApi(body = null) {
+    const response = await fetch('/api/bulk-jobs', {
+      method: body ? 'POST' : 'GET',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body || {}),
+      cache: 'no-store',
+      headers: body ? { 'content-type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
-    return data;
+    if (!response.ok) {
+      const error = new Error(data.error || `Bulk job request failed (${response.status}).`);
+      error.status = response.status;
+      throw error;
+    }
+    return data.job || null;
   }
 
   async function publishReady(body) {
@@ -84,92 +94,106 @@
     masterDefaults.indeterminate = checked > 0 && checked < priority.length;
   }
 
+  function jobSummaryText(job) {
+    const summary = job?.summary || {};
+    const pieces = [
+      `${job?.completedSources || 0}/${job?.totalSources || 0} sources`,
+      `${Number(summary.scanned || 0)} items scanned`,
+      `${Number(summary.published || 0)} published`,
+    ];
+    if (Number(summary.heldFiles || 0)) pieces.push(`${summary.heldFiles} held for file review`);
+    if (Number(summary.heldLinks || 0)) pieces.push(`${summary.heldLinks} held for link replacement`);
+    if (Number(summary.heldIntegrity || 0)) pieces.push(`${summary.heldIntegrity} held for integrity review`);
+    if (job?.failures?.length) pieces.push(`${job.failures.length} source error${job.failures.length === 1 ? '' : 's'}`);
+    return pieces.join(' · ');
+  }
+
+  function renderJob(job) {
+    currentJob = job;
+    const visible = Boolean(job);
+    jobPanel.hidden = !visible;
+    if (!visible) return;
+    jobTitle.textContent = job.status === 'active' ? 'Bulk job paused or running' : job.status === 'completed' ? 'Bulk job completed' : 'Bulk job canceled';
+    jobSummary.textContent = jobSummaryText(job);
+    resumeButton.hidden = job.status !== 'active';
+    cancelButton.hidden = job.status !== 'active';
+    resumeButton.disabled = running;
+    cancelButton.disabled = running;
+  }
+
   function syncButtons() {
     restoreMasterSelectionIfNeeded();
     syncMasterFromChildren();
     const count = selectedSourceIds().length;
-    bulkButton.disabled = running || !bulkRights.checked || count === 0;
-    bulkButton.textContent = count
-      ? `Approve, import & publish ${count} selected source${count === 1 ? '' : 's'}`
-      : 'Approve, import & publish selected';
+    const activeJob = currentJob?.status === 'active';
+    bulkButton.disabled = running || activeJob || !bulkRights.checked || count === 0;
+    bulkButton.textContent = activeJob
+      ? 'Finish or cancel the active bulk job first'
+      : count
+        ? `Start resumable workflow for ${count} source${count === 1 ? '' : 's'}`
+        : 'Start bulk workflow';
     publishAllButton.disabled = running;
-  }
-
-  function chunks(values, size) {
-    const output = [];
-    for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
-    return output;
+    resumeButton.disabled = running;
+    cancelButton.disabled = running;
   }
 
   function publishSummary(result, prefix = '') {
     const heldForFiles = result.skippedFiles?.length || 0;
     const heldForIntegrity = result.skippedIntegrity?.length || 0;
+    const heldForLinks = result.skippedLinks?.length || 0;
     const skippedStatus = result.skippedStatus?.length || 0;
     const alreadyPublished = result.alreadyPublished?.length || 0;
     const pieces = [`${result.published || 0} published`];
     if (heldForFiles) pieces.push(`${heldForFiles} kept as drafts for file review`);
+    if (heldForLinks) pieces.push(`${heldForLinks} kept as drafts for Whop-link replacement`);
     if (heldForIntegrity) pieces.push(`${heldForIntegrity} kept as drafts for integrity review`);
     if (skippedStatus) pieces.push(`${skippedStatus} skipped because of status`);
     if (alreadyPublished) pieces.push(`${alreadyPublished} already published`);
     return `${prefix}${pieces.join(' · ')}`;
   }
 
-  async function runSource(experienceId, index, total) {
-    bulkProgress.textContent = `Source ${index + 1} of ${total}: approving ${experienceId}…`;
-    await controlApi('source-decision', { experienceId, decision: 'approved' });
-
-    bulkProgress.textContent = `Source ${index + 1} of ${total}: scanning current content…`;
-    const scan = await controlApi('scan', { experienceId });
-    const readyKeys = (scan.posts || [])
-      .filter((item) => item.decision !== 'blocked')
-      .map((item) => item.sourceKey)
-      .filter(Boolean);
-    if (!readyKeys.length) {
-      return { experienceId, category: scan.suggestedCategory || 'general', scanned: scan.posts?.length || 0, approved: 0, guideIds: [], blocked: scan.counts?.blocked || 0 };
-    }
-
-    bulkProgress.textContent = `Source ${index + 1} of ${total}: approving ${readyKeys.length} content item${readyKeys.length === 1 ? '' : 's'}…`;
-    await controlApi('post-decision', { sourceKeys: readyKeys, decision: 'approved' });
-
-    const guideIds = [];
-    let imported = 0;
-    let unchanged = 0;
-    let attachmentReviews = 0;
-    const category = scan.suggestedCategory || 'general';
-    const batches = chunks(readyKeys, MAX_IMPORT_CHUNK);
-    for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
-      bulkProgress.textContent = `Source ${index + 1} of ${total}: importing batch ${batchIndex + 1} of ${batches.length} into ${category}…`;
-      const output = await controlApi('import', {
-        experienceId,
-        sourceKeys: batches[batchIndex],
-        category,
-        rightsConfirmed: true,
-      });
-      imported += Number(output.imported || 0);
-      unchanged += Number(output.unchanged || 0);
-      attachmentReviews += Number(output.attachmentReviews || 0);
-      for (const result of output.results || []) {
-        const guideId = Number(result.guideId);
-        if (Number.isFinite(guideId)) guideIds.push(guideId);
+  async function runJob(job) {
+    if (!job || job.status !== 'active' || running) return;
+    running = true;
+    bulkProgress.dataset.state = 'working';
+    renderJob(job);
+    syncButtons();
+    try {
+      let next = job;
+      while (next?.status === 'active') {
+        bulkProgress.textContent = `Processing source ${Math.min(next.sourceIndex + 1, next.totalSources)} of ${next.totalSources}${next.currentSourceId ? ` · ${next.currentSourceId}` : ''}…`;
+        try {
+          next = await jobApi({ action: 'step', jobId: next.id });
+        } catch (error) {
+          if (error.status === 409) {
+            await sleep(1200);
+            next = await jobApi();
+            continue;
+          }
+          throw error;
+        }
+        renderJob(next);
+        await sleep(200);
       }
+      bulkProgress.textContent = next?.status === 'completed'
+        ? `${jobSummaryText(next)}. Unsafe links or unresolved files stayed private.`
+        : 'Bulk job canceled. Completed source work was kept.';
+      bulkProgress.dataset.state = next?.status === 'completed' && !next.failures?.length ? 'ok' : 'warning';
+      setTimeout(() => window.location.reload(), 2200);
+    } catch (error) {
+      bulkProgress.textContent = `${error.message} Progress is saved; press Resume when the connection is stable.`;
+      bulkProgress.dataset.state = 'error';
+      try { renderJob(await jobApi()); } catch { /* keep last known job */ }
+    } finally {
+      running = false;
+      syncButtons();
     }
-    return {
-      experienceId,
-      category,
-      scanned: scan.posts?.length || 0,
-      approved: readyKeys.length,
-      imported,
-      unchanged,
-      attachmentReviews,
-      guideIds,
-      blocked: scan.counts?.blocked || 0,
-    };
   }
 
-  async function runBulkWorkflow() {
+  async function startBulkWorkflow() {
     if (running) return;
-    const experienceIds = selectedSourceIds();
-    if (!experienceIds.length) {
+    const ids = selectedSourceIds();
+    if (!ids.length) {
       bulkProgress.textContent = 'Select at least one source.';
       return;
     }
@@ -177,33 +201,46 @@
       bulkProgress.textContent = 'Confirm republication rights before continuing.';
       return;
     }
+    bulkProgress.textContent = 'Creating a resumable D1 bulk job…';
+    bulkProgress.dataset.state = 'working';
+    try {
+      const job = await jobApi({ action: 'start', sourceIds: ids, rightsConfirmed: true });
+      renderJob(job);
+      await runJob(job);
+    } catch (error) {
+      bulkProgress.textContent = error.message;
+      bulkProgress.dataset.state = 'error';
+    }
+  }
 
+  async function publishAllReadyDrafts() {
+    if (running) return;
     running = true;
     syncButtons();
-    bulkProgress.dataset.state = 'working';
-    const results = [];
-    const failures = [];
+    publishAllProgress.dataset.state = 'working';
+    publishAllProgress.textContent = 'Auditing links and publishing every ready imported draft…';
     try {
-      for (let index = 0; index < experienceIds.length; index += 1) {
-        try {
-          results.push(await runSource(experienceIds[index], index, experienceIds.length));
-        } catch (error) {
-          failures.push({ experienceId: experienceIds[index], error: error.message });
-        }
-        await sleep(150);
-      }
+      const result = await publishReady({ allImported: true });
+      publishAllProgress.textContent = `${publishSummary(result)}.`;
+      publishAllProgress.dataset.state = (result.skippedFiles?.length || result.skippedLinks?.length || result.skippedIntegrity?.length) ? 'warning' : 'ok';
+      setTimeout(() => window.location.reload(), 2500);
+    } catch (error) {
+      publishAllProgress.textContent = error.message;
+      publishAllProgress.dataset.state = 'error';
+    } finally {
+      running = false;
+      syncButtons();
+    }
+  }
 
-      const guideIds = [...new Set(results.flatMap((result) => result.guideIds || []))];
-      bulkProgress.textContent = guideIds.length
-        ? `Publishing ${guideIds.length} safe imported guide${guideIds.length === 1 ? '' : 's'}…`
-        : 'No publishable guides were imported.';
-      const published = guideIds.length ? await publishReady({ guideIds }) : { published: 0, skippedFiles: [], skippedIntegrity: [], skippedStatus: [], alreadyPublished: [] };
-      const scanned = results.reduce((sum, result) => sum + Number(result.scanned || 0), 0);
-      const blocked = results.reduce((sum, result) => sum + Number(result.blocked || 0), 0);
-      const prefix = `${experienceIds.length - failures.length}/${experienceIds.length} sources completed · ${scanned} items scanned${blocked ? ` · ${blocked} blocked` : ''} · `;
-      bulkProgress.textContent = `${publishSummary(published, prefix)}${failures.length ? ` · ${failures.length} source error${failures.length === 1 ? '' : 's'}` : ''}.`;
-      bulkProgress.dataset.state = failures.length ? 'warning' : 'ok';
-      setTimeout(() => window.location.reload(), 3500);
+  async function cancelCurrentJob() {
+    if (!currentJob || currentJob.status !== 'active' || running) return;
+    running = true;
+    syncButtons();
+    try {
+      renderJob(await jobApi({ action: 'cancel', jobId: currentJob.id }));
+      bulkProgress.textContent = 'Bulk job canceled. Any completed imports and publications were preserved.';
+      bulkProgress.dataset.state = 'warning';
     } catch (error) {
       bulkProgress.textContent = error.message;
       bulkProgress.dataset.state = 'error';
@@ -213,22 +250,17 @@
     }
   }
 
-  async function publishAllReadyDrafts() {
-    if (running) return;
-    running = true;
-    syncButtons();
-    publishAllProgress.dataset.state = 'working';
-    publishAllProgress.textContent = 'Publishing every ready imported draft…';
+  async function loadJob() {
     try {
-      const result = await publishReady({ allImported: true });
-      publishAllProgress.textContent = `${publishSummary(result)}.`;
-      publishAllProgress.dataset.state = 'ok';
-      setTimeout(() => window.location.reload(), 2500);
+      const job = await jobApi();
+      renderJob(job);
+      if (job?.status === 'active') {
+        bulkProgress.textContent = `${jobSummaryText(job)}. Press Resume to continue.`;
+        bulkProgress.dataset.state = 'warning';
+      }
     } catch (error) {
-      publishAllProgress.textContent = error.message;
-      publishAllProgress.dataset.state = 'error';
+      bulkProgress.textContent = error.status === 401 ? '' : error.message;
     } finally {
-      running = false;
       syncButtons();
     }
   }
@@ -241,10 +273,12 @@
   root.addEventListener('click', (event) => {
     if (event.target.closest('[data-clear-selected], .discovered-group .btn')) setTimeout(syncButtons, 0);
   });
-  bulkButton.addEventListener('click', runBulkWorkflow);
+  bulkButton.addEventListener('click', startBulkWorkflow);
+  resumeButton.addEventListener('click', () => runJob(currentJob));
+  cancelButton.addEventListener('click', cancelCurrentJob);
   publishAllButton.addEventListener('click', publishAllReadyDrafts);
 
   const observer = new MutationObserver(() => syncButtons());
   observer.observe(root.querySelector('[data-discovered-groups]') || root, { childList: true, subtree: true });
-  syncButtons();
+  loadJob();
 })();
