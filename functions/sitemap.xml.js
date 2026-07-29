@@ -1,4 +1,4 @@
-import { publicGuides } from './_lib/guides.js';
+import { publicGuides } from './_lib/guides-public.js';
 
 const STATIC_PATHS = [
   '/', '/deals/', '/guides/', '/about/', '/partners/', '/contact/',
