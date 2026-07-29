@@ -82,7 +82,8 @@ function forumItem(post, experience) {
 function courseLessonContent(lesson, course) {
   const parts = [];
   const content = lesson?.content;
-  if (content && (typeof content === 'object' || String(content).trim())) parts.push(content);
+  if (content && typeof content === 'object') parts.push(JSON.stringify(content));
+  else if (content && String(content).trim()) parts.push(String(content).trim());
   if (lesson?.embed_type === 'youtube' && lesson?.embed_id) {
     parts.push(`## Video\n\n[Watch on YouTube](https://www.youtube.com/watch?v=${encodeURIComponent(String(lesson.embed_id))})`);
   } else if (lesson?.embed_type === 'loom' && lesson?.embed_id) {
@@ -98,7 +99,7 @@ function courseLessonContent(lesson, course) {
     parts.push(`## Knowledge check\n\n${questions.join('\n\n')}`);
   }
   if (!parts.length && course?.title) parts.push(`Course lesson from ${cleanTitle(course.title, 'Whop course')}.`);
-  return parts.length === 1 ? parts[0] : parts;
+  return parts.join('\n\n');
 }
 
 function courseAttachments(lesson) {
