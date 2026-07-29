@@ -1,3 +1,4 @@
+import { quarantineUnsafePublishedGuides } from './content-policy.js';
 import { requireDatabase } from './http.js';
 
 const DEFAULT_PAGE_SIZE = 18;
@@ -29,6 +30,7 @@ function normalize(row) {
 }
 
 export async function searchPublicGuides(env, input = {}) {
+  await quarantineUnsafePublishedGuides(env);
   const db = requireDatabase(env);
   const page = clampInteger(input.page, 1, 100_000, 1);
   const pageSize = clampInteger(input.pageSize, 1, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE);
