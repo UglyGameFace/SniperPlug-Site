@@ -45,7 +45,6 @@ import {
   requireWhopSession,
   retrieveExperience,
   whopExperienceType,
-  whopSessionSummary,
 } from '../_lib/whop.js';
 
 const MAX_BATCH_SOURCES = 100;
@@ -113,16 +112,34 @@ async function login(request, env) {
   return methodNotAllowed(['GET', 'POST', 'DELETE']);
 }
 
+async function verifiedWhopSummary(request, env, admin) {
+  try {
+    const session = await requireWhopSession(request, env, admin);
+    return {
+      scopes: String(session.scopes || '').split(/\s+/).filter(Boolean),
+      expiresAt: session.expiresAt,
+      user: session.profile || {},
+      verifiedAt: new Date().toISOString(),
+    };
+  } catch (error) {
+    if (error instanceof HttpError && [401, 403].includes(error.status)) {
+      await disconnectWhop(request, env, admin).catch(() => null);
+      return null;
+    }
+    throw error;
+  }
+}
+
 async function dashboard(request, env, admin) {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
   const [whop, sources, categories, guides] = await Promise.all([
-    whopSessionSummary(env, admin),
+    verifiedWhopSummary(request, env, admin),
     listSourceOptions(env),
     listCategories(env, { includeInactive: true }),
     listAdminGuides(env),
   ]);
   return json({
-    whop: { connected: Boolean(whop), session: whop },
+    whop: { connected: Boolean(whop), verified: Boolean(whop), session: whop },
     capabilities: {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
     },
