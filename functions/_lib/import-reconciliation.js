@@ -1,37 +1,16 @@
 import { rejectionReasonForGuide } from './content-policy.js';
 import { requireDatabase } from './http.js';
 
-const OWNER_KEY = 'sniperplug-owner';
-const LOOKBACK_HOURS = 72;
-const MAX_GUIDES = 2000;
+const MAX_GUIDES = 4000;
+const UPDATE_BATCH_SIZE = 75;
+const RECONCILE_THROTTLE_MS = 30_000;
+
+let lastRunAt = 0;
+let lastResult = null;
+let inFlight = null;
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
-}
-
-function resultGuideIds(result) {
-  const values = [
-    ...(Array.isArray(result?.guideIds) ? result.guideIds : []),
-    ...(Array.isArray(result?.published?.publishedGuideIds) ? result.published.publishedGuideIds : []),
-  ];
-  return values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
-}
-
-async function recentBulkGuideIds(db) {
-  const cutoff = new Date(Date.now() - LOOKBACK_HOURS * 3_600_000).toISOString();
-  const jobs = await db.prepare(`
-    SELECT results_json FROM bulk_jobs
-    WHERE admin_session_id = ? AND created_at >= ?
-    ORDER BY created_at DESC
-    LIMIT 40
-  `).bind(OWNER_KEY, cutoff).all().catch(() => ({ results: [] }));
-  const ids = new Set();
-  for (const job of jobs.results || []) {
-    for (const result of safeJson(job.results_json, [])) {
-      for (const id of resultGuideIds(result)) ids.add(id);
-    }
-  }
-  return [...ids].slice(0, MAX_GUIDES);
 }
 
 function duplicateKey(row) {
@@ -43,31 +22,40 @@ function duplicateKey(row) {
 function preferredRow(rows) {
   return [...rows].sort((a, b) => {
     const statusScore = (row) => row.status === 'published' ? 0 : row.status === 'draft' ? 1 : 2;
-    return statusScore(a) - statusScore(b) || String(a.imported_at || '').localeCompare(String(b.imported_at || '')) || Number(a.id) - Number(b.id);
+    return statusScore(a) - statusScore(b)
+      || String(a.imported_at || '').localeCompare(String(b.imported_at || ''))
+      || Number(a.id) - Number(b.id);
   })[0];
+}
+
+function chunks(values, size) {
+  const output = [];
+  for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
+  return output;
 }
 
 async function reconcile(env) {
   const db = requireDatabase(env);
-  const ids = await recentBulkGuideIds(db);
-  if (!ids.length) return { checked: 0, rejected: 0, duplicates: 0, deferred: false };
-  const placeholders = ids.map(() => '?').join(',');
   const rows = await db.prepare(`
     SELECT id, title, body_markdown, status, source_key, source_created_at, imported_at,
-           attachment_json, integrity_json
+           updated_at, attachment_json, integrity_json
     FROM guides
-    WHERE id IN (${placeholders}) AND source_key IS NOT NULL AND status != 'rejected'
-  `).bind(...ids).all();
+    WHERE source_key IS NOT NULL AND status IN ('draft', 'published')
+    ORDER BY CASE status WHEN 'published' THEN 0 ELSE 1 END, updated_at DESC
+    LIMIT ${MAX_GUIDES}
+  `).all();
   const values = rows.results || [];
-  if (!values.length) return { checked: 0, rejected: 0, duplicates: 0, deferred: false };
+  if (!values.length) {
+    return { checked: 0, rejected: 0, duplicates: 0, unpublished: 0, draftsRemoved: 0, capped: false, deferred: false };
+  }
+
   const reasons = new Map();
   const duplicateGroups = new Map();
-
   for (const row of values) {
     const reason = rejectionReasonForGuide(row);
     if (reason) reasons.set(Number(row.id), reason);
     const key = duplicateKey(row);
-    if (key) {
+    if (key && !reason) {
       const group = duplicateGroups.get(key) || [];
       group.push(row);
       duplicateGroups.set(key, group);
@@ -80,30 +68,43 @@ async function reconcile(env) {
     const keep = preferredRow(group);
     for (const row of group) {
       if (Number(row.id) === Number(keep.id)) continue;
-      if (!reasons.has(Number(row.id))) {
-        reasons.set(Number(row.id), `Duplicate of “${keep.title}”.`);
-        duplicateCount += 1;
-      }
+      reasons.set(Number(row.id), `Duplicate of “${keep.title}”.`);
+      duplicateCount += 1;
     }
   }
 
-  if (!reasons.size) return { checked: values.length, rejected: 0, duplicates: 0, deferred: false };
+  if (!reasons.size) {
+    return {
+      checked: values.length,
+      rejected: 0,
+      duplicates: 0,
+      unpublished: 0,
+      draftsRemoved: 0,
+      capped: values.length >= MAX_GUIDES,
+      deferred: false,
+    };
+  }
+
   const now = new Date().toISOString();
   const statements = [];
+  let unpublished = 0;
+  let draftsRemoved = 0;
   for (const row of values) {
     const reason = reasons.get(Number(row.id));
     if (!reason) continue;
+    if (row.status === 'published') unpublished += 1;
+    else draftsRemoved += 1;
     const integrity = safeJson(row.integrity_json, {});
     statements.push(db.prepare(`
       UPDATE guides
       SET status = 'rejected', published_at = NULL, updated_at = ?, integrity_json = ?
-      WHERE id = ? AND status != 'rejected'
+      WHERE id = ? AND status IN ('draft', 'published')
     `).bind(now, JSON.stringify({
       ...integrity,
       quarantined: true,
       quarantineReason: reason,
       quarantinedAt: now,
-      cleanupVersion: 2,
+      cleanupVersion: 3,
     }), row.id));
     if (row.source_key) {
       statements.push(db.prepare(`
@@ -113,23 +114,48 @@ async function reconcile(env) {
       `).bind(now, row.source_key));
     }
   }
-  if (statements.length) await db.batch(statements);
-  return { checked: values.length, rejected: reasons.size, duplicates: duplicateCount, deferred: false };
+  for (const group of chunks(statements, UPDATE_BATCH_SIZE)) await db.batch(group);
+
+  return {
+    checked: values.length,
+    rejected: reasons.size,
+    duplicates: duplicateCount,
+    unpublished,
+    draftsRemoved,
+    capped: values.length >= MAX_GUIDES,
+    deferred: false,
+  };
+}
+
+export async function reconcileImportedGuides(env, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && lastResult && now - lastRunAt < RECONCILE_THROTTLE_MS) return lastResult;
+  if (inFlight) return inFlight;
+  inFlight = reconcile(env)
+    .then((result) => {
+      lastRunAt = Date.now();
+      lastResult = result;
+      return result;
+    })
+    .catch((error) => {
+      console.warn('Importer reconciliation was deferred so the site can remain available.');
+      return {
+        checked: 0,
+        rejected: 0,
+        duplicates: 0,
+        unpublished: 0,
+        draftsRemoved: 0,
+        capped: false,
+        deferred: true,
+        reason: /no such table|no such column|has no column named/i.test(String(error?.message || ''))
+          ? 'database-compatibility'
+          : 'runtime-retry',
+      };
+    })
+    .finally(() => { inFlight = null; });
+  return inFlight;
 }
 
 export async function reconcileRecentBulkImports(env) {
-  try {
-    return await reconcile(env);
-  } catch (error) {
-    console.warn('Optional import reconciliation was deferred so the Control Center can remain available.');
-    return {
-      checked: 0,
-      rejected: 0,
-      duplicates: 0,
-      deferred: true,
-      reason: /no such table|no such column|has no column named/i.test(String(error?.message || ''))
-        ? 'database-compatibility'
-        : 'runtime-retry',
-    };
-  }
+  return reconcileImportedGuides(env);
 }
