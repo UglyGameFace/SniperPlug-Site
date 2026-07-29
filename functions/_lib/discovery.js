@@ -9,7 +9,7 @@ import {
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_MEMBERSHIPS = 1000;
-const MAX_ITEMS_PER_PRODUCT = 500;
+const MAX_ITEMS_PER_SCOPE = 500;
 const MAX_COMPANIES = 100;
 const CONCURRENCY = 5;
 const ACCESS_GRANTING_MEMBERSHIP_STATUSES = new Set([
@@ -41,7 +41,10 @@ function scopeSet(session) {
 }
 
 export function membershipGrantsAccess(membership) {
-  return ACCESS_GRANTING_MEMBERSHIP_STATUSES.has(String(membership?.status || '').trim().toLowerCase());
+  const status = String(membership?.status || '').trim().toLowerCase();
+  if (!ACCESS_GRANTING_MEMBERSHIP_STATUSES.has(status)) return false;
+  if (membership?.user === null || membership?.member === null) return false;
+  return true;
 }
 
 async function allPages(session, path, query, maxItems, label) {
@@ -154,7 +157,10 @@ function capability(experience, grantedScopes) {
 
 async function discoverCompanySources(session, env, company, grantedScopes) {
   const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
-  const scopes = membershipProducts.length ? membershipProducts : [{ id: null, title: 'company access' }];
+  const scopes = [
+    { id: null, title: 'company-wide access' },
+    ...membershipProducts,
+  ];
   const attempts = await mapConcurrent(scopes, async (product) => {
     const query = {
       company_id: company.id,
@@ -162,12 +168,12 @@ async function discoverCompanySources(session, env, company, grantedScopes) {
     };
     const output = { product, forums: [], experiences: [], failures: [] };
     try {
-      output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_PRODUCT, `${product.title} forums`);
+      output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_SCOPE, `${product.title} forums`);
     } catch (error) {
       output.failures.push(discoveryFailure(`${product.title} forum lookup`, error));
     }
     try {
-      output.experiences = await allPages(session, 'experiences', query, MAX_ITEMS_PER_PRODUCT, `${product.title} experiences`);
+      output.experiences = await allPages(session, 'experiences', query, MAX_ITEMS_PER_SCOPE, `${product.title} experiences`);
     } catch (error) {
       output.failures.push(discoveryFailure(`${product.title} experience lookup`, error));
     }
@@ -189,11 +195,11 @@ async function discoverCompanySources(session, env, company, grantedScopes) {
   }
 
   const sources = [];
-  const unsupported = [];
+  const externalApps = [];
   for (const experience of discovered.values()) {
     const details = capability(experience, grantedScopes);
     if (!details.supported) {
-      unsupported.push({ experience, capability: details });
+      externalApps.push({ experience, capability: details });
       continue;
     }
     sources.push({
@@ -204,16 +210,16 @@ async function discoverCompanySources(session, env, company, grantedScopes) {
   }
 
   let error = null;
-  if (!sources.length && !unsupported.length) {
+  if (!sources.length && !externalApps.length) {
     error = failures.size
-      ? `Whop found the membership, but product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`
-      : 'Whop found the membership product, but it has no readable experiences attached.';
+      ? `Whop found the membership, but company-wide and product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`
+      : 'Whop found the membership product, but it has no current readable experiences attached.';
   }
 
   return {
     company,
     sources,
-    unsupported,
+    externalApps,
     failures: [...failures],
     error,
   };
@@ -234,7 +240,8 @@ export async function discoverWhopSources(session, env) {
   const activeMemberships = memberships.filter(membershipGrantsAccess);
   const companies = membershipCompanies(activeMemberships);
   const results = await mapConcurrent(companies, (company) => discoverCompanySources(session, env, company, grantedScopes));
-  const groups = results.map(({ company, sources, unsupported, failures, error }) => ({
+  const emptyGroups = results.filter((result) => !result.sources.length && !result.externalApps.length).length;
+  const groups = results.map(({ company, sources, externalApps, failures, error }) => ({
     company: {
       id: company.id,
       title: company.title,
@@ -246,14 +253,15 @@ export async function discoverWhopSources(session, env) {
     builtIn: DEFAULT_GROUPS.has(normalize(company.title)),
     defaultRank: DEFAULT_GROUPS.get(normalize(company.title)) ?? 100,
     sources,
-    unsupported,
+    externalApps,
+    unsupported: externalApps,
     failures,
     error,
-  })).filter((group) => group.sources.length || group.unsupported.length || group.builtIn);
+  })).filter((group) => group.sources.length || group.externalApps.length);
 
   groups.sort((left, right) => left.defaultRank - right.defaultRank || left.company.title.localeCompare(right.company.title));
   const sources = groups.flatMap((group) => group.sources);
-  const unsupported = groups.flatMap((group) => group.unsupported);
+  const externalApps = groups.flatMap((group) => group.externalApps);
   const countsByType = sources.reduce((counts, entry) => {
     counts[entry.capability.sourceType] = (counts[entry.capability.sourceType] || 0) + 1;
     return counts;
@@ -265,12 +273,14 @@ export async function discoverWhopSources(session, env) {
     counts: {
       memberships: activeMemberships.length,
       ignoredMemberships: memberships.length - activeMemberships.length,
+      emptyGroups,
       groups: groups.length,
       sources: sources.length,
       forums: countsByType.forum || 0,
       courses: countsByType.course || 0,
       chats: countsByType.chat || 0,
-      unsupported: unsupported.length,
+      externalApps: externalApps.length,
+      unsupported: externalApps.length,
       approved: sources.filter((entry) => entry.source.decision === 'approved').length,
       disapproved: sources.filter((entry) => entry.source.decision === 'disapproved').length,
       pending: sources.filter((entry) => entry.source.decision === 'pending').length,
