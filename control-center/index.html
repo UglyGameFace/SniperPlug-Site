@@ -24,7 +24,7 @@
     <section class="control-login container" data-login-panel>
       <span class="eyebrow">🔒 Private publishing</span>
       <h1>Unlock the Guide Control Center.</h1>
-      <p>Import authorized Whop forum posts, course lessons, chat messages, links, and files. Review everything privately before publishing.</p>
+      <p>Import authorized Whop forum posts, course lessons, chat messages, links, pictures, videos, audio, PDFs, and files. Review everything privately before publishing.</p>
       <form data-login-form>
         <label><span>Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
         <button class="btn primary" type="submit">Unlock Control Center</button>
@@ -48,11 +48,15 @@
       </section>
 
       <section class="control-panel" id="source-browser" data-discovery-panel>
-        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and API-readable Forums, Courses, and Chat experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
+        <div class="source-capability-note">
+          <div><strong>Imported automatically</strong><p>Whop Forums, Courses, Chat, and their attached pictures, videos, audio, PDFs, and files.</p></div>
+          <div><strong>External app module</strong><p>Your access is valid, but the content lives in another service such as Telegram or Discord. That service needs its own importer connection; it is not a missing Whop permission.</p></div>
+        </div>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
-          <label><span>Find a source</span><input type="search" data-source-search placeholder="Search group, course, forum, or chat"></label>
-          <label><span>Show</span><select data-source-filter><option value="all">All sources</option><option value="pending">Needs decision</option><option value="approved">Approved</option><option value="disapproved">Disapproved</option><option value="course">Courses</option><option value="forum">Forums</option><option value="chat">Chat</option></select></label>
+          <label><span>Find a source</span><input type="search" data-source-search placeholder="Search group, course, forum, chat, or external app"></label>
+          <label><span>Show</span><select data-source-filter><option value="all">All sources</option><option value="pending">Needs decision</option><option value="approved">Approved</option><option value="disapproved">Disapproved</option><option value="course">Courses</option><option value="forum">Forums</option><option value="chat">Chat</option><option value="external">External app modules</option></select></label>
           <div class="button-row"><button class="btn ghost" type="button" data-expand-priority>Expand priority</button><button class="btn ghost" type="button" data-collapse-groups>Collapse all</button></div>
         </div>
         <div class="discovery-bulk" data-discovery-bulk hidden>
@@ -64,7 +68,7 @@
           <details class="bulk-publish-box" data-bulk-workflow>
             <summary><span>Complete resumable workflow</span><small data-bulk-workflow-summary>Open when ready to import and publish</small></summary>
             <div class="bulk-publish-content">
-              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
+              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, preserve available media, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
               <label class="rights-check"><input type="checkbox" data-bulk-rights><span>I own the selected content or have explicit permission to republish it on SniperPlug.</span></label>
               <button class="btn primary" type="button" data-bulk-publish disabled>Start bulk workflow</button>
               <p class="bulk-progress" data-bulk-progress role="status" aria-live="polite"></p>
@@ -122,7 +126,7 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you publish it. Publishing blocks unresolved files, failed integrity checks, internal Whop pages, and temporary Whop URLs.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you publish it. Publishing blocks unresolved media, failed integrity checks, internal Whop pages, and temporary Whop URLs.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
         <div class="draft-tools">
           <label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label>
@@ -138,7 +142,7 @@
             <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
             <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft">＋ Add category</button></div>
             <label><span>Guide Markdown</span><textarea name="body" rows="24" spellcheck="true" required></textarea></label>
-            <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring attachment.</span></label>
+            <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring media file.</span></label>
             <label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide above normal guide ordering.</span></label>
             <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
             <details class="exact-preview"><summary>Exact Markdown preview</summary><pre data-markdown-preview></pre></details>
@@ -159,6 +163,7 @@
   <script src="/assets/js/control-center-lifecycle.js" defer></script>
   <script src="/assets/js/control-center-hardening.js" defer></script>
   <script src="/assets/js/control-center-density.js" defer></script>
+  <script src="/assets/js/control-center-performance.js" defer></script>
   <script src="/assets/js/bulk-publish.js" defer></script>
 </body>
 </html>
