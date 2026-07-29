@@ -14,6 +14,7 @@ const bulkApi = read('functions/api/bulk-jobs.js');
 const recentActions = read('functions/_lib/recent-actions.js');
 const publish = read('functions/_lib/publish.js');
 const control = read('functions/api/control.js');
+const reconciliation = read('functions/_lib/import-reconciliation.js');
 const lifecycle = read('assets/js/control-center-lifecycle.js');
 const runtime = read('assets/js/control-center-v2.js');
 const html = read('control-center/index.html');
@@ -37,10 +38,13 @@ const codeAudit = auditGuideLinks('`https://whop.com/not-a-link`\n\n```text\nhtt
 assert.equal(codeAudit.total, 0, 'URLs inside inline or fenced code must not be audited as clickable links.');
 
 assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Whop connection is still tied to a temporary browser session ID.');
-assert.ok(auth.includes('migrateOwnerWhopSession') && auth.includes("DELETE FROM whop_sessions WHERE admin_session_id <> ?"), 'Legacy Whop sessions are not migrated into one stable owner connection.');
-assert.ok(auth.includes('legacySid: session.sid') && auth.includes('sid: OWNER_SESSION_ID'), 'Existing signed admin cookies do not normalize to the stable owner identity.');
+assert.ok(auth.includes('resolveOwnerWhopSessionId') && auth.includes('PRAGMA table_info(whop_sessions)'), 'Legacy Whop sessions are not resolved against the deployed D1 schema.');
+assert.ok(auth.includes('copySessionToOwner') && auth.includes('using the existing compatible session row'), 'An older Whop session row can still crash the Control Center during migration.');
+assert.ok(!auth.includes('DELETE FROM whop_sessions WHERE admin_session_id <> ?'), 'Owner-session migration still deletes compatible legacy rows during a normal request.');
+assert.ok(auth.includes('legacySid: session.sid') && auth.includes('sid: effectiveSessionId'), 'Existing signed admin cookies do not normalize or safely fall back to a compatible Whop session.');
 assert.ok(control.includes('verifiedWhopSummary') && control.includes('requireWhopSession(request, env, admin)'), 'Dashboard reports connected from a stale row without opening the saved Whop session.');
-assert.ok(control.includes("[401, 403].includes(error.status)"), 'Invalid Whop sessions are not cleared before the UI reports connection state.');
+assert.ok(control.includes('[401, 403].includes(error.status)'), 'Invalid Whop sessions are not cleared before the UI reports connection state.');
+assert.ok(reconciliation.includes('Optional import reconciliation was deferred') && reconciliation.includes('deferred: true'), 'Optional cleanup can still take down the entire Control Center.');
 assert.ok(hardeningCss.includes('.control-shell [hidden],.preview-backdrop[hidden]{display:none!important}'), 'Author CSS can still override hidden login, app, modal, Connect, or Disconnect states.');
 
 assert.ok(bulkJobs.includes('CREATE TABLE IF NOT EXISTS bulk_jobs'), 'Bulk jobs are not self-initializing in D1.');
@@ -97,6 +101,7 @@ assert.ok(templates.includes('Last reviewed') && templates.includes('Report outd
 
 const syntaxFiles = [
   'functions/_lib/auth.js',
+  'functions/_lib/import-reconciliation.js',
   'functions/_lib/link-audit.js',
   'functions/_lib/publish.js',
   'functions/_lib/bulk-jobs.js',
@@ -119,8 +124,9 @@ for (const file of syntaxFiles) {
 console.log('\nSNIPERPLUG CONTROL HARDENING AUDIT PASSED\n');
 console.log('✓ Locked and unlocked Control Center states cannot render together.');
 console.log('✓ Connect and Disconnect cannot render together.');
-console.log('✓ Whop remains attached to the SniperPlug owner across browser login expiry.');
+console.log('✓ Existing Whop sessions survive older D1 schemas and browser-login changes.');
 console.log('✓ Dashboard connection status requires a decryptable, refreshable Whop session.');
+console.log('✓ Optional cleanup cannot block the Control Center.');
 console.log('✓ Bulk source work persists in D1 and resumes after refreshes, logins, or dropped connections.');
 console.log('✓ Manual and bulk publishing block internal, temporary, expired, quarantined, and unverified content.');
 console.log('✓ Unsaved draft edits warn before destructive actions and keep a local recovery copy.');
