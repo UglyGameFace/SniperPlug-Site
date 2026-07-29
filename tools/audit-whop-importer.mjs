@@ -171,8 +171,8 @@ for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-app
 assert.ok(page.includes('Forums, Courses, and Chat'), 'Control Center does not explain supported content types.');
 assert.ok(page.includes('data-scope-warning'), 'Missing OAuth content scopes are not surfaced.');
 assert.ok(page.includes('/assets/js/control-center-v2.js'), 'The active consolidated Control Center runtime is not loaded.');
-assert.ok(client.includes("decidePosts([post.sourceKey], 'approved')"), 'Individual Approve button is not wired.');
-assert.ok(client.includes("decidePosts([post.sourceKey], 'disapproved')"), 'Individual Disapprove button is not wired.');
+assert.ok(client.includes("action === 'post-approve' ? 'approved'") && client.includes('return decidePosts([key], decision, button)'), 'Individual Approve button is not wired through the delegated runtime.');
+assert.ok(client.includes("action === 'post-disapprove' ? 'disapproved'"), 'Individual Disapprove button is not wired through the delegated runtime.');
 assert.ok(client.includes("'pending'"), 'Undo decision is not wired.');
 assert.ok(client.includes('sourceKeys'), 'The browser does not submit approved IDs.');
 assert.ok(!client.includes('body: post.body'), 'The browser is trusted to submit source content bodies.');
