@@ -16,6 +16,7 @@ import {
 } from './http.js';
 
 const ADMIN_COOKIE = 'sniperplug_admin';
+const OWNER_SESSION_ID = 'sniperplug-owner';
 const ADMIN_TTL_SECONDS = 12 * 60 * 60;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
@@ -39,6 +40,50 @@ async function loginClientKey(request) {
     || request.headers.get('X-Forwarded-For')?.split(',')[0]
     || 'unknown';
   return sha256(`sniperplug-control:${String(address).trim().slice(0, 128)}`);
+}
+
+async function migrateOwnerWhopSession(env, legacySessionId) {
+  const db = requireDatabase(env);
+  try {
+    const latest = await db.prepare(`
+      SELECT * FROM whop_sessions
+      ORDER BY CASE WHEN admin_session_id = ? THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1
+    `).bind(OWNER_SESSION_ID).first();
+    if (latest && latest.admin_session_id !== OWNER_SESSION_ID) {
+      await db.prepare(`
+        INSERT INTO whop_sessions (
+          admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
+          user_json, token_version, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(admin_session_id) DO UPDATE SET
+          access_cipher = excluded.access_cipher,
+          refresh_cipher = excluded.refresh_cipher,
+          token_type = excluded.token_type,
+          scopes = excluded.scopes,
+          expires_at = excluded.expires_at,
+          user_json = excluded.user_json,
+          token_version = excluded.token_version,
+          updated_at = excluded.updated_at
+      `).bind(
+        OWNER_SESSION_ID,
+        latest.access_cipher,
+        latest.refresh_cipher,
+        latest.token_type,
+        latest.scopes,
+        latest.expires_at,
+        latest.user_json,
+        latest.token_version,
+        latest.created_at,
+        latest.updated_at,
+      ).run();
+    }
+    await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id <> ?').bind(OWNER_SESSION_ID).run();
+  } catch (error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (message.includes('no such table') && message.includes('whop_sessions')) return;
+    throw error;
+  }
 }
 
 export async function checkLoginThrottle(request, env) {
@@ -86,7 +131,8 @@ export async function verifyAdminPassword(env, submitted) {
 export async function createAdminSession(env) {
   const session = {
     v: 1,
-    sid: randomToken(24),
+    sid: OWNER_SESSION_ID,
+    nonce: randomToken(24),
     issuedAt: Date.now(),
     expiresAt: Date.now() + ADMIN_TTL_SECONDS * 1000,
   };
@@ -113,7 +159,8 @@ export async function readAdminSession(request, env) {
 export async function requireAdmin(request, env) {
   const session = await readAdminSession(request, env);
   if (!session) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
-  return session;
+  await migrateOwnerWhopSession(env, session.sid);
+  return { ...session, legacySid: session.sid, sid: OWNER_SESSION_ID };
 }
 
 export function clearAdminSession() {
