@@ -2,11 +2,8 @@ import { classifyWhopItem, whopContentToMarkdown } from './content-policy.js';
 import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
-import {
-  listExperienceItems,
-  sourceKeyForWhopItem,
-  whopExperienceType,
-} from './whop.js';
+import { listExperienceItemsLite, sourceKeyForWhopItem } from './whop-items.js';
+import { whopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 function plainExcerpt(value, limit = 260) {
@@ -163,7 +160,7 @@ export async function scanApprovedSource(env, whopSession, experience) {
   if (!['forum', 'course', 'chat'].includes(sourceType)) {
     throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” cannot be imported. Forums, Courses, and Chat are supported.`);
   }
-  const rawItems = await listExperienceItems(whopSession, experience);
+  const rawItems = await listExperienceItemsLite(whopSession, experience);
   const topLevelItems = rawItems.filter((item) => sourceType !== 'chat' || !item?.sourceMeta?.replyingTo);
   const posts = await Promise.all(topLevelItems.map((item) => normalizeItem(item, experienceId, sourceType)));
   const now = new Date().toISOString();
