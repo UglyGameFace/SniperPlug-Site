@@ -8,6 +8,7 @@
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/css/styles.css">
   <link rel="stylesheet" href="/assets/css/control-center.css">
+  <link rel="stylesheet" href="/assets/css/whop-discovery.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -22,7 +23,7 @@
     <section class="control-login container" data-login-panel>
       <span class="eyebrow">🔒 Private publishing</span>
       <h1>Unlock the Guide Control Center.</h1>
-      <p>Import authorized Whop posts, approve or disapprove each one, review exact formatting, and publish only when the guide is ready.</p>
+      <p>Import authorized Whop forum posts, course lessons, chat messages, links, and files. Review everything privately before publishing.</p>
       <form data-login-form>
         <label><span>Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
         <button class="btn primary" type="submit">Unlock Control Center</button>
@@ -32,7 +33,7 @@
 
     <section class="control-app container" data-control-app hidden>
       <header class="control-hero">
-        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve the exact source, approve the exact posts, import hidden drafts, then publish separately.</p></div>
+        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and content, import hidden drafts, then publish separately.</p></div>
         <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">View public guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
       </header>
 
@@ -41,14 +42,15 @@
       <section class="control-panel" id="whop-importer">
         <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
         <div class="button-row"><a class="btn primary" href="/api/control?action=oauth-start" data-whop-connect>Continue with Whop</a><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect</button></div>
+        <p class="scope-warning" data-scope-warning hidden></p>
         <div class="source-chips" data-source-options></div>
       </section>
 
       <section class="control-panel" data-discovery-panel>
-        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your joined Whop groups</h2><p>Joined memberships and readable forum experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh groups</button></header>
-        <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load groups.</strong><span data-discovery-message></span></div>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and API-readable Forums, Courses, and Chat experiences load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
+        <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
         <div class="discovery-bulk" data-discovery-bulk hidden>
-          <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files forum</span></label>
+          <label class="rights-check"><input type="checkbox" data-select-defaults><span>Select every Black Box and Hidden Files source</span></label>
           <div class="button-row"><button class="decision approve" type="button" data-approve-selected disabled>Approve selected</button><button class="decision disapprove" type="button" data-disapprove-selected disabled>Disapprove selected</button><button class="btn ghost" type="button" data-clear-selected disabled>Clear selection</button></div>
         </div>
         <div class="discovered-groups" data-discovered-groups></div>
@@ -56,29 +58,38 @@
           <summary>Advanced fallback: paste a Whop experience ID or link</summary>
           <form class="source-form" data-source-form>
             <label><span>Experience ID or Whop link</span><input name="source" placeholder="exp_xxxxxxxxxxxxxx or a link containing it" autocomplete="off" required></label>
-            <button class="btn primary" type="submit">Check group</button>
+            <button class="btn primary" type="submit">Check source</button>
           </form>
         </details>
         <article class="source-review" data-source-review hidden>
-          <div><small>Exact Whop source</small><h3 data-source-title>Whop group</h3><p data-source-detail></p></div>
+          <div><small>Exact Whop source</small><h3 data-source-title>Whop source</h3><p data-source-detail></p></div>
           <strong class="state-pill" data-source-state data-state="pending">Needs decision</strong>
-          <div class="decision-row"><button class="decision approve" type="button" data-source-approve>Approve group</button><button class="decision disapprove" type="button" data-source-disapprove>Disapprove group</button><button class="btn ghost" type="button" data-source-scan>Review posts</button></div>
+          <div class="decision-row"><button class="decision approve" type="button" data-source-approve>Approve source</button><button class="decision disapprove" type="button" data-source-disapprove>Disapprove source</button><button class="btn ghost" type="button" data-source-scan>Review content</button></div>
         </article>
       </section>
 
       <section class="control-panel" data-post-panel hidden>
-        <header class="panel-head"><div><span class="eyebrow">3 · Approve posts</span><h2 data-post-title>Review posts</h2><p data-post-summary></p></div><div class="button-row"><button class="decision approve" type="button" data-approve-all>Approve all ready</button><button class="decision disapprove" type="button" data-disapprove-all>Disapprove all</button><button class="btn ghost" type="button" data-reset-all>Reset decisions</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">3 · Approve content</span><h2 data-post-title>Review content</h2><p data-post-summary></p></div><div class="button-row"><button class="decision approve" type="button" data-approve-all>Approve all ready</button><button class="decision disapprove" type="button" data-disapprove-all>Disapprove all</button><button class="btn ghost" type="button" data-reset-all>Reset decisions</button></div></header>
         <div class="decision-counts"><span><strong data-count-approved>0</strong>Approved</span><span><strong data-count-disapproved>0</strong>Disapproved</span><span><strong data-count-pending>0</strong>Need decision</span><span><strong data-count-blocked>0</strong>Blocked</span></div>
         <div class="post-list" data-post-list></div>
         <div class="import-bar">
-          <label><span>Category for approved posts</span><select data-import-category></select></label>
-          <label class="rights-check"><input type="checkbox" data-rights-confirm><span>I own these posts or have explicit permission to republish them on SniperPlug.</span></label>
+          <div class="category-picker-row">
+            <label><span>Category for approved content</span><select data-import-category></select></label>
+            <button class="btn ghost" type="button" data-open-inline-category data-category-target="import">＋ Add category</button>
+          </div>
+          <form class="inline-category-form" data-inline-category-form hidden>
+            <label><span>New category</span><input name="label" maxlength="60" placeholder="Personal Freebies" required></label>
+            <label><span>Description</span><input name="description" maxlength="220" placeholder="Free products, trials, credits, and samples."></label>
+            <input type="hidden" name="sortOrder" value="100">
+            <div class="button-row"><button class="btn primary" type="submit">Save and select category</button><button class="btn ghost" type="button" data-cancel-inline-category>Cancel</button></div>
+          </form>
+          <label class="rights-check"><input type="checkbox" data-rights-confirm><span>I own this content or have explicit permission to republish it on SniperPlug.</span></label>
           <button class="btn primary" type="button" data-import-approved disabled>Import approved drafts</button>
         </div>
       </section>
 
-      <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>The importer uses this live registry. Add a category instead of forcing a guide into the wrong one.</p></div></header>
+      <section class="control-panel" id="category-registry">
+        <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>The importer uses this live registry. Add a custom category instead of forcing content into the wrong one.</p></div></header>
         <form class="category-form" data-category-form>
           <label><span>Label</span><input name="label" maxlength="60" placeholder="Reselling" required></label>
           <label><span>Description</span><input name="description" maxlength="220" placeholder="Reselling, sourcing, and flip methods."></label>
@@ -89,7 +100,7 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported posts stay private until you open a draft and press Publish.</p></div><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you open a draft and press Publish.</p></div><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></header>
         <div class="draft-layout">
           <aside class="draft-list" data-draft-list></aside>
           <div class="draft-empty" data-draft-empty><strong>No draft selected</strong><p>Choose an imported guide to review its exact content.</p></div>
@@ -98,9 +109,9 @@
             <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open published guide</a></div>
             <label><span>Title</span><input name="title" maxlength="140" required></label>
             <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
-            <label><span>Category</span><select name="category" required></select></label>
+            <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft">＋ Add category</button></div>
             <label><span>Guide Markdown</span><textarea name="body" rows="24" spellcheck="true" required></textarea></label>
-            <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private/expiring attachment.</span></label>
+            <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring attachment.</span></label>
             <label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide above normal guide ordering.</span></label>
             <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
             <details class="exact-preview"><summary>Exact Markdown preview</summary><pre data-markdown-preview></pre></details>
@@ -112,12 +123,11 @@
 
   <div class="preview-backdrop" data-post-preview hidden>
     <section role="dialog" aria-modal="true" aria-labelledby="post-preview-title">
-      <header><h2 id="post-preview-title" data-preview-title>Post preview</h2><button type="button" data-close-preview aria-label="Close">×</button></header>
-      <p data-preview-meta></p><pre data-preview-body></pre><footer><button class="btn ghost" type="button" data-close-preview>Close</button></footer>
+      <header><h2 id="post-preview-title" data-preview-title>Content preview</h2><button type="button" data-close-preview aria-label="Close">×</button></header>
+      <p data-preview-meta></p><div class="preview-content" data-preview-body></div><footer><button class="btn ghost" type="button" data-close-preview>Close</button></footer>
     </section>
   </div>
 
   <script src="/assets/js/control-center.js" defer></script>
-  <script src="/assets/js/whop-discovery.js" defer></script>
 </body>
 </html>
