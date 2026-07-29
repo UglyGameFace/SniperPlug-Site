@@ -1,10 +1,10 @@
 # Active Task
 
 ## Task
-Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls feel responsive, the review queue does not freeze the browser, stale client code cannot survive deployment, and the existing guide-quality/publishing safeguards remain intact.
+Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls feel responsive, the review queue does not freeze the browser, stale client code cannot survive deployment, permanent private Whop media can be copied safely, and the existing guide-quality/publishing safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`. The interaction/performance implementation is committed at `bd4cf821ffd284d9677ad89acb0129c9f3308ea3`; the permanent verification workflow was restored at `c82c27572cfc09e49549df9e4b1c5a9af9685f1c`. The full Node 22 regression suite passed, Cloudflare Pages deployed the verified branch, and PR #2 remains draft and mergeable. Authenticated acceptance against the connected Whop account/private D1 is the only remaining completion gate.
+Active on `agent/whop-guide-importer`. The interaction/performance implementation is committed at `bd4cf821ffd284d9677ad89acb0129c9f3308ea3`; the permanent verification workflow was restored at `c82c27572cfc09e49549df9e4b1c5a9af9685f1c`; the `SNIPERPLUG_MEDIA` R2 binding was added at `cacdc4397d2438f08650ef5ed55e004893fbb8c9`. The full Node 22 regression suite passed and Cloudflare Pages deployed the R2-enabled branch successfully. PR #2 remains draft. Authenticated acceptance against the connected Whop account/private D1 is the remaining completion gate.
 
 ## Scope
 - Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, content quality checks, media preservation, safe publishing, and 48-hour undo.
@@ -14,6 +14,7 @@ Active on `agent/whop-guide-importer`. The interaction/performance implementatio
 - Keep exact guide content private and fetch it only when that guide is opened.
 - Prevent expensive imported-guide reconciliation from rerunning on every Cloudflare Worker cold start.
 - Eliminate stale Control Center JavaScript/CSS after deployments.
+- Keep private and expiring Whop media durable through a private Cloudflare R2 binding named `SNIPERPLUG_MEDIA`.
 - Remove obsolete scripts and observers rather than stacking another performance patch over them.
 - Validate phone, tablet, desktop, syntax, media, discovery, publishing, recovery, responsive flow, and public-page filtering.
 
@@ -27,6 +28,7 @@ Active on `agent/whop-guide-importer`. The interaction/performance implementatio
 - Draft safety used multiple `MutationObserver` instances and a click-timing recovery path even though the runtime already knows exactly when a guide loads or changes status.
 - Six obsolete Control Center runtimes remained in the repository after consolidation, and one regression audit still tested those dead files instead of the active runtime.
 - Public deal search recomputed every card’s complete text on each keystroke.
+- Cloudflare Preview bindings were locked in the dashboard because this Pages project treats `wrangler.toml` as the configuration source of truth. The file contained D1 but no `SNIPERPLUG_MEDIA` R2 binding, so preview could not receive permanent private-media storage from the UI.
 
 ## Changes
 - Corrected all post-preview modal lookups to query `document`, preventing the runtime-ending null exception and allowing `initialize()` to execute reliably.
@@ -38,6 +40,7 @@ Active on `agent/whop-guide-importer`. The interaction/performance implementatio
 - Versioned every Control Center JavaScript/CSS request and added immutable caching only for versioned assets; unversioned control assets must revalidate.
 - Indexed public deal-card search text once and coalesced filtering into animation frames.
 - Deleted obsolete `control-center.js`, `control-center-hardening.js`, `control-center-performance.js`, `control-center-density.js`, `bulk-publish.js`, and `media-readiness.js` runtimes.
+- Added `[[r2_buckets]]` to `wrangler.toml` with `binding = "SNIPERPLUG_MEDIA"` and `bucket_name = "sniperplug-media"`, making the private bucket available through the repository-managed Pages configuration.
 - Updated regression audits to inspect the active runtime, local group feedback, lazy guide detail, bounded review rendering, persistent maintenance throttling, modal query scope, versioned assets, observer removal, and optimized public filtering.
 
 ## Validation
@@ -47,9 +50,10 @@ Active on `agent/whop-guide-importer`. The interaction/performance implementatio
 - Passed: targeted headless Chromium interaction test with 500 guide summaries on a 412×915 mobile viewport. Only 60 guide cards rendered initially; **Select group** updated `0/19` to `19/19`, changed the button to **Group selected**, updated the global total, and loaded exact guide content on demand without a page error.
 - Passed: three repeated Chromium interaction runs; measured click completion was approximately 111–170 ms in the headless test harness, including Playwright actionability overhead.
 - Passed: dead-runtime reference scan; active HTML loads only `control-center-v2.js` and `control-center-lifecycle.js`.
-- Passed: Cloudflare Pages deployed verified branch commit `c82c27572cfc09e49549df9e4b1c5a9af9685f1c` successfully.
-- Passed: PR conflict inspection; PR #2 remains draft and mergeable against `main`.
-- Pending: authenticated live check with the user’s connected Whop account and private D1 data.
+- Passed: the permanent verification workflow completed successfully on R2 binding commit `cacdc4397d2438f08650ef5ed55e004893fbb8c9`.
+- Passed: Cloudflare Pages deployed the exact R2 binding commit successfully to the branch preview.
+- Pending: authenticated live check that the Control Center reports private media storage ready and successfully mirrors a known private or expiring Whop attachment.
+- Pending: authenticated interaction and publishing acceptance with the user’s connected Whop account and private D1 data.
 
 ## Cleanup
 - One active Control Center interaction runtime remains.
@@ -57,10 +61,11 @@ Active on `agent/whop-guide-importer`. The interaction/performance implementatio
 - Temporary source-artifact and one-shot repair workflow steps were removed; the permanent read-only verification workflow is restored.
 - The incidental empty generated `package-lock.json` was removed.
 - No mock data, browser test fixture, imported content, token, or secret was committed.
+- The R2 bucket remains private; media is served through the application route rather than a public bucket URL.
 - Quarantined guide content remains private and reversible rather than being deleted.
 
 ## Blockers
-- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center or inspect private D1 rows. Live acceptance must confirm group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
+- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center, inspect private D1 rows, or fetch a private Whop attachment. Live acceptance must confirm media readiness, one real private-media copy, group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
 
 ## Backlog
 - None. Do not switch tasks until authenticated acceptance and final cleanup inspection pass.
