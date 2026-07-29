@@ -13,10 +13,12 @@ const page = read('control-center/index.html');
 const hardening = read('assets/js/control-center-hardening.js');
 const density = read('assets/js/control-center-density.js');
 const performance = read('assets/js/control-center-performance.js');
+const mediaReadiness = read('assets/js/media-readiness.js');
 const hardeningCss = read('assets/css/control-center-hardening.css');
 const mediaCss = read('assets/css/guide-media.css');
 const media = read('functions/_lib/media.js');
 const guideMedia = read('functions/_lib/guides-media.js');
+const sourcePolicy = read('functions/_lib/source-policy.js');
 const controlApi = read('functions/api/control.js');
 const bulkJobs = read('functions/_lib/bulk-jobs.js');
 const mediaRoute = read('functions/media/[key].js');
@@ -27,6 +29,12 @@ assert.ok(page.includes('/assets/js/control-center-performance.js'), 'Fast inter
 assert.ok(performance.includes("addEventListener('click'") && performance.includes('true);'), 'Group selection is not intercepted before the old full-rerender handlers.');
 assert.ok(performance.includes('stopImmediatePropagation'), 'Slow legacy selection handlers can still run after the fast path.');
 assert.ok(performance.includes('requestAnimationFrame'), 'Selection summaries are not frame-coalesced.');
+assert.ok(performance.includes('experienceIds: ids') && performance.includes("fetch('/api/control?action=source-decision'"), 'Bulk source decisions are not sent in one request.');
+assert.equal((performance.match(/\/api\/control\?action=source-decision/g) || []).length, 1, 'The fast source-decision path issues more than one request.');
+assert.ok(!performance.includes('mapLimited'), 'The fast source-decision path still loops network requests.');
+assert.ok(controlApi.includes('saveSourceDecisions') && controlApi.includes('requestedSourceValues'), 'The server does not accept validated multi-source decisions.');
+assert.ok(controlApi.includes('MAX_BATCH_SOURCES = 100'), 'Source-decision request size is not bounded.');
+assert.ok(sourcePolicy.includes('MAX_SOURCE_DECISIONS = 100') && sourcePolicy.includes('await db.batch(statements)'), 'Source decisions are not written through one bounded database batch.');
 assert.ok(hardening.includes('requestAnimationFrame') && hardening.includes('groupRecords'), 'Source filtering still rescans live DOM on every keystroke.');
 assert.ok(hardening.includes('dataset.filterText') && hardening.includes('dataset.filterStatus'), 'Draft filtering does not cache searchable text.');
 assert.ok(!hardening.includes("{ childList: true, subtree: true }"), 'Broad subtree mutation observation can recreate button lag.');
@@ -40,6 +48,10 @@ assert.ok(page.includes('<option value="external">External app modules</option>'
 assert.ok(hardening.includes('Separate connection required'), 'External modules still look like generic importer failures.');
 assert.ok(hardening.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
 assert.ok(!page.toLowerCase().includes('unsupported'), 'Owner-facing Control Center markup still uses the vague unsupported label.');
+assert.ok(hardening.includes('/assets/js/media-readiness.js'), 'Media-storage readiness is not loaded.');
+assert.ok(mediaReadiness.includes('data.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
+assert.ok(mediaReadiness.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
+assert.ok(controlApi.includes('mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA)'), 'The server does not report real media-storage readiness.');
 
 const image = mediaMarkdown({ filename: 'proof.png', contentType: 'image/png', url: '/media/whop-0123456789abcdef0123456789abcdef-proof.png' });
 const video = mediaMarkdown({ filename: 'walkthrough.mp4', contentType: 'video/mp4', url: '/media/whop-0123456789abcdef0123456789abcdef-walkthrough.mp4' });
@@ -70,6 +82,8 @@ for (const file of [
   'assets/js/control-center-hardening.js',
   'assets/js/control-center-density.js',
   'assets/js/control-center-performance.js',
+  'assets/js/media-readiness.js',
+  'functions/_lib/source-policy.js',
   'functions/_lib/media.js',
   'functions/_lib/guides-media.js',
   'functions/_lib/markdown.js',
@@ -85,9 +99,10 @@ for (const file of [
 
 console.log('\nSNIPERPLUG PERFORMANCE, CLARITY, AND MEDIA AUDIT PASSED\n');
 console.log('✓ Long source lists filter and summarize at most once per animation frame.');
-console.log('✓ Group and master selection bypass full source-tree rerenders.');
+console.log('✓ Group selection stays local and bulk source decisions use one bounded request and D1 batch.');
 console.log('✓ Offscreen source and post cards skip unnecessary rendering work.');
 console.log('✓ External app modules are explained as separate integrations, not missing access.');
+console.log('✓ The Control Center reports the real SniperPlug media-storage binding state.');
 console.log('✓ Forum, course, and chat pictures, video, audio, PDFs, and files remain in the import path.');
 console.log('✓ Private signed media can be copied to SniperPlug-owned R2 storage.');
 console.log('✓ Images render inline and video/audio render as responsive playable controls.');
