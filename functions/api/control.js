@@ -24,6 +24,7 @@ import {
   saveCategory,
   saveGuideDraft,
   setGuideStatus,
+  suggestedCategoryForText,
 } from '../_lib/guides.js';
 import {
   listSavedPosts,
@@ -41,6 +42,7 @@ import {
   finishWhopOAuth,
   requireWhopSession,
   retrieveExperience,
+  whopExperienceType,
   whopSessionSummary,
 } from '../_lib/whop.js';
 
@@ -127,8 +129,17 @@ async function scan(request, env, admin) {
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, body.source || body.experienceId);
   const posts = await scanApprovedSource(env, whop, experience);
+  const sourceType = whopExperienceType(experience);
+  const suggestedCategory = suggestedCategoryForText([
+    experience?.company?.title,
+    experience?.name,
+    sourceType,
+    ...posts.slice(0, 100).flatMap((post) => [post.title, post.excerpt]),
+  ].filter(Boolean).join(' '));
   return json({
     experience,
+    sourceType,
+    suggestedCategory,
     source: await sourceDecision(env, experience, experience.id),
     posts,
     counts: {
