@@ -1,3 +1,4 @@
+import { whopContentToMarkdown } from './content-policy.js';
 import { HttpError } from './http.js';
 import { sourceKeyForWhopItem, whopApi, whopExperienceType } from './whop.js';
 
@@ -81,9 +82,8 @@ function forumItem(post, experience) {
 
 function courseLessonContent(lesson, course) {
   const parts = [];
-  const content = lesson?.content;
-  if (content && typeof content === 'object') parts.push(JSON.stringify(content));
-  else if (content && String(content).trim()) parts.push(String(content).trim());
+  const renderedContent = whopContentToMarkdown(lesson?.content || '');
+  if (renderedContent) parts.push(renderedContent);
   if (lesson?.embed_type === 'youtube' && lesson?.embed_id) {
     parts.push(`## Video\n\n[Watch on YouTube](https://www.youtube.com/watch?v=${encodeURIComponent(String(lesson.embed_id))})`);
   } else if (lesson?.embed_type === 'loom' && lesson?.embed_id) {
