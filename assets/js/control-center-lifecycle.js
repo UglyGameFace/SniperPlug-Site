@@ -3,6 +3,7 @@
   const editor = document.querySelector('[data-draft-editor]');
   const status = document.querySelector('[data-editor-status]');
   const globalStatus = document.querySelector('[data-global-status]');
+  const mediaReadiness = document.querySelector('[data-media-readiness]');
   if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(status instanceof HTMLElement)) return;
 
   const editableNames = ['title', 'description', 'category', 'body', 'featured', 'attachmentsResolved'];
@@ -18,6 +19,15 @@
   let dirty = false;
   let backupTimer = null;
   let loading = false;
+
+  function softenMediaNotice() {
+    if (!(mediaReadiness instanceof HTMLElement) || mediaReadiness.dataset.state !== 'missing') return;
+    mediaReadiness.dataset.state = 'warning';
+    const heading = mediaReadiness.querySelector('strong');
+    const detail = mediaReadiness.querySelector('p');
+    if (heading) heading.textContent = 'Public media works now';
+    if (detail) detail.textContent = 'Private or expiring Whop media stays safely in draft review. Connect optional SNIPERPLUG_MEDIA storage only when you want permanent private-file copying.';
+  }
 
   function fieldValue(name) {
     const field = editor.elements.namedItem(name);
@@ -183,6 +193,8 @@
     }).observe(globalStatus, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
   }
 
+  root.addEventListener('sniperplug:dashboard-refreshed', softenMediaNotice);
+  setTimeout(softenMediaNotice, 0);
   window.SniperPlugDraftSafety = { confirmDiscard, isDirty: () => dirty, markClean };
   syncLockState();
 })();
