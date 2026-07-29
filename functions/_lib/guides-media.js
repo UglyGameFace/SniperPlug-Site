@@ -8,7 +8,7 @@ export {
   suggestedCategoryForText,
 } from './guides.js';
 
-import { importApprovedPosts as importBase } from './guides.js';
+import { importApprovedPosts as importBase } from './guides-import.js';
 import { requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
