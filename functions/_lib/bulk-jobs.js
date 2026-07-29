@@ -1,5 +1,5 @@
 import { randomToken } from './crypto.js';
-import { importApprovedPosts, suggestedCategoryForText } from './guides.js';
+import { importApprovedPosts, suggestedCategoryForText } from './guides-media.js';
 import { HttpError, requireDatabase } from './http.js';
 import { savePostDecision, scanApprovedSource } from './posts.js';
 import { publishReadyGuides } from './publish.js';
@@ -117,6 +117,7 @@ function addSummary(summary, result, published) {
   next.imported = Number(next.imported || 0) + Number(result.imported || 0);
   next.unchanged = Number(next.unchanged || 0) + Number(result.unchanged || 0);
   next.blocked = Number(next.blocked || 0) + Number(result.blocked || 0);
+  next.mediaMirrored = Number(next.mediaMirrored || 0) + Number(result.mediaMirrored || 0);
   next.published = Number(next.published || 0) + Number(published.published || 0);
   next.heldFiles = Number(next.heldFiles || 0) + Number(published.skippedFiles?.length || 0);
   next.heldIntegrity = Number(next.heldIntegrity || 0) + Number(published.skippedIntegrity?.length || 0);
@@ -141,6 +142,7 @@ async function processSource(env, whopSession, experienceId) {
   let imported = 0;
   let unchanged = 0;
   let attachmentReviews = 0;
+  let mediaMirrored = 0;
   for (const batch of chunks(readyKeys, IMPORT_CHUNK)) {
     const output = await importApprovedPosts(env, whopSession, {
       experienceId,
@@ -151,6 +153,7 @@ async function processSource(env, whopSession, experienceId) {
     imported += Number(output.imported || 0);
     unchanged += Number(output.unchanged || 0);
     attachmentReviews += Number(output.attachmentReviews || 0);
+    mediaMirrored += Number(output.mirroredMedia || 0);
     for (const item of output.results || []) {
       const guideId = Number(item.guideId);
       if (Number.isFinite(guideId)) guideIds.push(guideId);
@@ -170,6 +173,7 @@ async function processSource(env, whopSession, experienceId) {
     imported,
     unchanged,
     attachmentReviews,
+    mediaMirrored,
     guideIds,
     published,
   };
