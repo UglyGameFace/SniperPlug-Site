@@ -1,19 +1,15 @@
-import { whopContentToMarkdown } from './content-policy.js';
+import { classifyWhopItem, whopContentToMarkdown } from './content-policy.js';
 import { sha256 } from './crypto.js';
 import { listCategories, slugify, suggestedCategoryForText } from './guides.js';
 import { HttpError, requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
-import {
-  listExperienceItems,
-  retrieveExperience,
-  retrieveWhopFile,
-  sourceKeyForWhopItem,
-  whopExperienceType,
-} from './whop.js';
+import { retrieveExperienceItem } from './whop-items.js';
+import { retrieveExperience, retrieveWhopFile, whopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 const MAX_IMPORT = 50;
 const MAX_BODY_BYTES = 1_000_000;
+const MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM = 20;
 
 function excerpt(value, limit = 260) {
   return String(value || '')
@@ -32,7 +28,8 @@ function safeAttachmentLabel(value) {
 
 async function verifyAttachments(session, attachments) {
   const values = Array.isArray(attachments) ? attachments : [];
-  const verified = await Promise.all(values.map((attachment) => retrieveWhopFile(session, attachment)));
+  const verified = [];
+  for (const attachment of values) verified.push(await retrieveWhopFile(session, attachment));
   const lines = [];
   let reviewCount = 0;
   for (const file of verified) {
@@ -46,11 +43,7 @@ async function verifyAttachments(session, attachments) {
       lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Copy this file to SniperPlug-owned storage before publishing.'}`);
     }
   }
-  return {
-    verified,
-    reviewCount,
-    markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '',
-  };
+  return { verified, reviewCount, markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '' };
 }
 
 async function uniqueSlug(db, title, sourceKey, existingSlug = null) {
@@ -62,9 +55,7 @@ async function uniqueSlug(db, title, sourceKey, existingSlug = null) {
 }
 
 function categoryMap(input) {
-  const source = input?.categoryBySourceKey && typeof input.categoryBySourceKey === 'object'
-    ? input.categoryBySourceKey
-    : {};
+  const source = input?.categoryBySourceKey && typeof input.categoryBySourceKey === 'object' ? input.categoryBySourceKey : {};
   return new Map(Object.entries(source).map(([key, value]) => [String(key), String(value || '').trim()]));
 }
 
@@ -74,9 +65,7 @@ async function categoryResolver(env, input) {
   const mapped = categoryMap(input);
   const fallback = String(input?.category || '').trim();
   if (fallback && !allowed.has(fallback)) throw new HttpError(422, 'Choose an active SniperPlug guide category.');
-  for (const slug of mapped.values()) {
-    if (!allowed.has(slug)) throw new HttpError(422, `Category “${slug}” is not active.`);
-  }
+  for (const slug of mapped.values()) if (!allowed.has(slug)) throw new HttpError(422, `Category “${slug}” is not active.`);
   return (sourceKey, item, renderedBody) => {
     const explicit = mapped.get(sourceKey);
     if (explicit) return explicit;
@@ -89,8 +78,8 @@ async function categoryResolver(env, input) {
   };
 }
 
-function itemBySourceKey(items) {
-  return new Map(items.map((item) => [sourceKeyForWhopItem(item), item]));
+function safeJson(value, fallback = {}) {
+  try { return JSON.parse(value || '{}'); } catch { return fallback; }
 }
 
 export async function importApprovedPosts(env, whopSession, input) {
@@ -109,25 +98,32 @@ export async function importApprovedPosts(env, whopSession, input) {
     WHERE experience_id = ? AND source_key IN (${placeholders})
   `).bind(experienceId, ...sourceKeys).all();
   const decisions = new Map((rows.results || []).map((row) => [row.source_key, row]));
-  if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) {
-    throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
-  }
+  if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
 
   const experience = await retrieveExperience(whopSession, experienceId);
   const sourceType = whopExperienceType(experience);
-  const liveItems = await listExperienceItems(whopSession, experience);
-  const liveByKey = itemBySourceKey(liveItems);
   const results = [];
 
   for (const sourceKey of sourceKeys) {
-    const item = liveByKey.get(sourceKey);
+    const item = await retrieveExperienceItem(whopSession, experience, sourceKey);
     if (!item) throw new HttpError(409, 'An approved Whop content item is no longer available. Scan the source again.');
     const renderedOriginal = whopContentToMarkdown(item.content || '');
+    const exactPolicy = classifyWhopItem({ ...item, sourceType, content: renderedOriginal });
+    if (input?.automaticWorkflow === true && exactPolicy.autoPublishEligible !== true) {
+      results.push({ sourceKey, action: 'held-policy', title: item.title, sourceType, holdReason: exactPolicy.reason, policy: exactPolicy });
+      continue;
+    }
+    if (input?.automaticWorkflow === true && (item.attachments || []).length > MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM) {
+      results.push({ sourceKey, action: 'held-policy', title: item.title, sourceType, holdReason: `This item has more than ${MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM} attachments and needs manual review.` });
+      continue;
+    }
+
     const preparedOriginal = await prepareGuideBody(renderedOriginal, { source: `Whop ${sourceType} item ${item.id}` });
     const attachmentInfo = await verifyAttachments(whopSession, item.attachments || []);
     const prepared = await prepareGuideBody(`${preparedOriginal.body}${attachmentInfo.markdown}`, { source: `Whop ${sourceType} item ${item.id}` });
     if (new TextEncoder().encode(prepared.body).byteLength > MAX_BODY_BYTES) throw new HttpError(422, `${item.title || item.id} is too large to import safely.`);
     const selectedCategory = resolveCategory(sourceKey, item, preparedOriginal.body);
+    const contentFingerprint = await sha256(JSON.stringify({ title: String(item.title || '').trim().toLowerCase(), body: prepared.body }));
     const sourceFingerprint = await sha256(JSON.stringify({
       sourceKey,
       title: item.title || '',
@@ -136,11 +132,23 @@ export async function importApprovedPosts(env, whopSession, input) {
       updatedAt: item.updated_at || item.created_at || null,
       sourceType,
       category: selectedCategory,
+      contentFingerprint,
     }));
 
     const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
     if (existing?.source_fingerprint === sourceFingerprint) {
       results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug });
+      continue;
+    }
+
+    const duplicate = await db.prepare(`
+      SELECT id, slug, title, category_slug FROM guides
+      WHERE source_key IS NOT ? AND lower(title) = lower(?) AND body_markdown = ? AND status != 'rejected'
+      ORDER BY CASE status WHEN 'published' THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1
+    `).bind(sourceKey, String(item.title || ''), prepared.body).first();
+    if (duplicate) {
+      results.push({ sourceKey, guideId: duplicate.id, slug: duplicate.slug, action: 'duplicate-held', title: duplicate.title, category: duplicate.category_slug, holdReason: 'An identical guide already exists.' });
       continue;
     }
 
@@ -150,12 +158,8 @@ export async function importApprovedPosts(env, whopSession, input) {
     const slug = await uniqueSlug(db, title, sourceKey, existing?.slug || null);
     const now = new Date().toISOString();
     const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
-    const postIntegrity = (() => { try { return JSON.parse(savedDecision?.integrity_json || '{}'); } catch { return {}; } })();
-    const author = item.user ? {
-      id: item.user.id || null,
-      name: item.user.name || null,
-      username: item.user.username || null,
-    } : {};
+    const postIntegrity = safeJson(savedDecision?.integrity_json, {});
+    const author = item.user ? { id: item.user.id || null, name: item.user.name || null, username: item.user.username || null } : {};
 
     await db.prepare(`
       INSERT INTO guides (
@@ -194,7 +198,7 @@ export async function importApprovedPosts(env, whopSession, input) {
       String(item.id || ''),
       sourceFingerprint,
       JSON.stringify({ files: attachmentInfo.verified, reviewCount: attachmentInfo.reviewCount, sourceType }),
-      JSON.stringify({ ...integrity, sourceType, sourceMeta: item.sourceMeta || postIntegrity.sourceMeta || {}, importPolicy: postIntegrity.policy || null }),
+      JSON.stringify({ ...integrity, sourceType, sourceMeta: item.sourceMeta || postIntegrity.sourceMeta || {}, importPolicy: exactPolicy, contentFingerprint, manualReviewCompleted: false }),
       JSON.stringify(author),
       item.created_at || null,
       item.updated_at || item.created_at || null,
@@ -215,8 +219,9 @@ export async function importApprovedPosts(env, whopSession, input) {
   }
   return {
     results,
-    imported: results.filter((result) => result.action !== 'unchanged').length,
+    imported: results.filter((result) => ['created-draft', 'updated-draft'].includes(result.action)).length,
     unchanged: results.filter((result) => result.action === 'unchanged').length,
+    heldPolicy: results.filter((result) => ['held-policy', 'duplicate-held'].includes(result.action)).length,
     attachmentReviews: results.reduce((sum, result) => sum + Number(result.attachmentReviewCount || 0), 0),
   };
 }
