@@ -47,10 +47,10 @@ function preferredRow(rows) {
   })[0];
 }
 
-export async function reconcileRecentBulkImports(env) {
+async function reconcile(env) {
   const db = requireDatabase(env);
   const ids = await recentBulkGuideIds(db);
-  if (!ids.length) return { checked: 0, rejected: 0, duplicates: 0 };
+  if (!ids.length) return { checked: 0, rejected: 0, duplicates: 0, deferred: false };
   const placeholders = ids.map(() => '?').join(',');
   const rows = await db.prepare(`
     SELECT id, title, body_markdown, status, source_key, source_created_at, imported_at,
@@ -59,7 +59,7 @@ export async function reconcileRecentBulkImports(env) {
     WHERE id IN (${placeholders}) AND source_key IS NOT NULL AND status != 'rejected'
   `).bind(...ids).all();
   const values = rows.results || [];
-  if (!values.length) return { checked: 0, rejected: 0, duplicates: 0 };
+  if (!values.length) return { checked: 0, rejected: 0, duplicates: 0, deferred: false };
   const reasons = new Map();
   const duplicateGroups = new Map();
 
@@ -87,7 +87,7 @@ export async function reconcileRecentBulkImports(env) {
     }
   }
 
-  if (!reasons.size) return { checked: values.length, rejected: 0, duplicates: 0 };
+  if (!reasons.size) return { checked: values.length, rejected: 0, duplicates: 0, deferred: false };
   const now = new Date().toISOString();
   const statements = [];
   for (const row of values) {
@@ -114,5 +114,22 @@ export async function reconcileRecentBulkImports(env) {
     }
   }
   if (statements.length) await db.batch(statements);
-  return { checked: values.length, rejected: reasons.size, duplicates: duplicateCount };
+  return { checked: values.length, rejected: reasons.size, duplicates: duplicateCount, deferred: false };
+}
+
+export async function reconcileRecentBulkImports(env) {
+  try {
+    return await reconcile(env);
+  } catch (error) {
+    console.warn('Optional import reconciliation was deferred so the Control Center can remain available.');
+    return {
+      checked: 0,
+      rejected: 0,
+      duplicates: 0,
+      deferred: true,
+      reason: /no such table|no such column|has no column named/i.test(String(error?.message || ''))
+        ? 'database-compatibility'
+        : 'runtime-retry',
+    };
+  }
 }
