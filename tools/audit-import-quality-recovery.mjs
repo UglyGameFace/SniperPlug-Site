@@ -25,7 +25,7 @@ const publishingCss = read('assets/css/control-center-publishing.css');
 const longChat = classifyWhopItem({
   sourceType: 'chat',
   title: 'Pinned announcement',
-  content: 'A'.repeat(800),
+  content: 'This is a long pinned community chat message with context, updates, reactions, and conversation. '.repeat(12),
   sourceMeta: { pinned: true, experienceTitle: 'General chat' },
 });
 assert.equal(longChat.autoPublishEligible, false, 'Even long or pinned Chat messages must remain manual-only.');
