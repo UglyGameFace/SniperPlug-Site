@@ -1,18 +1,7 @@
-import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
-import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
+import { prepareGuideBody } from './integrity.js';
 import { renderMarkdown } from './markdown.js';
-import {
-  listExperienceItems,
-  retrieveExperience,
-  retrieveWhopFile,
-  sourceKeyForWhopItem,
-  whopExperienceType,
-} from './whop.js';
-import { requireApprovedSource } from './source-policy.js';
 
-const MAX_IMPORT = 50;
-const MAX_BODY_BYTES = 1_000_000;
 const CATEGORY_CATALOG = Object.freeze([
   ['general', 'General', 'Guides that do not fit a more specific category yet.', 10],
   ['announcements', 'Announcements', 'Important updates, notices, launches, and changes.', 20],
@@ -50,21 +39,6 @@ function safeJson(value, fallback) {
   try { return JSON.parse(value); } catch { return fallback; }
 }
 
-function excerpt(value, limit = 260) {
-  return String(value || '')
-    .replace(/^ {0,3}#{1,6}\s+/gm, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/[`*_~>|]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, limit);
-}
-
-function safeAttachmentLabel(value) {
-  return String(value || 'Attachment').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Attachment';
-}
-
 async function ensureCategoryCatalog(env) {
   if (catalogEnsured) return;
   const db = requireDatabase(env);
@@ -88,29 +62,6 @@ async function ensureCategoryCatalog(env) {
       AND NOT EXISTS (SELECT 1 FROM guides WHERE guides.category_slug = guide_categories.slug)
   `).bind(now, ...LEGACY_CATEGORY_SLUGS).run();
   catalogEnsured = true;
-}
-
-async function verifyAttachments(session, attachments) {
-  const values = Array.isArray(attachments) ? attachments : [];
-  const verified = await Promise.all(values.map((attachment) => retrieveWhopFile(session, attachment)));
-  const lines = [];
-  let reviewCount = 0;
-  for (const file of verified) {
-    const label = safeAttachmentLabel(file.filename);
-    if (file.durable && file.url) {
-      lines.push(String(file.contentType || '').toLowerCase().startsWith('image/')
-        ? `![${label}](${file.url})`
-        : `- [${label}](${file.url})`);
-    } else {
-      reviewCount += 1;
-      lines.push(`> **Attachment review required — ${label}:** ${file.reviewReason || 'Copy this file to SniperPlug-owned storage before publishing.'}`);
-    }
-  }
-  return {
-    verified,
-    reviewCount,
-    markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '',
-  };
 }
 
 async function category(env, slug) {
@@ -155,159 +106,30 @@ export async function saveCategory(env, input) {
   return db.prepare('SELECT * FROM guide_categories WHERE slug = ?').bind(slug).first();
 }
 
-async function uniqueSlug(db, title, sourceKey, existingSlug = null) {
-  if (existingSlug) return existingSlug;
-  const base = slugify(title) || 'imported-guide';
-  const available = await db.prepare('SELECT 1 FROM guides WHERE slug = ?').bind(base).first();
-  if (!available) return base;
-  return `${base.slice(0, 62)}-${(await sha256(sourceKey)).slice(0, 8)}`;
+function includesAny(text, patterns) {
+  return patterns.some((pattern) => pattern.test(text));
 }
 
 export function suggestedCategoryForText(value) {
   const text = String(value || '').normalize('NFKC').toLowerCase();
   const rules = [
-    ['sports-betting', /sports?|bet(?:ting)?|arbitrage|sportsbook|pick\b|odds|line\b/],
-    ['casino', /casino|slots?|blackjack|roulette|poker/],
-    ['crypto-trading', /crypto|bitcoin|ethereum|trading|signals?|calls?\b|forex|stock/],
-    ['auto-checkout', /auto checkout|checkout|aco\b|monitor|forms?\b/],
-    ['bots-automation', /\bbot\b|automation|script|webhook|api\b/],
-    ['troubleshooting', /error|fix|troubleshoot|failed|issue|problem|recovery/],
-    ['food-delivery', /food|chipotle|restaurant|grocery|delivery|doordash|uber eats/],
-    ['freebies', /freebie|free trial|free sample|no cost|giveaway/],
-    ['money-savers', /money saver|save money|discount|rebate|cashback|coupon/],
-    ['money-makers', /money maker|make money|income|side hustle|profit|earn/],
-    ['reselling', /resell|seller|flip|sourcing|marketplace|ebay|amazon/],
-    ['deals-promos', /deal|promo|promotion|offer|sale\b/],
-    ['announcements', /announcement|update|notice|launch|important/],
-    ['guides-tutorials', /guide|tutorial|course|lesson|start here|onboarding|how to/],
+    ['sports-betting', [/\b(?:sports? betting|sports?book|prizepicks?|underdog|sleeper picks?|parlay|betting arbitrage|moneyline|point spread|over\/?under|betting odds?|prop bets?|free square|protected play|discount play)\b/]],
+    ['casino', [/\b(?:casino|slots?|blackjack|roulette|poker|sweepstakes casino)\b/]],
+    ['crypto-trading', [/\b(?:crypto(?:currency)?|bitcoin|ethereum|forex|day trading|swing trading|stock trading|options? trading|futures? trading|technical analysis|market analysis|trading signals?)\b/]],
+    ['auto-checkout', [/\b(?:auto checkout|automated checkout|checkout bot|aco|purchase monitor|restock monitor)\b/]],
+    ['bots-automation', [/\b(?:bot|automation|script|webhook|api integration|workflow automation)\b/]],
+    ['troubleshooting', [/\b(?:error|errors|fix|troubleshoot|failed|failure|issue|problem|recovery|appeal|deactivation)\b/]],
+    ['food-delivery', [/\b(?:food delivery|restaurant|grocery delivery|doordash|uber eats|instacart|chipotle|meal delivery)\b/]],
+    ['freebies', [/\b(?:freebie|freebies|free trial|free sample|no-cost|no cost|giveaway|welcome reward)\b/]],
+    ['money-savers', [/\b(?:save money|money saver|discount|rebate|cashback|coupon|price match|credit card offer)\b/]],
+    ['money-makers', [/\b(?:make money|money maker|income method|side hustle|profit method|earning opportunity)\b/]],
+    ['reselling', [/\b(?:resell(?:ing)?|seller|selling|flip(?:ping)?|product sourcing|wholesale|marketplace|ebay|amazon fba|walmart marketplace|listing optimization)\b/]],
+    ['deals-promos', [/\b(?:deal|promo|promotion|limited-time offer|sale event)\b/]],
+    ['retail-shopping', [/\b(?:retail|shopping|retailer|walmart|target|home depot|lowe'?s|best buy|amazon shopping)\b/]],
+    ['announcements', [/\b(?:announcement|update notice|launch notice|important update)\b/]],
+    ['guides-tutorials', [/\b(?:guide|tutorial|course|lesson|start here|onboarding|how to|walkthrough|step-by-step|documentation)\b/]],
   ];
-  return rules.find(([, pattern]) => pattern.test(text))?.[0] || 'general';
-}
-
-function itemBySourceKey(items) {
-  return new Map(items.map((item) => [sourceKeyForWhopItem(item), item]));
-}
-
-export async function importApprovedPosts(env, whopSession, input) {
-  if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm that you own this content or have explicit permission to republish it.');
-  const experienceId = String(input?.experienceId || '').trim();
-  const sourceKeys = [...new Set((Array.isArray(input?.sourceKeys) ? input.sourceKeys : []).map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!sourceKeys.length) throw new HttpError(422, 'Approve at least one content item before importing.');
-  if (sourceKeys.length > MAX_IMPORT) throw new HttpError(422, `Import at most ${MAX_IMPORT} content items at once.`);
-  const selectedCategory = await category(env, String(input?.category || '').trim());
-  const source = await requireApprovedSource(env, experienceId);
-  const db = requireDatabase(env);
-
-  const placeholders = sourceKeys.map(() => '?').join(',');
-  const rows = await db.prepare(`
-    SELECT * FROM whop_posts
-    WHERE experience_id = ? AND source_key IN (${placeholders})
-  `).bind(experienceId, ...sourceKeys).all();
-  const decisions = new Map((rows.results || []).map((row) => [row.source_key, row]));
-  if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) {
-    throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
-  }
-
-  const experience = await retrieveExperience(whopSession, experienceId);
-  const sourceType = whopExperienceType(experience);
-  const liveItems = await listExperienceItems(whopSession, experience);
-  const liveByKey = itemBySourceKey(liveItems);
-  const results = [];
-
-  for (const sourceKey of sourceKeys) {
-    const item = liveByKey.get(sourceKey);
-    if (!item) throw new HttpError(409, 'An approved Whop content item is no longer available. Scan the source again.');
-    const preparedOriginal = await prepareGuideBody(String(item.content || ''), { source: `Whop ${sourceType} item ${item.id}` });
-    const attachmentInfo = await verifyAttachments(whopSession, item.attachments || []);
-    const prepared = await prepareGuideBody(`${preparedOriginal.body}${attachmentInfo.markdown}`, { source: `Whop ${sourceType} item ${item.id}` });
-    if (new TextEncoder().encode(prepared.body).byteLength > MAX_BODY_BYTES) throw new HttpError(422, `${item.title || item.id} is too large to import safely.`);
-    const sourceFingerprint = await sha256(JSON.stringify({
-      sourceKey,
-      title: item.title || '',
-      body: prepared.body,
-      attachments: attachmentInfo.verified,
-      updatedAt: item.updated_at || item.created_at || null,
-      sourceType,
-    }));
-
-    const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
-    if (existing?.source_fingerprint === sourceFingerprint) {
-      results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title });
-      continue;
-    }
-
-    const title = String(item.title || decisions.get(sourceKey)?.title || 'Imported Whop content').trim().slice(0, 140);
-    const description = excerpt(preparedOriginal.body) || `Imported from ${source.label} for review.`;
-    const slug = await uniqueSlug(db, title, sourceKey, existing?.slug || null);
-    const now = new Date().toISOString();
-    const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
-    const author = item.user ? {
-      id: item.user.id || null,
-      name: item.user.name || null,
-      username: item.user.username || null,
-    } : {};
-
-    await db.prepare(`
-      INSERT INTO guides (
-        slug, title, description, category_slug, body_markdown, status, featured, sort_order,
-        source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
-        attachment_json, integrity_json, author_json, source_created_at, source_updated_at,
-        imported_at, updated_at, published_at
-      ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 999, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-      ON CONFLICT(source_key) DO UPDATE SET
-        title = excluded.title,
-        description = excluded.description,
-        category_slug = excluded.category_slug,
-        body_markdown = excluded.body_markdown,
-        status = 'draft',
-        featured = 0,
-        source_group = excluded.source_group,
-        source_experience_id = excluded.source_experience_id,
-        source_post_id = excluded.source_post_id,
-        source_fingerprint = excluded.source_fingerprint,
-        attachment_json = excluded.attachment_json,
-        integrity_json = excluded.integrity_json,
-        author_json = excluded.author_json,
-        source_created_at = excluded.source_created_at,
-        source_updated_at = excluded.source_updated_at,
-        updated_at = excluded.updated_at,
-        published_at = NULL
-    `).bind(
-      slug,
-      title,
-      description,
-      selectedCategory.slug,
-      prepared.body,
-      sourceKey,
-      source.label,
-      experienceId,
-      String(item.id || ''),
-      sourceFingerprint,
-      JSON.stringify({ files: attachmentInfo.verified, reviewCount: attachmentInfo.reviewCount, sourceType }),
-      JSON.stringify({ ...integrity, sourceType, sourceMeta: item.sourceMeta || {} }),
-      JSON.stringify(author),
-      item.created_at || null,
-      item.updated_at || item.created_at || null,
-      existing?.imported_at || now,
-      now,
-    ).run();
-    const saved = await db.prepare('SELECT id, slug, title FROM guides WHERE source_key = ?').bind(sourceKey).first();
-    results.push({
-      sourceKey,
-      guideId: saved.id,
-      slug: saved.slug,
-      title: saved.title,
-      action: existing ? 'updated-draft' : 'created-draft',
-      attachmentReviewCount: attachmentInfo.reviewCount,
-      sourceType,
-    });
-  }
-  return {
-    results,
-    imported: results.filter((result) => result.action !== 'unchanged').length,
-    unchanged: results.filter((result) => result.action === 'unchanged').length,
-    attachmentReviews: results.reduce((sum, result) => sum + Number(result.attachmentReviewCount || 0), 0),
-  };
+  return rules.find(([, patterns]) => includesAny(text, patterns))?.[0] || 'general';
 }
 
 function normalizeGuideRow(row) {
