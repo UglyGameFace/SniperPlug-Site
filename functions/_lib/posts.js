@@ -1,3 +1,4 @@
+import { classifyWhopItem, whopContentToMarkdown } from './content-policy.js';
 import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
@@ -21,8 +22,9 @@ function plainExcerpt(value, limit = 260) {
 
 function fallbackTitle(content, sourceType) {
   const heading = String(content || '').match(/^ {0,3}#{1,6}\s+(.+)$/m)?.[1]?.trim();
-  const fallback = sourceType === 'course' ? 'Untitled course lesson' : sourceType === 'chat' ? 'Untitled chat message' : 'Untitled Whop post';
-  return (heading || plainExcerpt(content, 110) || fallback).slice(0, 140);
+  const fallback = sourceType === 'course' ? 'Untitled course lesson' : sourceType === 'chat' ? 'Chat item for review' : 'Untitled Whop post';
+  const candidate = heading || plainExcerpt(content, 110) || fallback;
+  return /[\p{L}\p{N}]/u.test(candidate) ? candidate.slice(0, 140) : fallback;
 }
 
 function normalizeAttachments(value) {
@@ -46,27 +48,49 @@ function sourceTypeFromKey(sourceKey) {
 
 async function normalizeItem(item, experienceId, sourceType) {
   const sourceKey = sourceKeyForWhopItem(item);
-  const body = String(item?.content || '');
+  const body = whopContentToMarkdown(item?.content);
+  const attachments = normalizeAttachments(item?.attachments);
+  const title = String(item?.title || fallbackTitle(body, sourceType)).trim().slice(0, 140);
+  const policy = classifyWhopItem({ ...item, sourceType, title, content: body, attachments });
   const base = {
     sourceKey,
     experienceId,
     postId: String(item?.id || ''),
     contentType: sourceType,
-    title: String(item?.title || fallbackTitle(body, sourceType)).trim().slice(0, 140),
+    title,
     excerpt: plainExcerpt(body),
     author: item?.user ? {
       id: item.user.id || null,
       name: item.user.name || null,
       username: item.user.username || null,
     } : null,
-    attachments: normalizeAttachments(item?.attachments),
+    attachments,
     sourceCreatedAt: item?.created_at || null,
     sourceUpdatedAt: item?.updated_at || item?.created_at || null,
     sourceMeta: {
       type: sourceType,
       ...(item?.sourceMeta || {}),
+      importPolicy: policy,
     },
   };
+
+  if (policy.blocked) {
+    return {
+      ...base,
+      body,
+      sourceFingerprint: null,
+      integrity: {
+        blocked: true,
+        sourceType,
+        sourceMeta: base.sourceMeta,
+        error: policy.reason,
+        code: policy.code,
+        autoPublishEligible: false,
+        policy,
+      },
+      scanDecision: 'blocked',
+    };
+  }
 
   try {
     const integrity = await prepareGuideBody(body, { source: `Whop ${sourceType} item ${base.postId}` });
@@ -82,7 +106,14 @@ async function normalizeItem(item, experienceId, sourceType) {
       ...base,
       body: integrity.body,
       sourceFingerprint,
-      integrity: { blocked: false, sourceType, sourceMeta: base.sourceMeta, ...integrity },
+      integrity: {
+        blocked: false,
+        sourceType,
+        sourceMeta: base.sourceMeta,
+        autoPublishEligible: policy.autoPublishEligible,
+        policy,
+        ...integrity,
+      },
       scanDecision: 'pending',
     };
   } catch (error) {
@@ -96,6 +127,8 @@ async function normalizeItem(item, experienceId, sourceType) {
         sourceMeta: base.sourceMeta,
         error: error?.message || 'Formatting integrity validation failed.',
         code: error?.details?.code || 'invalid_content',
+        autoPublishEligible: false,
+        policy,
       },
       scanDecision: 'blocked',
     };
@@ -131,7 +164,8 @@ export async function scanApprovedSource(env, whopSession, experience) {
     throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” cannot be imported. Forums, Courses, and Chat are supported.`);
   }
   const rawItems = await listExperienceItems(whopSession, experience);
-  const posts = await Promise.all(rawItems.map((item) => normalizeItem(item, experienceId, sourceType)));
+  const topLevelItems = rawItems.filter((item) => sourceType !== 'chat' || !item?.sourceMeta?.replyingTo);
+  const posts = await Promise.all(topLevelItems.map((item) => normalizeItem(item, experienceId, sourceType)));
   const now = new Date().toISOString();
 
   const statements = posts.map((post) => db.prepare(`
