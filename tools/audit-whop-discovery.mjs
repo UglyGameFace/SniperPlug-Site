@@ -14,28 +14,31 @@ const styles = read('assets/css/whop-discovery.css');
 
 assert.ok(discovery.includes("'memberships'"), 'Membership discovery endpoint is missing.');
 assert.ok(discovery.includes("'forums'"), 'Forum discovery endpoint is missing.');
-assert.ok(discovery.includes("'experiences'"), 'Product-scoped experience fallback is missing.');
+assert.ok(discovery.includes("'experiences'"), 'Product-scoped experience discovery is missing.');
 assert.ok(discovery.includes('product_id: product.id'), 'Forum and experience lookups are not scoped to the exact membership product.');
-assert.ok(discovery.includes('isForumExperience'), 'Experience fallback does not identify native forum-powered experiences.');
-assert.ok(discovery.includes('experienceTypes'), 'Unsupported experience types are not reported for diagnosis.');
+assert.ok(discovery.includes("SUPPORTED_TYPES = new Set(['forum', 'course', 'chat'])"), 'Forum, Course, and Chat sources are not classified together.');
+assert.ok(discovery.includes('requiredScopeForExperience'), 'Discovery does not map content types to their OAuth read scopes.');
+assert.ok(discovery.includes('missingScopes'), 'Missing content-read permissions are not returned to the owner.');
+assert.ok(discovery.includes('unsupported'), 'Unsupported custom Whop app modules are silently discarded.');
 assert.ok(!discovery.includes("allPages(session, 'forums', { company_id: company.id }"), 'Company-wide forum enumeration must not replace membership-product scoping.');
 assert.ok(discovery.includes('ACCESS_GRANTING_MEMBERSHIP_STATUSES'), 'Current-access membership filtering is missing.');
 assert.ok(discovery.includes("'active'") && discovery.includes("'trialing'") && discovery.includes("'canceling'") && discovery.includes("'past_due'") && discovery.includes("'completed'"), 'Whop access-granting membership statuses are incomplete.');
-assert.ok(discovery.includes('if (!membershipGrantsAccess(membership)) continue;'), 'Historical inactive memberships can still become joined groups.');
-assert.ok(discovery.includes('.filter((group) => group.sources.length || group.builtIn)'), 'Irrelevant non-forum groups are not removed from the importer.');
-assert.ok(!discovery.includes('group.sources.length || group.builtIn || group.error'), 'Non-forum historical groups can still remain visible because of diagnostics alone.');
+assert.ok(discovery.includes('if (!membershipGrantsAccess(membership)) continue;'), 'Historical inactive memberships can still become active groups.');
+assert.ok(discovery.includes('group.sources.length || group.unsupported.length || group.builtIn'), 'Active groups with unsupported modules cannot be diagnosed.');
 assert.ok(discovery.includes('values.length > MAX_COMPANIES'), 'Company-limit overflow must fail visibly instead of silently slicing groups.');
 assert.ok(discovery.includes('current.memberships += 1'), 'Merged company cards do not retain their membership-record count.');
-assert.ok(discovery.includes('member:basic:read') && discovery.includes('member:email:read'), 'Missing-scope recovery message is incomplete.');
-assert.ok(discovery.includes('DEFAULT_GROUPS') && discovery.includes('black box') && discovery.includes('hidden files'), 'Default groups are not prioritized.');
+assert.ok(discovery.includes('member:basic:read') && discovery.includes('member:email:read'), 'Missing membership-scope recovery message is incomplete.');
+assert.ok(discovery.includes('DEFAULT_GROUPS') && discovery.includes('black box') && discovery.includes('black box clips') && discovery.includes('hidden files'), 'Priority groups are not recognized completely.');
 assert.ok(!discovery.includes('membership?.user?.email'), 'Membership email must not be exposed to the browser.');
 assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession'), 'Discovery endpoint is not owner and OAuth protected.');
-assert.ok(page.includes('data-discovered-groups'), 'Joined-group browser is missing.');
+assert.ok(page.includes('data-discovered-groups'), 'Active source browser is missing.');
 assert.ok(page.includes('data-approve-selected') && page.includes('data-disapprove-selected'), 'Source bulk controls are missing.');
 assert.ok(page.includes('Advanced fallback'), 'Manual experience-ID input is not contained as an advanced fallback.');
+assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types are not explained in the UI.');
 assert.ok(client.includes("fetch('/api/discover'"), 'Browser does not call automatic discovery.');
-assert.ok(client.includes('Select every Black Box and Hidden Files forum') || page.includes('Select every Black Box and Hidden Files forum'), 'Default-group selection control is missing.');
-assert.ok(client.includes('Review posts') && client.includes('scanCurrent'), 'Discovered forums cannot open their posts.');
+assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
+assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');
+assert.ok(client.includes('Other active Whop modules'), 'Unsupported modules are not shown honestly.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 
 for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed']) {
@@ -46,8 +49,8 @@ for (const status of ['canceled', 'expired', 'unresolved', 'drafted', '', 'unkno
 }
 
 const memberships = [
-  { status: 'active', company: { id: 'biz_black', title: 'Black Box' }, product: { id: 'prod_black', title: 'Black Box Main' } },
-  { status: 'completed', company: { id: 'biz_black', title: 'Black Box' }, product: { id: 'prod_black_archive', title: 'Black Box Archive' } },
+  { status: 'active', company: { id: 'biz_black', title: 'Black Box Clips' }, product: { id: 'prod_black', title: 'Black Box Main' } },
+  { status: 'completed', company: { id: 'biz_black', title: 'Black Box Clips' }, product: { id: 'prod_black_archive', title: 'Black Box Archive' } },
   { status: 'trialing', company: { id: 'biz_hidden', title: 'Hidden Files' }, product: { id: 'prod_hidden', title: 'Hidden Files' } },
   { status: 'past_due', company: { id: 'biz_other', title: 'Other Group' }, product: { id: 'prod_other', title: 'Other Product' } },
   { status: 'canceling', company: { id: 'biz_other', title: 'Other Group' }, product: { id: 'prod_extra', title: 'Extra Product' } },
@@ -67,13 +70,13 @@ assert.ok(companies.some((company) => company.id === 'biz_hidden'), 'Trialing Hi
 assert.deepEqual([...companies.find((company) => company.id === 'biz_other').products.keys()].sort(), ['prod_extra', 'prod_other'], 'Past-due or canceling products were removed even though they still grant access.');
 assert.ok(!companies.some((company) => ['biz_left', 'biz_expired', 'biz_unresolved', 'biz_drafted'].includes(company.id)), 'Historical inactive groups leaked back into current discovery.');
 
-console.log('\nWHOP AUTOMATIC DISCOVERY AUDIT PASSED\n');
+console.log('\nWHOP MULTI-CONTENT DISCOVERY AUDIT PASSED\n');
 console.log('✓ Every current membership product is checked independently for forums and experiences.');
-console.log('✓ Company-wide forum enumeration cannot recreate the zero-forum member failure.');
+console.log('✓ Forum, Course, and Chat sources are classified with their exact permission requirements.');
+console.log('✓ Unsupported active custom-app modules remain visible for diagnosis.');
 console.log('✓ Active, trialing, canceling, past-due, and completed memberships remain discoverable.');
 console.log('✓ Canceled, expired, unresolved, and drafted historical memberships stay hidden.');
-console.log('✓ Non-forum groups do not clutter the forum-post importer.');
-console.log('✓ Black Box and Hidden Files remain prioritized.');
+console.log('✓ Black Box, Black Box Clips, and Hidden Files remain prioritized.');
 console.log('✓ Individual and bulk source decisions remain available.');
 console.log('✓ Manual experience IDs remain an advanced fallback.');
 console.log('✓ Membership email data never reaches the browser.');
