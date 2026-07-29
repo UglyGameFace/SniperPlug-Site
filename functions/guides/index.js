@@ -9,10 +9,8 @@ export async function onRequestGet(context) {
     const category = String(url.searchParams.get('category') || '').trim();
     const query = String(url.searchParams.get('q') || '').trim();
     const page = Number.parseInt(url.searchParams.get('page') || '1', 10);
-    const [result, categories] = await Promise.all([
-      searchPublicGuides(context.env, { category, query, page }),
-      listCategories(context.env),
-    ]);
+    const categories = await listCategories(context.env);
+    const result = await searchPublicGuides(context.env, { category, query, page });
     return html(guideIndexTemplate(result, categories), 200, {
       'cache-control': 'public, max-age=60, stale-while-revalidate=300',
     });
