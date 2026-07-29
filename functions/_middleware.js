@@ -41,7 +41,7 @@ export async function onRequest(context) {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  response.headers.set('Content-Security-Policy', "default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  response.headers.set('Content-Security-Policy', "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   if (url.protocol === 'https:') {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
