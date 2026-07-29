@@ -1,6 +1,8 @@
 import { HttpError, requireDatabase } from './http.js';
 import { experienceIdFrom } from './whop.js';
 
+const MAX_SOURCE_DECISIONS = 100;
+
 export const DEFAULT_WHOP_GROUPS = Object.freeze([
   Object.freeze({ key: 'black-box', label: 'Black Box', aliases: Object.freeze(['black box', 'black box clips']) }),
   Object.freeze({ key: 'hidden-files', label: 'Hidden Files', aliases: Object.freeze(['hidden files']) }),
@@ -48,12 +50,33 @@ export async function sourceDecision(env, experience, requestedId) {
   };
 }
 
-export async function saveSourceDecision(env, experience, requestedId, decision) {
+function normalizedEntries(entries) {
+  const values = Array.isArray(entries) ? entries : [entries];
+  if (!values.length) throw new HttpError(422, 'Choose at least one Whop source.');
+  if (values.length > MAX_SOURCE_DECISIONS) {
+    throw new HttpError(422, `Choose at most ${MAX_SOURCE_DECISIONS} Whop sources at once.`);
+  }
+  return values.map((entry) => entry?.experience
+    ? { experience: entry.experience, requestedId: entry.requestedId || entry.experience?.id }
+    : { experience: entry, requestedId: entry?.id });
+}
+
+export async function saveSourceDecisions(env, entries, decision) {
   if (!['approved', 'disapproved'].includes(decision)) throw new HttpError(422, 'Choose Approve or Disapprove.');
   const db = requireDatabase(env);
-  const state = await sourceDecision(env, experience, requestedId);
+  const prepared = [];
+  const seen = new Set();
+
+  for (const entry of normalizedEntries(entries)) {
+    const state = await sourceDecision(env, entry.experience, entry.requestedId);
+    if (seen.has(state.experienceId)) continue;
+    seen.add(state.experienceId);
+    prepared.push({ experience: entry.experience, state });
+  }
+  if (!prepared.length) throw new HttpError(422, 'Choose at least one unique Whop source.');
+
   const now = new Date().toISOString();
-  await db.prepare(`
+  const statements = prepared.map(({ experience, state }) => db.prepare(`
     INSERT INTO whop_sources (
       experience_id, label, company_id, company_title, experience_name,
       decision, default_group, created_at, updated_at
@@ -76,8 +99,14 @@ export async function saveSourceDecision(env, experience, requestedId, decision)
     state.defaultGroup,
     now,
     now,
-  ).run();
-  return { ...state, decision, saved: true };
+  ));
+  await db.batch(statements);
+  return prepared.map(({ state }) => ({ ...state, decision, saved: true }));
+}
+
+export async function saveSourceDecision(env, experience, requestedId, decision) {
+  const saved = await saveSourceDecisions(env, [{ experience, requestedId }], decision);
+  return saved[0];
 }
 
 export async function requireApprovedSource(env, experienceId) {
