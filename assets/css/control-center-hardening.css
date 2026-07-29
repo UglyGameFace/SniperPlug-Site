@@ -1,3 +1,4 @@
+.control-shell [hidden],.preview-backdrop[hidden]{display:none!important}
 .source-browser-tools,.draft-tools{
   display:grid;
   grid-template-columns:minmax(14rem,1fr) minmax(10rem,.35fr) auto;
