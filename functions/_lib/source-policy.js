@@ -2,8 +2,8 @@ import { HttpError, requireDatabase } from './http.js';
 import { experienceIdFrom } from './whop.js';
 
 export const DEFAULT_WHOP_GROUPS = Object.freeze([
-  Object.freeze({ key: 'black-box', label: 'Black Box' }),
-  Object.freeze({ key: 'hidden-files', label: 'Hidden Files' }),
+  Object.freeze({ key: 'black-box', label: 'Black Box', aliases: Object.freeze(['black box', 'black box clips']) }),
+  Object.freeze({ key: 'hidden-files', label: 'Hidden Files', aliases: Object.freeze(['hidden files']) }),
 ]);
 
 export function normalizeGroupName(value) {
@@ -24,11 +24,11 @@ function experienceNames(experience) {
 
 function suggestedGroup(experience) {
   const names = new Set(experienceNames(experience).map(normalizeGroupName));
-  return DEFAULT_WHOP_GROUPS.find((group) => names.has(normalizeGroupName(group.label))) || null;
+  return DEFAULT_WHOP_GROUPS.find((group) => group.aliases.some((alias) => names.has(normalizeGroupName(alias)))) || null;
 }
 
 function experienceLabel(experience) {
-  return String(experience?.company?.title || experience?.company?.name || experience?.name || 'Whop group').trim().slice(0, 120);
+  return String(experience?.company?.title || experience?.company?.name || experience?.name || 'Whop source').trim().slice(0, 120);
 }
 
 export async function sourceDecision(env, experience, requestedId) {
@@ -85,7 +85,7 @@ export async function requireApprovedSource(env, experienceId) {
   const db = requireDatabase(env);
   const source = id ? await db.prepare('SELECT * FROM whop_sources WHERE experience_id = ?').bind(id).first() : null;
   if (!source || source.decision !== 'approved') {
-    throw new HttpError(403, 'Approve this exact Whop group before scanning or importing its posts.');
+    throw new HttpError(403, 'Approve this exact Whop source before scanning or importing its content.');
   }
   return source;
 }
