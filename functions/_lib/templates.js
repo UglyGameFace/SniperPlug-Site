@@ -18,6 +18,7 @@ function shell({ title, description, body, canonical = 'https://sniperplug.com/g
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/css/styles.css">
   <link rel="stylesheet" href="/assets/css/guides.css">
+  <link rel="stylesheet" href="/assets/css/guide-media.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
