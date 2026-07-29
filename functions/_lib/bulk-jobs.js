@@ -1,5 +1,5 @@
 import { randomToken } from './crypto.js';
-import { importApprovedPosts, suggestedCategoryForText } from './guides-media.js';
+import { importApprovedPosts } from './guides-media.js';
 import { HttpError, requireDatabase } from './http.js';
 import { savePostDecision, scanApprovedSource } from './posts.js';
 import { publishReadyGuides } from './publish.js';
@@ -56,13 +56,15 @@ function normalize(row) {
   const results = safeJson(row.results_json, []);
   const failures = safeJson(row.failures_json, []);
   const summary = safeJson(row.summary_json, {});
+  const completedSources = Math.min(Number(row.source_index || 0), ids.length);
   return {
     id: row.id,
     status: row.status,
     sourceIds: ids,
     sourceIndex: Number(row.source_index || 0),
     totalSources: ids.length,
-    completedSources: Math.min(Number(row.source_index || 0), ids.length),
+    completedSources,
+    percent: ids.length ? Math.round((completedSources / ids.length) * 100) : 0,
     currentSourceId: ids[Number(row.source_index || 0)] || null,
     results,
     failures,
@@ -117,6 +119,8 @@ function addSummary(summary, result, published) {
   next.imported = Number(next.imported || 0) + Number(result.imported || 0);
   next.unchanged = Number(next.unchanged || 0) + Number(result.unchanged || 0);
   next.blocked = Number(next.blocked || 0) + Number(result.blocked || 0);
+  next.manualReview = Number(next.manualReview || 0) + Number(result.manualReview || 0);
+  next.expired = Number(next.expired || 0) + Number(result.expired || 0);
   next.mediaMirrored = Number(next.mediaMirrored || 0) + Number(result.mediaMirrored || 0);
   next.published = Number(next.published || 0) + Number(published.published || 0);
   next.heldFiles = Number(next.heldFiles || 0) + Number(published.skippedFiles?.length || 0);
@@ -129,15 +133,10 @@ async function processSource(env, whopSession, experienceId) {
   const experience = await retrieveExperience(whopSession, experienceId);
   await saveSourceDecision(env, experience, experience.id, 'approved');
   const posts = await scanApprovedSource(env, whopSession, experience);
-  const readyKeys = posts.filter((item) => item.decision !== 'blocked').map((item) => item.sourceKey).filter(Boolean);
+  const guideReady = posts.filter((item) => item.decision !== 'blocked' && item.integrity?.autoPublishEligible === true);
+  const readyKeys = guideReady.map((item) => item.sourceKey).filter(Boolean);
   if (readyKeys.length) await savePostDecision(env, readyKeys, 'approved');
   const sourceType = whopExperienceType(experience);
-  const category = suggestedCategoryForText([
-    experience?.company?.title,
-    experience?.name,
-    sourceType,
-    ...posts.slice(0, 100).flatMap((post) => [post.title, post.excerpt]),
-  ].filter(Boolean).join(' '));
   const guideIds = [];
   let imported = 0;
   let unchanged = 0;
@@ -147,7 +146,7 @@ async function processSource(env, whopSession, experienceId) {
     const output = await importApprovedPosts(env, whopSession, {
       experienceId,
       sourceKeys: batch,
-      category,
+      autoCategorize: true,
       rightsConfirmed: true,
     });
     imported += Number(output.imported || 0);
@@ -161,15 +160,19 @@ async function processSource(env, whopSession, experienceId) {
   }
   const published = guideIds.length
     ? await publishReadyGuides(env, { guideIds })
-    : { published: 0, skippedFiles: [], skippedIntegrity: [], skippedLinks: [], skippedStatus: [], alreadyPublished: [] };
+    : { published: 0, publishedGuideIds: [], skippedFiles: [], skippedIntegrity: [], skippedLinks: [], skippedStatus: [], alreadyPublished: [] };
+  const manualReview = posts.filter((item) => item.decision !== 'blocked' && item.integrity?.autoPublishEligible !== true).length;
+  const expired = posts.filter((item) => item.integrity?.code === 'expired_sports_pick').length;
   return {
     experienceId,
     title: experience?.name || experienceId,
     sourceType,
-    category,
+    category: 'per-item',
     scanned: posts.length,
     approved: readyKeys.length,
     blocked: posts.filter((item) => item.decision === 'blocked').length,
+    manualReview,
+    expired,
     imported,
     unchanged,
     attachmentReviews,
@@ -218,6 +221,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
     failures.push({
       experienceId,
       message: String(error?.message || 'Source processing failed.').slice(0, 500),
+      code: String(error?.details?.code || error?.name || 'source_error').slice(0, 80),
       at: new Date().toISOString(),
     });
   }
