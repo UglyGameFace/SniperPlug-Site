@@ -26,6 +26,7 @@ import {
   setGuideStatus,
   suggestedCategoryForText,
 } from '../_lib/guides-media.js';
+import { reconcileRecentBulkImports } from '../_lib/import-reconciliation.js';
 import {
   listSavedPosts,
   savePostDecision,
@@ -132,20 +133,23 @@ async function verifiedWhopSummary(request, env, admin) {
 
 async function dashboard(request, env, admin) {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
+  const cleanup = await reconcileRecentBulkImports(env);
   const [whop, sources, categories, guides] = await Promise.all([
     verifiedWhopSummary(request, env, admin),
     listSourceOptions(env),
     listCategories(env, { includeInactive: true }),
     listAdminGuides(env),
   ]);
+  const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
   return json({
     whop: { connected: Boolean(whop), verified: Boolean(whop), session: whop },
     capabilities: {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
+      cleanup,
     },
     sources,
     categories,
-    guides,
+    guides: visibleGuides,
   });
 }
 
