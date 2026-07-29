@@ -1,7 +1,11 @@
 (() => {
-  if (!document.querySelector('script[src="/assets/js/control-center-performance.js"]')) {
+  for (const src of [
+    '/assets/js/control-center-performance.js',
+    '/assets/js/media-readiness.js',
+  ]) {
+    if (document.querySelector(`script[src="${src}"]`)) continue;
     const runtime = document.createElement('script');
-    runtime.src = '/assets/js/control-center-performance.js';
+    runtime.src = src;
     runtime.defer = true;
     document.head.append(runtime);
   }
@@ -67,9 +71,10 @@
   }
 
   function explainExternalApps(group) {
-    const wrapper = group.querySelector('.unsupported-sources');
+    const wrapper = group.querySelector('.unsupported-sources,.external-apps');
     if (!wrapper || wrapper.dataset.explained === 'true') return;
     wrapper.dataset.explained = 'true';
+    wrapper.classList.remove('unsupported-sources');
     wrapper.classList.add('external-apps');
     const existing = [...wrapper.querySelectorAll('p')];
     wrapper.replaceChildren();
@@ -106,7 +111,7 @@
       state: source.dataset.state || 'pending',
       type: source.dataset.type || 'unknown',
     }));
-    const external = group.querySelector('.unsupported-sources,.external-apps');
+    const external = group.querySelector('.external-apps,.unsupported-sources');
     return {
       group,
       title: title.toLocaleLowerCase('en-US'),
