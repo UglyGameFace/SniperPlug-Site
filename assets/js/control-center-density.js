@@ -11,9 +11,12 @@
   if (!sourceOptions || !discoveredGroups || !selectedCount || !bulkWorkflow || !bulkWorkflowSummary || !bulkJobPanel) return;
 
   let compacting = false;
+  let selectionFrame = 0;
+  let compactFrame = 0;
 
   function compactSourceDecisions() {
-    if (compacting) return;
+    compactFrame = 0;
+    if (compacting || sourceOptions.dataset.compacted === 'true') return;
     const chips = [...sourceOptions.querySelectorAll(':scope > .source-chip')];
     if (!chips.length) return;
 
@@ -43,11 +46,18 @@
     queueMicrotask(() => { compacting = false; });
   }
 
+  function scheduleCompact() {
+    delete sourceOptions.dataset.compacted;
+    if (compactFrame) return;
+    compactFrame = requestAnimationFrame(compactSourceDecisions);
+  }
+
   function selectedSourceTotal() {
     return discoveredGroups.querySelectorAll('.discovered-source input[type="checkbox"]:checked').length;
   }
 
   function syncSelectionSummary() {
+    selectionFrame = 0;
     const count = selectedSourceTotal();
     selectedCount.textContent = `${count} selected`;
     bulkWorkflowSummary.textContent = count
@@ -56,22 +66,23 @@
     bulkWorkflow.dataset.hasSelection = count ? 'true' : 'false';
   }
 
+  function scheduleSelectionSummary() {
+    if (selectionFrame) return;
+    selectionFrame = requestAnimationFrame(syncSelectionSummary);
+  }
+
   function revealActiveJob() {
     if (!bulkJobPanel.hidden) bulkWorkflow.open = true;
   }
 
-  new MutationObserver(() => queueMicrotask(compactSourceDecisions))
-    .observe(sourceOptions, { childList: true });
-  new MutationObserver(() => queueMicrotask(syncSelectionSummary))
-    .observe(discoveredGroups, { childList: true, subtree: true });
-  new MutationObserver(revealActiveJob)
-    .observe(bulkJobPanel, { attributes: true, attributeFilter: ['hidden'] });
+  new MutationObserver(scheduleCompact).observe(sourceOptions, { childList: true });
+  new MutationObserver(scheduleSelectionSummary).observe(discoveredGroups, { childList: true });
+  new MutationObserver(revealActiveJob).observe(bulkJobPanel, { attributes: true, attributeFilter: ['hidden'] });
 
   root.addEventListener('change', (event) => {
-    if (event.target.matches('.discovered-source input[type="checkbox"], [data-select-defaults]')) {
-      queueMicrotask(syncSelectionSummary);
-    }
+    if (event.target.matches('.discovered-source input[type="checkbox"], [data-select-defaults]')) scheduleSelectionSummary();
   });
+  root.addEventListener('sniperplug:selection-updated', scheduleSelectionSummary);
 
   compactSourceDecisions();
   syncSelectionSummary();
