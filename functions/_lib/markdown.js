@@ -11,6 +11,7 @@ function escapeHtml(value) {
 function safeUrl(value, { image = false } = {}) {
   try {
     const raw = String(value || '').trim();
+    if (/^\/(?!\/)/.test(raw) && !raw.includes('\\')) return raw;
     const url = new URL(/^www\./i.test(raw) ? `https://${raw}` : raw);
     if (url.protocol !== 'https:' && (!image && url.protocol !== 'http:')) return null;
     return url.toString();
@@ -39,6 +40,17 @@ function inlineMarkdown(value) {
   const stash = (html) => `\u0001TOKEN${tokens.push(html) - 1}\u0001`;
 
   source = source.replace(/`([^`\n]+)`/g, (_, content) => stash(`<code>${escapeHtml(content)}</code>`));
+  source = source.replace(/!\[(video|audio):\s*([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/gi, (_, kindValue, labelValue, target) => {
+    const kind = String(kindValue || '').toLowerCase();
+    const label = String(labelValue || (kind === 'video' ? 'Video' : 'Audio')).trim();
+    const url = safeUrl(target, { image: true });
+    if (!url) return stash(`${escapeHtml(kind)}: ${escapeHtml(label)} (${escapeHtml(target)})`);
+    const escapedUrl = escapeHtml(url);
+    const escapedLabel = escapeHtml(label);
+    return stash(kind === 'video'
+      ? `<figure class="guide-media guide-media-video"><video controls preload="metadata" playsinline src="${escapedUrl}"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer nofollow">Open ${escapedLabel}</a></video><figcaption>${escapedLabel}</figcaption></figure>`
+      : `<figure class="guide-media guide-media-audio"><audio controls preload="metadata" src="${escapedUrl}"><a href="${escapedUrl}" target="_blank" rel="noopener noreferrer nofollow">Open ${escapedLabel}</a></audio><figcaption>${escapedLabel}</figcaption></figure>`);
+  });
   source = source.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g, (_, alt, target) => {
     const url = safeUrl(target, { image: true });
     return stash(url
