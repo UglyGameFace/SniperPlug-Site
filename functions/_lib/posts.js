@@ -1,7 +1,11 @@
 import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
-import { listForumPosts } from './whop.js';
+import {
+  listExperienceItems,
+  sourceKeyForWhopItem,
+  whopExperienceType,
+} from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 function plainExcerpt(value, limit = 260) {
@@ -15,57 +19,70 @@ function plainExcerpt(value, limit = 260) {
     .slice(0, limit);
 }
 
-function fallbackTitle(content) {
+function fallbackTitle(content, sourceType) {
   const heading = String(content || '').match(/^ {0,3}#{1,6}\s+(.+)$/m)?.[1]?.trim();
-  return (heading || plainExcerpt(content, 110) || 'Untitled Whop post').slice(0, 140);
+  const fallback = sourceType === 'course' ? 'Untitled course lesson' : sourceType === 'chat' ? 'Untitled chat message' : 'Untitled Whop post';
+  return (heading || plainExcerpt(content, 110) || fallback).slice(0, 140);
 }
 
 function normalizeAttachments(value) {
   return (Array.isArray(value) ? value : []).map((attachment) => ({
     id: String(attachment?.id || '').trim(),
     filename: String(attachment?.filename || 'attachment').slice(0, 180),
-    contentType: String(attachment?.content_type || '').slice(0, 120),
-  })).filter((attachment) => attachment.id);
+    contentType: String(attachment?.content_type || attachment?.contentType || '').slice(0, 120),
+    url: /^https:\/\//i.test(String(attachment?.url || '')) ? String(attachment.url) : null,
+    visibility: String(attachment?.visibility || '').slice(0, 40) || null,
+    uploadStatus: String(attachment?.upload_status || attachment?.uploadStatus || '').slice(0, 40) || null,
+    role: String(attachment?.role || 'attachment').slice(0, 80),
+    reviewReason: String(attachment?.reviewReason || '').slice(0, 400) || null,
+  })).filter((attachment) => attachment.id || attachment.url || attachment.reviewReason);
 }
 
-async function normalizePost(post, experienceId) {
-  const sourceKey = `forum-post:${String(post?.id || '').trim()}`;
-  const body = String(post?.content || '');
+function sourceTypeFromKey(sourceKey) {
+  if (String(sourceKey || '').startsWith('course-lesson:')) return 'course';
+  if (String(sourceKey || '').startsWith('chat-message:')) return 'chat';
+  return 'forum';
+}
+
+async function normalizeItem(item, experienceId, sourceType) {
+  const sourceKey = sourceKeyForWhopItem(item);
+  const body = String(item?.content || '');
   const base = {
     sourceKey,
     experienceId,
-    postId: String(post?.id || ''),
-    title: String(post?.title || fallbackTitle(body)).trim().slice(0, 140),
+    postId: String(item?.id || ''),
+    contentType: sourceType,
+    title: String(item?.title || fallbackTitle(body, sourceType)).trim().slice(0, 140),
     excerpt: plainExcerpt(body),
-    author: post?.user ? {
-      id: post.user.id || null,
-      name: post.user.name || null,
-      username: post.user.username || null,
+    author: item?.user ? {
+      id: item.user.id || null,
+      name: item.user.name || null,
+      username: item.user.username || null,
     } : null,
-    attachments: normalizeAttachments(post?.attachments),
-    sourceCreatedAt: post?.created_at || null,
-    sourceUpdatedAt: post?.updated_at || post?.created_at || null,
+    attachments: normalizeAttachments(item?.attachments),
+    sourceCreatedAt: item?.created_at || null,
+    sourceUpdatedAt: item?.updated_at || item?.created_at || null,
     sourceMeta: {
-      pinned: Boolean(post?.is_pinned),
-      edited: Boolean(post?.is_edited),
-      posterAdmin: Boolean(post?.is_poster_admin),
+      type: sourceType,
+      ...(item?.sourceMeta || {}),
     },
   };
 
   try {
-    const integrity = await prepareGuideBody(body, { source: `Whop forum post ${base.postId}` });
+    const integrity = await prepareGuideBody(body, { source: `Whop ${sourceType} item ${base.postId}` });
     const sourceFingerprint = await sha256(JSON.stringify({
-      postId: base.postId,
+      sourceKey,
       title: base.title,
       body: integrity.body,
       attachments: base.attachments,
       sourceUpdatedAt: base.sourceUpdatedAt,
+      sourceMeta: base.sourceMeta,
     }));
     return {
       ...base,
       body: integrity.body,
       sourceFingerprint,
-      integrity: { blocked: false, ...integrity },
+      integrity: { blocked: false, sourceType, sourceMeta: base.sourceMeta, ...integrity },
       scanDecision: 'pending',
     };
   } catch (error) {
@@ -75,6 +92,8 @@ async function normalizePost(post, experienceId) {
       sourceFingerprint: null,
       integrity: {
         blocked: true,
+        sourceType,
+        sourceMeta: base.sourceMeta,
         error: error?.message || 'Formatting integrity validation failed.',
         code: error?.details?.code || 'invalid_content',
       },
@@ -83,12 +102,36 @@ async function normalizePost(post, experienceId) {
   }
 }
 
+function rowToItem(row) {
+  const integrity = JSON.parse(row.integrity_json || '{}');
+  return {
+    sourceKey: row.source_key,
+    experienceId: row.experience_id,
+    postId: row.post_id,
+    contentType: integrity.sourceType || sourceTypeFromKey(row.source_key),
+    title: row.title,
+    excerpt: row.excerpt,
+    body: row.body_markdown,
+    author: JSON.parse(row.author_json || '{}'),
+    attachments: JSON.parse(row.attachment_json || '[]'),
+    sourceCreatedAt: row.source_created_at,
+    sourceUpdatedAt: row.source_updated_at,
+    sourceFingerprint: row.source_fingerprint,
+    integrity,
+    decision: row.decision,
+  };
+}
+
 export async function scanApprovedSource(env, whopSession, experience) {
   const db = requireDatabase(env);
   const experienceId = String(experience?.id || '');
   await requireApprovedSource(env, experienceId);
-  const rawPosts = await listForumPosts(whopSession, experienceId);
-  const posts = await Promise.all(rawPosts.map((post) => normalizePost(post, experienceId)));
+  const sourceType = whopExperienceType(experience);
+  if (!['forum', 'course', 'chat'].includes(sourceType)) {
+    throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” cannot be imported. Forums, Courses, and Chat are supported.`);
+  }
+  const rawItems = await listExperienceItems(whopSession, experience);
+  const posts = await Promise.all(rawItems.map((item) => normalizeItem(item, experienceId, sourceType)));
   const now = new Date().toISOString();
 
   const statements = posts.map((post) => db.prepare(`
@@ -138,34 +181,21 @@ export async function scanApprovedSource(env, whopSession, experience) {
   ));
   if (statements.length) await db.batch(statements);
 
+  if (!posts.length) return [];
   const saved = await db.prepare(`
     SELECT * FROM whop_posts
-    WHERE experience_id = ?
+    WHERE experience_id = ? AND last_scanned_at = ?
     ORDER BY CASE decision WHEN 'approved' THEN 0 WHEN 'pending' THEN 1 WHEN 'disapproved' THEN 2 ELSE 3 END,
              source_updated_at DESC, title ASC
-  `).bind(experienceId).all();
-  return (saved.results || []).map((row) => ({
-    sourceKey: row.source_key,
-    experienceId: row.experience_id,
-    postId: row.post_id,
-    title: row.title,
-    excerpt: row.excerpt,
-    body: row.body_markdown,
-    author: JSON.parse(row.author_json || '{}'),
-    attachments: JSON.parse(row.attachment_json || '[]'),
-    sourceCreatedAt: row.source_created_at,
-    sourceUpdatedAt: row.source_updated_at,
-    sourceFingerprint: row.source_fingerprint,
-    integrity: JSON.parse(row.integrity_json || '{}'),
-    decision: row.decision,
-  }));
+  `).bind(experienceId, now).all();
+  return (saved.results || []).map(rowToItem);
 }
 
 export async function savePostDecision(env, sourceKeys, decision) {
   if (!['approved', 'disapproved', 'pending'].includes(decision)) throw new HttpError(422, 'Choose Approve, Disapprove, or Undo.');
   const keys = [...new Set((Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys]).map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!keys.length) throw new HttpError(422, 'Choose at least one post.');
-  if (keys.length > 2000) throw new HttpError(422, 'Too many post decisions were submitted at once.');
+  if (!keys.length) throw new HttpError(422, 'Choose at least one content item.');
+  if (keys.length > 2000) throw new HttpError(422, 'Too many content decisions were submitted at once.');
   const db = requireDatabase(env);
   const now = new Date().toISOString();
   const statements = keys.map((key) => db.prepare(`
@@ -183,19 +213,5 @@ export async function listSavedPosts(env, experienceId) {
     SELECT * FROM whop_posts WHERE experience_id = ?
     ORDER BY source_updated_at DESC, title ASC
   `).bind(experienceId).all();
-  return (rows.results || []).map((row) => ({
-    sourceKey: row.source_key,
-    experienceId: row.experience_id,
-    postId: row.post_id,
-    title: row.title,
-    excerpt: row.excerpt,
-    body: row.body_markdown,
-    author: JSON.parse(row.author_json || '{}'),
-    attachments: JSON.parse(row.attachment_json || '[]'),
-    sourceCreatedAt: row.source_created_at,
-    sourceUpdatedAt: row.source_updated_at,
-    sourceFingerprint: row.source_fingerprint,
-    integrity: JSON.parse(row.integrity_json || '{}'),
-    decision: row.decision,
-  }));
+  return (rows.results || []).map(rowToItem);
 }
