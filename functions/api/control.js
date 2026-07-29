@@ -88,7 +88,15 @@ async function dashboard(request, env, admin) {
     listCategories(env, { includeInactive: true }),
     listAdminGuides(env),
   ]);
-  return json({ whop: { connected: Boolean(whop), session: whop }, sources, categories, guides });
+  return json({
+    whop: { connected: Boolean(whop), session: whop },
+    capabilities: {
+      mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
+    },
+    sources,
+    categories,
+    guides,
+  });
 }
 
 async function oauthCallback(request, env) {
