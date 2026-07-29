@@ -28,16 +28,32 @@ function allowedAttachmentUrls(attachments) {
     .map((file) => file.url);
 }
 
+function publishHoldReason(integrity) {
+  if (integrity?.quarantined === true) {
+    return integrity.quarantineReason || 'This imported guide was quarantined and must be reviewed and saved before publishing again.';
+  }
+  const policy = integrity?.importPolicy || integrity?.sourceMeta?.importPolicy || integrity?.policy;
+  const expiresAt = Date.parse(String(policy?.expiresAt || ''));
+  if (policy?.timeSensitive === true && Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+    return 'This time-sensitive sports post expired before publication. Review it manually instead of publishing stale picks.';
+  }
+  if (policy?.autoPublishEligible === false && integrity?.manualReviewCompleted !== true) {
+    return policy.reason || 'This item requires manual guide review before publication.';
+  }
+  return null;
+}
+
 async function auditRow(db, row) {
   const attachments = safeJson(row.attachment_json, {});
   const integrity = safeJson(row.integrity_json, {});
   const linkAudit = auditGuideLinks(row.body_markdown || '', {
     allowedWhopUrls: allowedAttachmentUrls(attachments),
   });
-  const nextIntegrity = { ...integrity, linkAudit, linkAuditedAt: new Date().toISOString() };
+  const holdReason = publishHoldReason(integrity);
+  const nextIntegrity = { ...integrity, linkAudit, publishHoldReason: holdReason, linkAuditedAt: new Date().toISOString() };
   await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
     .bind(JSON.stringify(nextIntegrity), row.id).run();
-  return { attachments, integrity: nextIntegrity, linkAudit };
+  return { attachments, integrity: nextIntegrity, linkAudit, holdReason };
 }
 
 export async function assertGuidePublishable(env, id) {
@@ -47,12 +63,15 @@ export async function assertGuidePublishable(env, id) {
     FROM guides WHERE id = ?
   `).bind(id).first();
   if (!row) throw new HttpError(404, 'Guide not found.');
-  const { attachments, integrity } = await auditRow(db, row);
+  const { attachments, integrity, holdReason } = await auditRow(db, row);
   if (Number(attachments.reviewCount || 0) > 0) {
     throw new HttpError(422, 'Resolve or replace every flagged private or expiring Whop file before publishing.', { code: 'attachment_review' });
   }
   if (integrity.blocked === true) {
     throw new HttpError(422, integrity.error || 'Guide integrity validation failed.', { code: 'integrity_blocked' });
+  }
+  if (holdReason) {
+    throw new HttpError(422, holdReason, { code: integrity.quarantined ? 'quarantined_import' : 'manual_or_expired_review' });
   }
   assertPublishableLinks(integrity);
   return integrity.linkAudit;
@@ -93,7 +112,7 @@ export async function publishReadyGuides(env, input) {
   const skippedStatus = [];
 
   for (const row of rows) {
-    const { attachments, integrity, linkAudit } = await auditRow(db, row);
+    const { attachments, integrity, linkAudit, holdReason } = await auditRow(db, row);
     if (!row.source_key) {
       skippedStatus.push({ id: row.id, title: row.title, reason: 'Not an imported Whop guide.' });
     } else if (row.status === 'published') {
@@ -102,8 +121,8 @@ export async function publishReadyGuides(env, input) {
       skippedStatus.push({ id: row.id, title: row.title, reason: `Status is ${row.status}.` });
     } else if (Number(attachments.reviewCount || 0) > 0) {
       skippedFiles.push({ id: row.id, title: row.title, reviewCount: Number(attachments.reviewCount || 0) });
-    } else if (integrity.blocked === true) {
-      skippedIntegrity.push({ id: row.id, title: row.title, reason: integrity.error || 'Integrity validation failed.' });
+    } else if (integrity.blocked === true || holdReason) {
+      skippedIntegrity.push({ id: row.id, title: row.title, reason: holdReason || integrity.error || 'Integrity validation failed.' });
     } else if (Number(linkAudit.blockedCount || 0) > 0) {
       skippedLinks.push({ id: row.id, title: row.title, blocked: linkAudit.blocked || [] });
     } else {
