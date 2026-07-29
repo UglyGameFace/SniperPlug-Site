@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/assets/css/control-center.css">
   <link rel="stylesheet" href="/assets/css/whop-discovery.css">
   <link rel="stylesheet" href="/assets/css/control-center-hardening.css">
+  <link rel="stylesheet" href="/assets/css/bulk-history.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -34,7 +35,7 @@
 
     <section class="control-app container" data-control-app hidden>
       <header class="control-hero">
-        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and content, import hidden drafts, then publish separately or run a resumable complete workflow.</p></div>
+        <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and guide-worthy content, import hidden drafts, then publish separately or run a resumable complete workflow.</p></div>
         <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">View public guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
       </header>
 
@@ -48,10 +49,11 @@
       </section>
 
       <section class="control-panel" id="source-browser" data-discovery-panel>
-        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Black Box and Hidden Files are prioritized.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Source lists stay collapsed until opened so every tap remains responsive.</p></div><button class="btn ghost" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="source-capability-note">
           <div><strong>Imported automatically</strong><p>Whop Forums, Courses, Chat, and their attached pictures, videos, audio, PDFs, and files.</p></div>
-          <div><strong>External app module</strong><p>Your access is valid, but the content lives in another service such as Telegram or Discord. That service needs its own importer connection; it is not a missing Whop permission.</p></div>
+          <div><strong>External app module</strong><p>Your access is valid, but content living in Telegram, Discord, or another service needs that service’s own authorized importer.</p></div>
+          <div data-media-readiness><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
         </div>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
@@ -68,14 +70,26 @@
           <details class="bulk-publish-box" data-bulk-workflow>
             <summary><span>Complete resumable workflow</span><small data-bulk-workflow-summary>Open when ready to import and publish</small></summary>
             <div class="bulk-publish-content">
-              <p>Approve selected sources, scan current content, approve non-blocked items, assign fitting categories, preserve available media, import drafts, and publish every safe guide. Closing the tab pauses the job without losing progress.</p>
+              <p>Approve selected sources, scan top-level guide content, reject replies and expired picks, auto-fit each category, preserve available media, import drafts, and publish only content that passes every safety check.</p>
               <label class="rights-check"><input type="checkbox" data-bulk-rights><span>I own the selected content or have explicit permission to republish it on SniperPlug.</span></label>
               <button class="btn primary" type="button" data-bulk-publish disabled>Start bulk workflow</button>
               <p class="bulk-progress" data-bulk-progress role="status" aria-live="polite"></p>
+              <div class="bulk-progress-visual" data-bulk-progress-visual hidden>
+                <div class="bulk-progress-head"><strong data-progress-stage>Preparing</strong><span class="bulk-progress-percent" data-progress-percent>0%</span></div>
+                <div class="bulk-progress-track"><progress data-progress-bar max="100" value="0">0%</progress></div>
+                <div class="bulk-progress-metrics"><span><strong data-progress-sources>0/0</strong>Sources complete</span><span><strong data-progress-scanned>0</strong>Items scanned</span><span><strong data-progress-published>0</strong>Published</span><span><strong data-progress-held>0</strong>Held safely</span></div>
+                <ol class="bulk-source-timeline" data-progress-timeline></ol>
+              </div>
               <div class="bulk-job-panel" data-bulk-job-panel hidden>
                 <div><strong data-bulk-job-title>Bulk job</strong><span data-bulk-job-summary></span></div>
                 <div class="button-row"><button class="btn primary" type="button" data-resume-bulk-job>Resume</button><button class="btn ghost" type="button" data-cancel-bulk-job>Cancel job</button></div>
               </div>
+              <section class="recent-actions" data-recent-actions>
+                <header><div><h3>Undo recent bulk publications</h3><p>For 48 hours, return all or selected bulk-published guides to private drafts. Undo never deletes the content.</p></div></header>
+                <div class="recent-actions-controls"><button class="btn ghost" type="button" data-select-recent-actions>Select all reversible</button><button class="btn ghost" type="button" data-clear-recent-actions>Clear</button><button class="decision disapprove" type="button" data-undo-selected-actions disabled>Undo selected</button><button class="decision disapprove" type="button" data-undo-all-actions disabled>Undo all recent</button></div>
+                <div class="recent-action-list" data-recent-action-list></div>
+                <p class="bulk-progress" data-recent-action-status role="status" aria-live="polite"></p>
+              </section>
             </div>
           </details>
         </div>
@@ -95,14 +109,11 @@
       </section>
 
       <section class="control-panel" data-post-panel hidden>
-        <header class="panel-head"><div><span class="eyebrow">3 · Approve content</span><h2 data-post-title>Review content</h2><p data-post-summary></p></div><div class="button-row"><button class="decision approve" type="button" data-approve-all>Approve all ready</button><button class="decision disapprove" type="button" data-disapprove-all>Disapprove all</button><button class="btn ghost" type="button" data-reset-all>Reset decisions</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">3 · Approve content</span><h2 data-post-title>Review content</h2><p data-post-summary></p></div><div class="button-row"><button class="decision approve" type="button" data-approve-all>Approve all automatic-ready</button><button class="decision disapprove" type="button" data-disapprove-all>Disapprove all</button><button class="btn ghost" type="button" data-reset-all>Reset decisions</button></div></header>
         <div class="decision-counts"><span><strong data-count-approved>0</strong>Approved</span><span><strong data-count-disapproved>0</strong>Disapproved</span><span><strong data-count-pending>0</strong>Need decision</span><span><strong data-count-blocked>0</strong>Blocked</span></div>
         <div class="post-list" data-post-list></div>
         <div class="import-bar">
-          <div class="category-picker-row">
-            <label><span>Category for approved content</span><select data-import-category></select></label>
-            <button class="btn ghost" type="button" data-open-inline-category data-category-target="import">＋ Add category</button>
-          </div>
+          <div class="category-picker-row"><label><span>Category for approved content</span><select data-import-category></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="import">＋ Add category</button></div>
           <form class="inline-category-form" data-inline-category-form hidden>
             <label><span>New category</span><input name="label" maxlength="60" placeholder="Personal Freebies" required></label>
             <label><span>Description</span><input name="description" maxlength="220" placeholder="Free products, trials, credits, and samples."></label>
@@ -115,7 +126,7 @@
       </section>
 
       <section class="control-panel" id="category-registry">
-        <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>The importer uses this live registry. Add a custom category instead of forcing content into the wrong one.</p></div></header>
+        <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>Choose “Auto-fit each guide” during import or create a custom category instead of forcing unrelated content together.</p></div></header>
         <form class="category-form" data-category-form>
           <label><span>Label</span><input name="label" maxlength="60" placeholder="Reselling" required></label>
           <label><span>Description</span><input name="description" maxlength="220" placeholder="Reselling, sourcing, and flip methods."></label>
@@ -126,12 +137,9 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until you publish it. Publishing blocks unresolved media, failed integrity checks, internal Whop pages, and temporary Whop URLs.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Imported content stays private until it passes freshness, media, formatting, and link checks. Quarantined items remain editable drafts.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Publish all ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
-        <div class="draft-tools">
-          <label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label>
-          <label><span>Status</span><select data-draft-status-filter><option value="all">All</option><option value="draft">Drafts</option><option value="published">Published</option><option value="rejected">Rejected</option></select></label>
-        </div>
+        <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="all">All</option><option value="draft">Drafts</option><option value="published">Published</option><option value="rejected">Rejected</option></select></label></div>
         <div class="draft-layout">
           <aside class="draft-list" data-draft-list></aside>
           <div class="draft-empty" data-draft-empty><strong>No draft selected</strong><p>Choose an imported guide to review its exact content.</p></div>
@@ -153,17 +161,13 @@
   </main>
 
   <div class="preview-backdrop" data-post-preview hidden>
-    <section role="dialog" aria-modal="true" aria-labelledby="post-preview-title">
+    <section class="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="post-preview-title">
       <header><h2 id="post-preview-title" data-preview-title>Content preview</h2><button type="button" data-close-preview aria-label="Close">×</button></header>
       <p data-preview-meta></p><div class="preview-content" data-preview-body></div><footer><button class="btn ghost" type="button" data-close-preview>Close</button></footer>
     </section>
   </div>
 
-  <script src="/assets/js/control-center.js" defer></script>
+  <script src="/assets/js/control-center-v2.js" defer></script>
   <script src="/assets/js/control-center-lifecycle.js" defer></script>
-  <script src="/assets/js/control-center-hardening.js" defer></script>
-  <script src="/assets/js/control-center-density.js" defer></script>
-  <script src="/assets/js/control-center-performance.js" defer></script>
-  <script src="/assets/js/bulk-publish.js" defer></script>
 </body>
 </html>
