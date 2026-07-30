@@ -12,6 +12,7 @@
   let requestToken = 0;
   let timer = null;
   let stopped = false;
+  let lastFingerprint = '';
 
   function number(value) {
     return Math.max(0, Number(value || 0));
@@ -52,6 +53,9 @@
     const total = number(job.totalSources);
     const scanned = number(job.summary?.scanned);
     const published = number(job.summary?.published);
+    const fingerprint = JSON.stringify([job.id, job.updatedAt, hasIssues, completed, total, scanned, published, value.held]);
+    if (fingerprint === lastFingerprint) return;
+    lastFingerprint = fingerprint;
 
     if (title) title.textContent = hasIssues ? 'Bulk job completed with review items' : 'Bulk job completed successfully';
     if (summaryCopy) {
@@ -85,31 +89,28 @@
       const output = await response.json();
       if (token === requestToken) apply(output?.job || null);
     } catch {
-      // The primary Control Center owns network error display. This layer only
-      // corrects authoritative completion status when the read succeeds.
+      // The primary Control Center owns network error display.
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  function schedule(delay = 80) {
+  function schedule(delay = 120) {
     clearTimeout(timer);
     timer = setTimeout(load, delay);
   }
 
-  const observer = new MutationObserver(() => schedule());
-  observer.observe(panel, { subtree: true, childList: true, characterData: true, attributes: true });
   root.addEventListener('sniperplug:dashboard-refreshed', () => schedule());
   document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(); });
   document.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest('[data-bulk-publish],[data-resume-bulk-job],[data-cancel-bulk-job]') : null;
-    if (target) schedule(600);
+    const target = event.target instanceof Element ? event.target.closest('[data-bulk-publish],[data-resume-bulk-job],[data-cancel-bulk-job],[data-bulk-reset]') : null;
+    if (target) schedule(900);
   }, true);
+  window.addEventListener('pageshow', () => schedule(0));
   window.addEventListener('pagehide', () => {
     stopped = true;
     requestToken += 1;
     clearTimeout(timer);
-    observer.disconnect();
   }, { once: true });
 
   schedule(0);
