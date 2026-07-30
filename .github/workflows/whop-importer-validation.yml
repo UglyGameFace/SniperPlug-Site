@@ -52,6 +52,14 @@ jobs:
           if old not in text:
               raise SystemExit('Expected course scan assertion was not found.')
           quality.write_text(text.replace(old, new))
+
+          video_test = Path('tools/test-course-video-import.mjs')
+          text = video_test.read_text()
+          old = "assert.ok(whopItems.includes(\"role: 'course-thumbnail'\"), 'Course review cards must receive lesson thumbnails when Whop exposes them.');"
+          new = "assert.ok(whopItems.includes(\"fileInput(lesson?.thumbnail, 'course-thumbnail')\"), 'Course review cards must receive lesson thumbnails when Whop exposes them.');"
+          if old not in text:
+              raise SystemExit('Expected thumbnail test assertion was not found.')
+          video_test.write_text(text.replace(old, new))
           PY
       - name: Set up Node.js
         uses: actions/setup-node@v4
