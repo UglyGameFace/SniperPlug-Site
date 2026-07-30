@@ -170,7 +170,7 @@
 })();
 
 (() => {
-  const version = '20260730.15';
+  const version = '20260730.16';
   if (!document.querySelector('link[data-control-recovery]')) {
     const style = document.createElement('link');
     style.rel = 'stylesheet';
