@@ -170,10 +170,7 @@
 })();
 
 (() => {
-  // Loaded from the already-versioned lifecycle asset so old Samsung Internet
-  // tabs cannot silently omit recovery, bulk status, browser, network, decision,
-  // guide-opening, or removed-history hardening.
-  const version = '20260730.13';
+  const version = '20260730.15';
   if (!document.querySelector('link[data-control-recovery]')) {
     const style = document.createElement('link');
     style.rel = 'stylesheet';
@@ -188,6 +185,7 @@
     ['controlBulkStatus', `/assets/js/control-center-bulk-status.js?v=${version}`],
     ['controlBrowserCompat', `/assets/js/control-center-browser-compat.js?v=${version}`],
     ['controlPostHistoryFix', `/assets/js/control-center-post-history-fix.js?v=${version}`],
+    ['controlBulkReset', `/assets/js/control-center-bulk-reset.js?v=${version}`],
   ]) {
     const selector = `script[data-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}]`;
     if (document.querySelector(selector)) continue;
