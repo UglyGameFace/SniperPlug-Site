@@ -7,6 +7,7 @@ import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 const SCAN_LEASE_MS = 5 * 60_000;
+const D1_BATCH_SIZE = 100;
 
 function plainExcerpt(value, limit = 260) {
   return String(value || '').replace(/^ {0,3}#{1,6}\s+/gm, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[`*_~>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -108,6 +109,14 @@ function rowToItem(row) {
     integrity,
     decision: row.decision,
   };
+}
+
+async function runStatementBatches(db, statements) {
+  const results = [];
+  for (let index = 0; index < statements.length; index += D1_BATCH_SIZE) {
+    results.push(...await db.batch(statements.slice(index, index + D1_BATCH_SIZE)));
+  }
+  return results;
 }
 
 async function ensureScanLeaseTable(db) {
@@ -240,7 +249,7 @@ export async function scanApprovedSource(env, whopSession, experience) {
       JSON.stringify(post.author || {}), JSON.stringify(post.attachments), post.sourceCreatedAt,
       post.sourceUpdatedAt, post.sourceFingerprint, JSON.stringify(post.integrity), post.scanDecision, scanMarker,
     ));
-    if (statements.length) await db.batch(statements);
+    if (statements.length) await runStatementBatches(db, statements);
     return verifySavedScan(db, experienceId, scanMarker, posts);
   } finally {
     await releaseScanLease(db, experienceId, leaseToken).catch(() => null);
@@ -279,7 +288,7 @@ export async function savePostDecisionVerified(env, sourceKeys, decision) {
     SET decision = ?, decision_updated_at = ?
     WHERE source_key = ? AND decision != 'blocked'
   `).bind(decision, decision === 'pending' ? null : now, key));
-  const results = await db.batch(statements);
+  const results = await runStatementBatches(db, statements);
   const changed = results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
   const rows = await rowsForSourceKeys(db, keys);
   const byKey = new Map(rows.map((row) => [String(row.source_key), row]));
