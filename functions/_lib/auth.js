@@ -14,9 +14,10 @@ import {
   requireDatabase,
   secureCookie,
 } from './http.js';
+import { assertPaidImporterAccess, isCustomerSession } from './paid-access.js';
 
 const ADMIN_COOKIE = 'sniperplug_admin';
-const OWNER_SESSION_ID = 'sniperplug-owner';
+export const OWNER_SESSION_ID = 'sniperplug-owner';
 const ADMIN_TTL_SECONDS = 12 * 60 * 60;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
@@ -173,10 +174,16 @@ export async function verifyAdminPassword(env, submitted) {
   return constantTimeTextEqual(String(submitted || ''), adminPassword(env));
 }
 
-export async function createAdminSession(env) {
+export async function createAdminSession(env, options = {}) {
+  const sid = String(options.sid || OWNER_SESSION_ID).trim();
+  const kind = String(options.kind || 'owner').trim();
+  const whopUserId = String(options.whopUserId || '').trim() || null;
+  if (!sid) throw new HttpError(500, 'Cannot create an empty Control Center session.');
   const session = {
-    v: 1,
-    sid: OWNER_SESSION_ID,
+    v: 2,
+    sid,
+    kind,
+    whopUserId,
     nonce: randomToken(24),
     issuedAt: Date.now(),
     expiresAt: Date.now() + ADMIN_TTL_SECONDS * 1000,
@@ -194,7 +201,8 @@ export async function readAdminSession(request, env) {
     const [payload, signature] = cookieValue(request, ADMIN_COOKIE).split('.', 2);
     if (!payload || !signature || !(await verifyValue(payload, signature, sessionSecret(env)))) return null;
     const session = JSON.parse(textDecoder.decode(base64urlDecode(payload)));
-    if (session?.v !== 1 || !session.sid || Number(session.expiresAt) <= Date.now()) return null;
+    if (![1, 2].includes(session?.v) || !session.sid || Number(session.expiresAt) <= Date.now()) return null;
+    if (session.v === 1) return { ...session, kind: 'owner', whopUserId: null };
     return session;
   } catch {
     return null;
@@ -203,9 +211,14 @@ export async function readAdminSession(request, env) {
 
 export async function requireAdmin(request, env) {
   const session = await readAdminSession(request, env);
-  if (!session) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  if (!session) throw new HttpError(401, 'Sign in to the SniperPlug Control Center first.');
+  if (session.kind === 'customer-pending') return session;
+  if (isCustomerSession(session)) {
+    const access = await assertPaidImporterAccess(request, env, session);
+    return { ...session, access };
+  }
   const effectiveSessionId = await resolveOwnerWhopSessionId(env, session.sid);
-  return { ...session, legacySid: session.sid, sid: effectiveSessionId };
+  return { ...session, kind: 'owner', legacySid: session.sid, sid: effectiveSessionId };
 }
 
 export function clearAdminSession() {
