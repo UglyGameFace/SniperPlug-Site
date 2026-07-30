@@ -53,10 +53,13 @@ assert.ok(jobs.includes('autoPublishEligible === true'), 'Bulk jobs can still au
 assert.ok(jobs.includes('autoCategorize: true') && jobs.includes('importApprovedPosts'), 'Durable job does not assign categories per imported item.');
 assert.ok(jobs.includes('publishReadyGuides'), 'Durable job does not continue into safe publishing.');
 assert.ok(jobs.includes('failures.push'), 'One source failure can abort the entire job without a durable summary.');
-assert.ok(jobs.includes('const JOB_VERSION = 3') && jobs.includes('sourceKeys: [sourceKey]'), 'Bulk Worker steps are not bounded to one exact item.');
+assert.ok(jobs.includes('const JOB_VERSION = 4'), 'Bulk jobs are not using the lease-safe worker version.');
+assert.ok(jobs.includes('const sourceKey = current.readyKeys[current.cursor]') && jobs.includes('sourceKeys: [sourceKey]'), 'Bulk Worker steps are not bounded to one exact item.');
+assert.ok(jobs.includes('leaseToken') && jobs.includes('lease_until = ?'), 'Bulk Worker persistence does not verify lease ownership.');
 assert.ok(!jobs.includes('IMPORT_CHUNK = 50'), 'The unsafe source-wide 50-item import batch returned.');
 assert.ok(jobs.includes("item.decision !== 'blocked'"), 'Blocked content can be auto-approved.');
 assert.ok(jobs.includes('manualReview') && jobs.includes('expired'), 'Bulk summaries do not explain held manual or expired items.');
+assert.ok(jobs.includes("outcome: issueCount > 0 ? 'completed-with-issues' : 'completed-successfully'"), 'Completed bulk jobs do not distinguish clean completion from held or failed items.');
 
 assert.ok(jobsEndpoint.includes('requireAdmin'), 'Bulk job endpoint is not owner protected.');
 assert.ok(jobsEndpoint.includes('requireSameOrigin'), 'Bulk job endpoint lacks same-origin protection.');
@@ -72,6 +75,7 @@ assert.ok(publish.includes('publishHoldReason'), 'Quarantined, manual-review, or
 assert.ok(publish.includes('linkAudit.blockedCount'), 'Guides with blocked Whop links can be bulk published.');
 assert.ok(publish.includes('row.source_key'), 'Non-imported guides can be swept into Whop bulk publishing.');
 assert.ok(publish.includes("SET status = 'published'"), 'Ready drafts are not actually published.');
+assert.ok(publish.includes('confirmedRows') && publish.includes('publishedGuideIds.length'), 'Published totals are not verified against final database state.');
 assert.ok(publish.includes('MAX_GUIDES = 500'), 'Bulk publishing has no bounded guide limit.');
 
 assert.ok(styles.includes('.bulk-publish-box'), 'Complete bulk workflow has no dedicated layout.');
@@ -84,7 +88,9 @@ console.log('\nSNIPERPLUG BULK PUBLISH AUDIT PASSED\n');
 console.log('✓ The resumable workflow publishes only guide-ready top-level content.');
 console.log('✓ Categories are selected per guide instead of once for an entire source.');
 console.log('✓ Jobs persist in D1, isolate failures, and process one exact content item per Worker step.');
+console.log('✓ Lease ownership prevents stale Workers from overwriting newer progress.');
 console.log('✓ Replies, low-signal messages, expired picks, unsafe links, and unresolved files stay private.');
+console.log('✓ Published counts are confirmed from final D1 state instead of intended updates.');
 console.log('✓ Bulk publications remain selectively reversible for 48 hours.');
 console.log('✓ Undo all cancels an active job and returns published guides to private review.');
 console.log('✓ The browser refreshes targeted data without full-page reloads or mutation-observer churn.');
