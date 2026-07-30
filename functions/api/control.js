@@ -27,6 +27,7 @@ import {
   setGuideStatus,
   suggestedCategoryForText,
 } from '../_lib/guides-media.js';
+import { reserveGuideVersion, restoreGuideVersion } from '../_lib/guide-versioning.js';
 import { reconcileRecentBulkImports } from '../_lib/import-reconciliation.js';
 import { getMediaStorageStatus, runMediaStorageMaintenance } from '../_lib/media-storage.js';
 import {
@@ -336,10 +337,17 @@ async function guideStatus(request, env, context) {
   const id = Number.parseInt(body.id, 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
   const status = String(body.status || '');
-  if (status === 'published') await assertGuidePublishable(env, id);
-  const guide = await setGuideStatus(env, id, status);
-  scheduleMediaMaintenance(context, env);
-  return json({ guide });
+  const operation = status === 'published' ? 'publish' : status === 'rejected' ? 'reject' : 'return-to-draft';
+  const reservation = await reserveGuideVersion(env, id, body.expectedUpdatedAt, operation);
+  try {
+    if (status === 'published') await assertGuidePublishable(env, id);
+    const guide = await setGuideStatus(env, id, status);
+    scheduleMediaMaintenance(context, env);
+    return json({ guide });
+  } catch (error) {
+    await restoreGuideVersion(env, reservation).catch(() => null);
+    throw error;
+  }
 }
 
 export async function onRequest(context) {
