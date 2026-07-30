@@ -60,7 +60,7 @@
     message.textContent = current === 'published'
       ? 'This guide is live. Press Return to draft before changing its content.'
       : current === 'rejected'
-        ? 'This guide is rejected and private. Press Return to draft before editing it.'
+        ? 'This guide is rejected and private. Use Removed Whop imports to rebuild it, or return it to draft.'
         : '';
   }
 
@@ -167,4 +167,23 @@
   });
   window.SniperPlugDraftSafety = { confirmDiscard, isDirty: () => dirty, markClean };
   syncLockState();
+})();
+
+(() => {
+  // Loaded from the already-versioned lifecycle asset so old Samsung Internet
+  // tabs cannot silently omit the recovery workflow.
+  const version = '20260730.8';
+  if (!document.querySelector('link[data-control-recovery]')) {
+    const style = document.createElement('link');
+    style.rel = 'stylesheet';
+    style.href = `/assets/css/control-center-recovery.css?v=${version}`;
+    style.dataset.controlRecovery = '';
+    document.head.append(style);
+  }
+  if (!document.querySelector('script[data-control-recovery]')) {
+    const script = document.createElement('script');
+    script.src = `/assets/js/control-center-recovery.js?v=${version}`;
+    script.dataset.controlRecovery = '';
+    document.body.append(script);
+  }
 })();
