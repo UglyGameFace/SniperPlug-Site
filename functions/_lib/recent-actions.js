@@ -121,7 +121,7 @@ export async function listRecentActions(env, admin) {
   const guideById = new Map((rows.results || []).map((row) => [Number(row.id), row]));
   const actions = values.map((reference) => {
     const guide = guideById.get(reference.guideId);
-    if (!guide) return null;
+    if (!guide || !['published', 'rejected'].includes(String(guide.status || ''))) return null;
     return {
       ...reference,
       title: guide.title,
@@ -132,13 +132,13 @@ export async function listRecentActions(env, admin) {
       sourceGroup: guide.source_group,
       publishedAt: guide.published_at,
       updatedAt: guide.updated_at,
-      reversible: ['published', 'rejected'].includes(guide.status),
+      reversible: true,
     };
   }).filter(Boolean).sort((a, b) => String(b.publishedAt || b.updatedAt || '').localeCompare(String(a.publishedAt || a.updatedAt || '')));
   return {
     windowHours: HISTORY_HOURS,
     actions,
-    reversibleCount: actions.filter((item) => item.reversible).length,
+    reversibleCount: actions.length,
   };
 }
 
