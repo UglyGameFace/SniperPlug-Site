@@ -27,7 +27,7 @@ function safeAttachmentLabel(value) {
 }
 
 async function verifyAttachments(session, attachments) {
-  const values = Array.isArray(attachments) ? attachments : [];
+  const values = (Array.isArray(attachments) ? attachments : []).filter((attachment) => attachment?.role !== 'hosted-video');
   const verified = [];
   for (const attachment of values) verified.push(await retrieveWhopFile(session, attachment));
   const lines = [];

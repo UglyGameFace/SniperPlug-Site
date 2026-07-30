@@ -61,6 +61,8 @@ assert.ok(controlApi.includes('MAX_BATCH_SOURCES = 100'), 'Source-decision reque
 assert.ok(sourcePolicy.includes('MAX_SOURCE_DECISIONS = 100') && sourcePolicy.includes('await db.batch(statements)'), 'Source decisions are not written through one bounded database batch.');
 assert.ok(hardeningCss.includes('content-visibility:auto'), 'CSS fallback does not skip offscreen source and post rendering.');
 assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls do not use a low-latency touch path.');
+assert.ok(runtime.includes('control-operation-bar') && runtime.includes('activeOperations'), 'Slow actions do not expose a global progress indicator.');
+assert.ok(hardeningCss.includes('button[aria-busy=true]') && hardeningCss.includes('control-operation-track'), 'Busy buttons do not show immediate spinner and progress feedback.');
 
 assert.ok(!page.includes('source-capability-note'), 'Large explanation cards were reinserted into the primary workflow.');
 assert.ok(page.includes('media-readiness-inline') && page.includes('data-media-readiness'), 'Media readiness is not presented as a compact status.');

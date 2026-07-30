@@ -226,7 +226,7 @@ async function enhanceGuideMedia(env, whopSession, result) {
   const supplements = supplementResult.files;
   const replacedRoles = new Set(['hosted-video', 'hosted-video-player', 'hosted-video-download', 'hosted-video-archive']);
   const preservedVideo = supplementResult.preserveExistingVideo
-    ? savedFiles.filter((file) => replacedRoles.has(file.role))
+    ? savedFiles.filter((file) => ['hosted-video-player', 'hosted-video-download', 'hosted-video-archive'].includes(file.role))
     : [];
   const files = uniqueFiles([
     ...supplements.filter((file) => file.role === 'course-thumbnail'),

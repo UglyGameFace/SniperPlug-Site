@@ -143,7 +143,16 @@
     recent: null,
     recentSelection: new Set(),
     previewPostKey: null,
+    activeOperations: 0,
   };
+
+  const operationBar = document.createElement('div');
+  operationBar.className = 'control-operation-bar';
+  operationBar.hidden = true;
+  operationBar.setAttribute('role', 'status');
+  operationBar.setAttribute('aria-live', 'polite');
+  operationBar.innerHTML = '<div class="control-operation-track"><span></span></div><strong>Working…</strong>';
+  document.body.append(operationBar);
 
   async function requestJson(url, options = {}) {
     let response;
@@ -239,12 +248,24 @@
     }
   }
 
+  function setOperationWorking(working, label = 'Working…') {
+    state.activeOperations = Math.max(0, state.activeOperations + (working ? 1 : -1));
+    operationBar.hidden = state.activeOperations === 0;
+    operationBar.dataset.active = state.activeOperations > 0 ? 'true' : 'false';
+    const copy = operationBar.querySelector('strong');
+    if (copy && working) copy.textContent = label || 'Working…';
+    root.setAttribute('aria-busy', state.activeOperations > 0 ? 'true' : 'false');
+  }
+
   async function withButton(button, label, work) {
+    if (button instanceof HTMLButtonElement && button.getAttribute('aria-busy') === 'true') return;
     setWorking(button, true, label);
+    setOperationWorking(true, label);
     try {
       return await work();
     } finally {
       setWorking(button, false);
+      setOperationWorking(false);
       syncButtons();
     }
   }
@@ -1689,8 +1710,10 @@
     const action = button?.dataset?.action;
 
     if (button === elements.logout) {
-      await api('session', { method: 'DELETE', body: '{}' }).catch(() => null);
-      lock();
+      await withButton(button, 'Signing out…', async () => {
+        await api('session', { method: 'DELETE', body: '{}' }).catch(() => null);
+        lock();
+      });
       return;
     }
     if (button === elements.whopDisconnect) {
