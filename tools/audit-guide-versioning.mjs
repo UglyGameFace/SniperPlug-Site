@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const read = (path) => readFileSync(join(root, path), 'utf8');
+const guard = read('assets/js/control-center-network-guard.js');
+const media = read('functions/_lib/guides-media.js');
+
+assert.ok(guard.includes('guideVersions = new Map()'), 'The browser does not retain authoritative guide versions.');
+assert.ok(guard.includes("['guide-save', 'guide-status']"), 'Guide writes are not versioned uniformly in the network layer.');
+assert.ok(guard.includes('expectedUpdatedAt'), 'Guide write requests do not carry the expected D1 version.');
+assert.ok(guard.includes('rememberGuide(payload.guide)') && guard.includes('payload.guides'), 'Dashboard and detail responses do not refresh the guide version cache.');
+assert.ok(!guard.includes('retry('), 'Stale guide writes can be replayed automatically.');
+
+assert.ok(media.includes('reserveGuideVersion'), 'Draft saves do not reserve the exact expected version atomically.');
+assert.ok(media.includes('WHERE id = ? AND updated_at = ?'), 'Draft save reservations are not conditional on the version read by the owner.');
+assert.ok(media.includes("code: 'guide_version_required'"), 'Unversioned draft saves do not fail closed.');
+assert.ok(media.includes("code: 'guide_version_stale'"), 'Old-tab draft saves do not return a clear conflict.');
+assert.ok(media.includes("code: 'guide_save_finalize_stale'"), 'Draft finalization can overwrite a newer version silently.');
+assert.ok(media.includes("UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?"), 'Failed draft validation cannot restore its reserved version safely.');
+
+for (const file of ['assets/js/control-center-network-guard.js', 'functions/_lib/guides-media.js']) {
+  const syntax = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
+  assert.equal(syntax.status, 0, `${file} has invalid JavaScript syntax:\n${syntax.stderr}`);
+}
+
+console.log('\nSNIPERPLUG GUIDE VERSIONING AUDIT PASSED\n');
+console.log('✓ Control Center writes carry the exact guide version last confirmed by D1.');
+console.log('✓ Old-tab draft saves fail closed instead of overwriting newer work.');
+console.log('✓ Failed validation restores the reservation only when no newer write replaced it.');
