@@ -112,3 +112,90 @@
     }
   }, true);
 })();
+
+(() => {
+  const root = document.querySelector('[data-control-root]');
+  const editor = document.querySelector('[data-draft-editor]');
+  const bodyField = editor instanceof HTMLFormElement ? editor.elements.namedItem('body') : null;
+  const rights = document.querySelector('[data-rights-confirm]');
+  const status = document.querySelector('[data-global-status]');
+  if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(bodyField instanceof HTMLTextAreaElement)) return;
+
+  const actions = editor.querySelector('.editor-actions');
+  const repair = document.createElement('button');
+  repair.type = 'button';
+  repair.className = 'btn ghost';
+  repair.dataset.repairGuideMedia = '';
+  repair.textContent = 'Repair media from Whop';
+  repair.hidden = true;
+  actions?.prepend(repair);
+
+  let busy = false;
+
+  function staleMediaWarning() {
+    const body = String(bodyField.value || '');
+    return /Media review required[\s\S]{0,500}(media storage is not connected|SNIPERPLUG_MEDIA|could not verify its free media budget)/i.test(body);
+  }
+
+  function sync() {
+    const id = Number(editor.elements.namedItem('id')?.value || 0);
+    repair.hidden = editor.hidden || !Number.isFinite(id) || id <= 0 || !staleMediaWarning();
+    if (!busy) repair.disabled = false;
+  }
+
+  function show(message, state = 'ok') {
+    if (!(status instanceof HTMLElement)) return;
+    status.hidden = !message;
+    status.textContent = message;
+    status.dataset.type = state;
+  }
+
+  async function request(body) {
+    const response = await fetch('/api/guide-media-repair', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `Media repair failed (${response.status}).`);
+    return data;
+  }
+
+  repair.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (busy) return;
+    const id = Number(editor.elements.namedItem('id')?.value || 0);
+    if (!Number.isFinite(id) || id <= 0) return show('Open a valid Whop guide before repairing its media.', 'error');
+    if (rights instanceof HTMLInputElement && !rights.checked) {
+      return show('Confirm your republication rights before repairing imported media.', 'warning');
+    }
+    if (!window.confirm('Re-fetch this guide from its current Whop source and rebuild the generated media section? Your manually edited title, description, category, and featured setting stay preserved.')) return;
+
+    busy = true;
+    repair.disabled = true;
+    repair.setAttribute('aria-busy', 'true');
+    repair.textContent = 'Repairing media…';
+    show('Re-fetching the current Whop lesson and rebuilding its media section…', 'ok');
+    try {
+      const output = await request({ guideId: id, rightsConfirmed: true });
+      if (!output?.guide) throw new Error('SniperPlug repaired the source but could not reload the guide.');
+      show('Media repaired from the current Whop source. Reloading the server-confirmed guide…', 'ok');
+      window.location.replace(`${window.location.pathname}?guide=${id}&mediaRepaired=${Date.now()}`);
+    } catch (error) {
+      show(error.message, 'error');
+      busy = false;
+      repair.disabled = false;
+      repair.removeAttribute('aria-busy');
+      repair.textContent = 'Repair media from Whop';
+    }
+  });
+
+  bodyField.addEventListener('input', sync);
+  root.addEventListener('sniperplug:guide-loaded', sync);
+  root.addEventListener('sniperplug:dashboard-refreshed', sync);
+  new MutationObserver(sync).observe(editor, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+})();
