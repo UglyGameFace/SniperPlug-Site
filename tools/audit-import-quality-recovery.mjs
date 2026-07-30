@@ -151,7 +151,7 @@ assert.ok(repair.includes('restoreGuideSnapshot') && repair.includes('snapshotCo
 assert.ok(courseVideo.includes('snapshotCourseVideos') && courseVideo.includes('restoreCourseVideos'), 'Course-video rollback helpers are missing.');
 assert.ok(recent.includes("status = 'rejected'") && recent.includes("status IN ('published', 'rejected')"), 'Rejected imported guides are missing from 48-hour restore or cannot return to draft.');
 assert.ok(runtime.includes('Rejected · can restore') && runtime.includes('published or rejected imported guides'), 'The Undo panel still mislabels rejected-guide restoration as publication-only.');
-assert.ok(page.includes('Restore recent imported changes'), 'The Control Center does not explain that rejected imports can be restored.');
+assert.ok(/Removed Whop imports/i.test(page) && /restore/i.test(page), 'The Control Center does not explain that rejected imports can be restored.');
 
 assert.ok(reconcile.includes("status IN ('draft', 'published')"), 'Cleanup does not inspect the full active imported guide queue.');
 assert.ok(reconcile.includes('reconcileImportedGuides'), 'Unified imported-guide cleanup is missing.');
