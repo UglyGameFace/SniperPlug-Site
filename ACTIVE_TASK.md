@@ -31,3 +31,5 @@ Active on `agent/whop-guide-importer`, draft PR #2. Backend rejected-guide re-im
 
 ## Backlog
 None. Stay on this task until Definition of Done passes.
+
+Validation trigger: 2026-07-30T04:00Z
