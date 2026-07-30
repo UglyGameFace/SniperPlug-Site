@@ -4,7 +4,7 @@
 Repair the live Cloudflare Pages Whop importer and Control Center so connection state is truthful and stable, interactions register immediately, large imports stay responsive, guide-quality filtering remains strict, private media stays inside SniperPlug’s hard-free budget, Whop course videos render at source-available quality, and mislabeled or app-specific Whop modules are investigated without destabilizing startup.
 
 ## Status
-Active on `agent/whop-guide-importer`. The interaction/performance, R2 hard-free, and course-video work is deployed on draft PR #2. The current subtask fixes the contradictory “Unexpected SniperPlug importer error” banner that appeared while the same page correctly showed Whop connected. The connection/discovery state-machine patch passes the complete local Node 22 build, targeted resilience tests, migrations, syntax validation, regression checks, cleanup inspection, and diff validation. Final exact-head GitHub Actions, Cloudflare deployment, conflict inspection, and authenticated live acceptance remain before merge or completion.
+Active on `agent/whop-guide-importer`. The connection/discovery state-machine implementation landed at `dd1c6852d810649681891a7b0d63a279ddc74ed9`; the permanent read-only verification workflow was restored at `ed6b35f7b60bded0cf856e6fdee49b71dd2eb95d`. The complete Node 22 regression suite passed in the permanent workflow, Cloudflare Pages deployed the cleaned head successfully, and the temporary write workflow is gone. PR #2 remains a draft. Authenticated live startup, refresh, source-list, and Travel Hacking video acceptance remain before merge or completion.
 
 ## Scope
 - Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, guide-quality checks, safe publishing, and 48-hour undo.
@@ -43,7 +43,7 @@ Active on `agent/whop-guide-importer`. The interaction/performance, R2 hard-free
 - Preserved adaptive course video, static rendition detection, R2 hard-free guards, publishing safeguards, and all prior performance work.
 
 ## Validation
-- Passed: complete `npm test` and `npm run build` audit suite under Node 22.
+- Passed: complete `npm test` and `npm run build` audit suite under Node 22 locally and in the permanent read-only GitHub Actions workflow.
 - Passed: JavaScript syntax validation for all changed Functions, browser scripts, audits, and tests.
 - Passed: migrations `0001` through `0005` execute together in SQLite.
 - Passed: capability probe budget stops at exactly six checks per discovery request.
@@ -53,10 +53,7 @@ Active on `agent/whop-guide-importer`. The interaction/performance, R2 hard-free
 - Passed: connection UI contains explicit connected/checking/disconnected states and a dedicated connection-detail line.
 - Passed: temporary button working state restores its original disabled value.
 - Passed: existing importer quality, category, OAuth, course-video, media, R2 hard-free, bulk recovery, undo, public isolation, responsive layout, and performance regressions.
-- Passed: `git diff --check` and changed-file conflict inspection.
-- Pending: permanent GitHub Actions validation on the final branch head.
-- Pending: Cloudflare Pages deployment of that exact head.
-- Pending: PR mergeability/conflict recheck.
+- Passed: `git diff --check`, changed-file conflict inspection, permanent workflow cleanup, and Cloudflare deployment of cleaned head `ed6b35f7b60bded0cf856e6fdee49b71dd2eb95d`.
 - Pending: authenticated live startup, refresh, source-list, and Travel Hacking video acceptance.
 
 ## Cleanup
@@ -64,11 +61,12 @@ Active on `agent/whop-guide-importer`. The interaction/performance, R2 hard-free
 - Connection and discovery messages have separate DOM/state paths; no duplicate banner owner remains.
 - Capability cache stores only source type, non-secret app metadata, status, retry timing, and timestamps.
 - No Whop/Mux signed token, playback ID, private attachment, imported content, browser cookie, or fake production row is committed.
-- No temporary workflow, patch trigger, package lock, or deployment-only fixture is included.
+- Temporary patch delivery and write workflows are removed; the permanent workflow has read-only repository permissions.
+- No incidental `package-lock.json` or deployment-only fixture remains.
 - The R2 bucket remains private and the existing cleanup safety window remains intact.
 
 ## Blockers
 - Repository tests cannot use the user’s authenticated production Whop account or reproduce the exact live Whop module set. Live acceptance must confirm the page settles on one truthful connection state, the red generic banner does not return, source refresh preserves data during temporary failures, and Travel Hacking videos still play and seek.
 
 ## Backlog
-- None. Do not switch tasks until exact-head CI, deployment, conflict inspection, authenticated acceptance, and final cleanup verification pass.
+- None. Do not switch tasks until authenticated acceptance and final post-acceptance cleanup verification pass.
