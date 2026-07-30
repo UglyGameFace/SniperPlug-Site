@@ -171,8 +171,8 @@
 
 (() => {
   // Loaded from the already-versioned lifecycle asset so old Samsung Internet
-  // tabs cannot silently omit the recovery workflow.
-  const version = '20260730.8';
+  // tabs cannot silently omit recovery or authoritative bulk-status hardening.
+  const version = '20260730.9';
   if (!document.querySelector('link[data-control-recovery]')) {
     const style = document.createElement('link');
     style.rel = 'stylesheet';
@@ -180,10 +180,15 @@
     style.dataset.controlRecovery = '';
     document.head.append(style);
   }
-  if (!document.querySelector('script[data-control-recovery]')) {
+  for (const [name, src] of [
+    ['controlRecovery', `/assets/js/control-center-recovery.js?v=${version}`],
+    ['controlBulkStatus', `/assets/js/control-center-bulk-status.js?v=${version}`],
+  ]) {
+    const selector = `script[data-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}]`;
+    if (document.querySelector(selector)) continue;
     const script = document.createElement('script');
-    script.src = `/assets/js/control-center-recovery.js?v=${version}`;
-    script.dataset.controlRecovery = '';
+    script.src = src;
+    script.dataset[name] = '';
     document.body.append(script);
   }
 })();
