@@ -152,10 +152,12 @@ export async function publishReadyGuides(env, input) {
         WHERE status = 'draft' AND id IN (${placeholders})
       `).bind(now, now, ...group).run();
     } catch (error) {
-      publishFailures.push({
-        guideIds: group,
-        message: String(error?.message || 'Database publication update failed.').slice(0, 500),
-      });
+      const message = String(error?.message || 'Database publication update failed.').slice(0, 500);
+      publishFailures.push({ guideIds: group, message });
+      for (const id of group) {
+        const row = rows.find((candidate) => Number(candidate.id) === id);
+        skippedIntegrity.push({ id, title: row?.title || `Guide ${id}`, reason: `Publication could not be confirmed: ${message}` });
+      }
     }
   }
 
@@ -165,11 +167,12 @@ export async function publishReadyGuides(env, input) {
   for (const id of ready) {
     const final = confirmedById.get(id);
     if (final?.status === 'published') continue;
-    skippedStatus.push({
-      id,
-      title: final?.title || rows.find((row) => Number(row.id) === id)?.title || `Guide ${id}`,
-      reason: final ? `Status changed to ${final.status} before publication could be confirmed.` : 'Guide disappeared before publication could be confirmed.',
-    });
+    const title = final?.title || rows.find((row) => Number(row.id) === id)?.title || `Guide ${id}`;
+    const reason = final ? `Status changed to ${final.status} before publication could be confirmed.` : 'Guide disappeared before publication could be confirmed.';
+    skippedStatus.push({ id, title, reason });
+    if (!skippedIntegrity.some((entry) => Number(entry.id) === id)) {
+      skippedIntegrity.push({ id, title, reason: `Publication held: ${reason}` });
+    }
   }
 
   const found = new Set(rows.map((row) => Number(row.id)));
