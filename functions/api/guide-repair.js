@@ -148,7 +148,9 @@ async function repairGuide(request, env, admin) {
         await restoreCourseVideos(env, id, videoSnapshot);
       } catch (rollbackError) {
         throw new HttpError(500, 'Recovery failed and SniperPlug could not safely restore the original rejected guide and video state.', {
-          recoveryError: String(error?.message || error), rollbackError: String(rollbackError?.message || rollbackError),
+          code: 'guide_recovery_rollback_failed',
+          recoveryError: String(error?.message || error),
+          rollbackError: String(rollbackError?.message || rollbackError),
         });
       }
       throw error;
