@@ -13,11 +13,18 @@
     const url = new URL(request?.url || String(input), window.location.href);
     const method = String(options.method || request?.method || 'GET').toUpperCase();
     const signal = options.signal || request?.signal || null;
-    return { url, method, signal };
+    return { url, method, signal, request };
   }
 
   function controlAction(url) {
     return url.pathname === '/api/control' ? String(url.searchParams.get('action') || '') : '';
+  }
+
+  function routedInput(input, details) {
+    if (controlAction(details.url) !== 'guide-save') return input;
+    const safeUrl = new URL('/api/guide-save-safe', details.url.origin).toString();
+    if (details.request) return new Request(safeUrl, details.request);
+    return safeUrl;
   }
 
   function rememberGuide(guide) {
@@ -79,6 +86,7 @@
     }
 
     const guardedOptions = versionedOptions(details, options);
+    const guardedInput = routedInput(input, details);
     const timeoutMs = details.method === 'GET' || details.method === 'HEAD' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
     const controller = new AbortController();
     let timedOut = false;
@@ -96,7 +104,7 @@
     }, timeoutMs);
 
     try {
-      const response = await nativeFetch(input, { ...guardedOptions, signal: controller.signal });
+      const response = await nativeFetch(guardedInput, { ...guardedOptions, signal: controller.signal });
       await rememberResponse(response);
       return response;
     } catch (error) {
