@@ -61,6 +61,13 @@ function normalizedEntries(entries) {
     : { experience: entry, requestedId: entry?.id });
 }
 
+async function verifiedSourceRows(db, ids) {
+  if (!ids.length) return [];
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await db.prepare(`SELECT * FROM whop_sources WHERE experience_id IN (${placeholders})`).bind(...ids).all();
+  return rows.results || [];
+}
+
 export async function saveSourceDecisions(env, entries, decision) {
   if (!['approved', 'disapproved'].includes(decision)) throw new HttpError(422, 'Choose Approve or Disapprove.');
   const db = requireDatabase(env);
@@ -101,7 +108,29 @@ export async function saveSourceDecisions(env, entries, decision) {
     now,
   ));
   await db.batch(statements);
-  return prepared.map(({ state }) => ({ ...state, decision, saved: true }));
+
+  const ids = prepared.map(({ state }) => state.experienceId);
+  const rows = await verifiedSourceRows(db, ids);
+  const byId = new Map(rows.map((row) => [String(row.experience_id), row]));
+  const missing = ids.filter((id) => !byId.has(id));
+  const mismatched = ids.filter((id) => byId.get(id)?.decision !== decision);
+  if (missing.length || mismatched.length) {
+    throw new HttpError(500, 'SniperPlug could not confirm every Whop source decision in D1. Refresh before retrying.', {
+      code: 'source_decision_unconfirmed',
+      requested: ids.length,
+      confirmed: ids.length - new Set([...missing, ...mismatched]).size,
+      missing,
+      mismatched,
+    });
+  }
+
+  return prepared.map(({ state }) => ({
+    ...state,
+    label: byId.get(state.experienceId)?.label || state.label,
+    decision,
+    saved: true,
+    updatedAt: byId.get(state.experienceId)?.updated_at || now,
+  }));
 }
 
 export async function saveSourceDecision(env, experience, requestedId, decision) {
