@@ -21,7 +21,14 @@ assert.ok(media.includes('reserveGuideVersion'), 'Draft saves do not reserve the
 assert.ok(media.includes('WHERE id = ? AND updated_at = ?'), 'Draft save reservations are not conditional on the version read by the owner.');
 assert.ok(media.includes("code: 'guide_version_required'"), 'Unversioned draft saves do not fail closed.');
 assert.ok(media.includes("code: 'guide_version_stale'"), 'Old-tab draft saves do not return a clear conflict.');
+assert.ok(media.includes("code: 'guide_save_cleanup_stale'"), 'Cleanup-time outside edits are not distinguished from the save’s own pruning writes.');
 assert.ok(media.includes("code: 'guide_save_finalize_stale'"), 'Draft finalization can overwrite a newer version silently.');
+assert.ok(media.includes('cleanupMatchesSavedGuide'), 'Draft finalization does not validate the complete post-cleanup guide state.');
+for (const field of ['title', 'description', 'category_slug', 'body_markdown', 'featured', 'attachment_json']) {
+  assert.ok(media.includes(`row.${field}`), `Cleanup-aware finalization does not validate ${field}.`);
+}
+assert.ok(media.includes("row.status !== 'draft'"), 'Cleanup-aware finalization can accept a concurrent publish or rejection.');
+assert.ok(media.includes("WHERE id = ? AND updated_at = ? AND status = 'draft'"), 'Final draft integrity write is not conditional on the cleanup version and draft status.');
 assert.ok(media.includes("UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?"), 'Failed draft validation cannot restore its reserved version safely.');
 
 assert.ok(versioning.includes('reserveGuideVersion') && versioning.includes('restoreGuideVersion'), 'Guide status operations do not have reusable optimistic reservations.');
@@ -44,5 +51,6 @@ for (const file of [
 console.log('\nSNIPERPLUG GUIDE VERSIONING AUDIT PASSED\n');
 console.log('✓ Control Center writes carry the exact guide version last confirmed by D1.');
 console.log('✓ Old-tab draft saves fail closed instead of overwriting newer work.');
+console.log('✓ The save accepts its own attachment/video cleanup while rejecting real outside edits.');
 console.log('✓ Publish, reject, and return-to-draft reserve the version before auditing or changing status.');
 console.log('✓ Failed validation or status changes restore reservations only when no newer write replaced them.');
