@@ -101,6 +101,17 @@ async function rowsForRequest(db, input) {
   throw new HttpError(422, 'Choose imported drafts to publish.');
 }
 
+async function confirmedRows(db, ids) {
+  const output = [];
+  for (const group of chunks(ids, UPDATE_CHUNK)) {
+    if (!group.length) continue;
+    const placeholders = group.map(() => '?').join(',');
+    const rows = await db.prepare(`SELECT id, title, status FROM guides WHERE id IN (${placeholders})`).bind(...group).all();
+    output.push(...(rows.results || []));
+  }
+  return output;
+}
+
 export async function publishReadyGuides(env, input) {
   const db = requireDatabase(env);
   const { requestedIds, rows } = await rowsForRequest(db, input);
@@ -110,6 +121,7 @@ export async function publishReadyGuides(env, input) {
   const skippedLinks = [];
   const alreadyPublished = [];
   const skippedStatus = [];
+  const publishFailures = [];
 
   for (const row of rows) {
     const { attachments, integrity, linkAudit, holdReason } = await auditRow(db, row);
@@ -133,23 +145,45 @@ export async function publishReadyGuides(env, input) {
   const now = new Date().toISOString();
   for (const group of chunks(ready, UPDATE_CHUNK)) {
     const placeholders = group.map(() => '?').join(',');
-    await db.prepare(`
-      UPDATE guides
-      SET status = 'published', updated_at = ?, published_at = ?
-      WHERE status = 'draft' AND id IN (${placeholders})
-    `).bind(now, now, ...group).run();
+    try {
+      await db.prepare(`
+        UPDATE guides
+        SET status = 'published', updated_at = ?, published_at = ?
+        WHERE status = 'draft' AND id IN (${placeholders})
+      `).bind(now, now, ...group).run();
+    } catch (error) {
+      publishFailures.push({
+        guideIds: group,
+        message: String(error?.message || 'Database publication update failed.').slice(0, 500),
+      });
+    }
+  }
+
+  const confirmation = await confirmedRows(db, ready);
+  const confirmedById = new Map(confirmation.map((row) => [Number(row.id), row]));
+  const publishedGuideIds = ready.filter((id) => confirmedById.get(id)?.status === 'published');
+  for (const id of ready) {
+    const final = confirmedById.get(id);
+    if (final?.status === 'published') continue;
+    skippedStatus.push({
+      id,
+      title: final?.title || rows.find((row) => Number(row.id) === id)?.title || `Guide ${id}`,
+      reason: final ? `Status changed to ${final.status} before publication could be confirmed.` : 'Guide disappeared before publication could be confirmed.',
+    });
   }
 
   const found = new Set(rows.map((row) => Number(row.id)));
   return {
     requested: requestedIds.length,
-    published: ready.length,
-    publishedGuideIds: ready,
+    attempted: ready.length,
+    published: publishedGuideIds.length,
+    publishedGuideIds,
     skippedFiles,
     skippedIntegrity,
     skippedLinks,
     skippedStatus,
     alreadyPublished,
+    publishFailures,
     missing: requestedIds.filter((id) => !found.has(id)),
   };
 }
