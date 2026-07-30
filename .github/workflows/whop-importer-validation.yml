@@ -35,6 +35,7 @@ jobs:
           base64 -d /tmp/sniperplug.patch.bz2.b64 | bunzip2 > /tmp/sniperplug.patch
           git apply --check /tmp/sniperplug.patch
           git apply /tmp/sniperplug.patch
+          rm -f .hard-free-trigger
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
