@@ -46,12 +46,11 @@ async function verifyAttachments(session, attachments) {
   return { verified, reviewCount, markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '' };
 }
 
-async function uniqueSlug(db, title, sourceKey, existingSlug = null) {
+async function uniqueSlug(_db, title, sourceKey, existingSlug = null) {
   if (existingSlug) return existingSlug;
   const base = slugify(title) || 'imported-guide';
-  const available = await db.prepare('SELECT 1 FROM guides WHERE slug = ?').bind(base).first();
-  if (!available) return base;
-  return `${base.slice(0, 62)}-${(await sha256(sourceKey)).slice(0, 8)}`;
+  const sourceSuffix = (await sha256(String(sourceKey || base))).slice(0, 12);
+  return `${base.slice(0, 62)}-${sourceSuffix}`;
 }
 
 function categoryMap(input) {
