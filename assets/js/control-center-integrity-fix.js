@@ -117,7 +117,6 @@
   const root = document.querySelector('[data-control-root]');
   const editor = document.querySelector('[data-draft-editor]');
   const bodyField = editor instanceof HTMLFormElement ? editor.elements.namedItem('body') : null;
-  const rights = document.querySelector('[data-rights-confirm]');
   const status = document.querySelector('[data-global-status]');
   if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(bodyField instanceof HTMLTextAreaElement)) return;
 
@@ -169,10 +168,7 @@
     if (busy) return;
     const id = Number(editor.elements.namedItem('id')?.value || 0);
     if (!Number.isFinite(id) || id <= 0) return show('Open a valid Whop guide before repairing its media.', 'error');
-    if (rights instanceof HTMLInputElement && !rights.checked) {
-      return show('Confirm your republication rights before repairing imported media.', 'warning');
-    }
-    if (!window.confirm('Re-fetch this guide from its current Whop source and rebuild the generated media section? Your manually edited title, description, category, and featured setting stay preserved.')) return;
+    if (!window.confirm('Confirm that you own this content or have permission to republish it, then re-fetch the current Whop item and rebuild its generated media section?')) return;
 
     busy = true;
     repair.disabled = true;
