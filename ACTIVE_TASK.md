@@ -4,32 +4,36 @@
 Repair the live Cloudflare Pages Whop importer and Control Center so rejected or manually removed imported guides can be restored or re-imported, Undo accurately reflects every reversible state, Samsung Browser receives the current runtime, and all prior course-video, loading-feedback, publishing, security, and hard-free safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`, draft PR #2. Backend rejected-guide re-import and restore logic is present, but the Control Center still labels every reversible action as Published and describes Undo as bulk-publication-only. A validated patch is being run to align the UI, permanent tests, and browser asset version. Do not merge until exact-head CI, temporary workflow cleanup, Cloudflare deployment, conflict inspection, and authenticated Samsung/Chrome acceptance pass.
+Implementation and permanent Node 22 regression validation pass on `agent/whop-guide-importer`, draft PR #2. Temporary write workflows are removed. Awaiting Cloudflare propagation and authenticated Samsung/Chrome acceptance before merge.
 
 ## Findings
 - Rejected imported rows remain in D1 so restoration is possible.
 - The importer previously treated a rejected row with an unchanged fingerprint as unchanged; it now bypasses that shortcut when status is rejected.
-- The recent-actions backend now includes rejected imported guides from the last 48 hours and can return published or rejected guides to draft.
-- The browser still says Published for rejected reversible items and only describes bulk publications.
+- Recent actions previously included only currently published bulk output; rejected imported guides could not be selected or restored.
+- The UI labeled every reversible row Published even after rejected-guide restoration was added.
 - Samsung Browser had older immutable Control Center assets while a first Chrome load received the current runtime.
 - Whop tiles are Experiences powered by apps; discovery remains experience-first and app-aware rather than treating those modules as files.
 
-## Changes in validation
-- Truthful Restore recent imported changes copy and status labels.
-- Permanent regression checks for rejected-guide re-import and rejected-guide restoration.
-- Fresh version for every Control Center asset.
-- Preserve immediate pointer feedback, persistent operation progress, and duplicate-submit locks.
+## Changes
+- Rejected guides with unchanged source fingerprints are recreated as drafts on re-import.
+- Rejected imported guides from the last 48 hours appear in recent actions and can return to draft.
+- Source decisions reset to pending when an imported action is restored.
+- Undo copy and row labels now distinguish Published · can undo from Rejected · can restore.
+- Every Control Center asset now uses version `20260730.7`.
+- Immediate pointer feedback, persistent operation progress, and duplicate-submit locks remain active.
+- Permanent regression checks cover rejected re-import, rejected restoration, and truthful owner-facing copy.
 
-## Validation required
-- Full Node 22 build and regression suite.
-- Rejected imported guide can be restored to draft through recent actions.
-- Rejected guide with unchanged source fingerprint can be imported again.
-- UI distinguishes Published · can undo from Rejected · can restore.
-- No temporary workflow, package lock, duplicated runtime, or conflicting code remains.
-- Cloudflare deploys the exact cleaned head.
-- Authenticated Samsung and Chrome tests confirm taps register, progress remains visible, undo works, and re-import recreates corrected course drafts.
+## Validation
+- Permanent `Verify SniperPlug` workflow passed on cleaned head `e9b91eb18dd6fb336b89e1681b885f79ff6ab977`.
+- Full Node 22 build and regression suite passed.
+- Temporary apply workflows and package-lock artifacts are absent.
+- PR remains draft and mergeable.
+
+## Acceptance remaining
+- Confirm Cloudflare serves `20260730.7` assets.
+- In Samsung Browser and Chrome, restore one rejected imported guide and re-import one rejected Travel Hacking lesson.
+- Confirm each tap immediately shows pressed/busy/progress feedback and duplicate taps do not start duplicate work.
+- Confirm the corrected course draft no longer contains the obsolete R2 hosted-video warning and opens the adaptive player.
 
 ## Backlog
-None. Stay on this task until Definition of Done passes.
-
-Validation trigger: 2026-07-30T04:00Z
+None. Stay on this task until authenticated acceptance passes.
