@@ -1,33 +1,33 @@
 # Active Task
 
 ## Task
-Repair the live Cloudflare Pages Whop importer and Control Center so rejected or manually removed imports can be restored/re-imported, old media errors are replaced, every async action gives immediate persistent feedback, and Samsung Browser follows the same reliable interaction path as Chrome.
+Repair the live Cloudflare Pages Whop importer and Control Center so rejected or manually removed imported guides can be restored or re-imported, Undo accurately reflects every reversible state, Samsung Browser receives the current runtime, and all prior course-video, loading-feedback, publishing, security, and hard-free safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`, draft PR #2. Do not merge until exact-head CI, Cloudflare deployment, conflict inspection, and authenticated Samsung Browser acceptance pass.
+Active on `agent/whop-guide-importer`, draft PR #2. Backend rejected-guide re-import and restore logic is present, but the Control Center still labels every reversible action as Published and describes Undo as bulk-publication-only. A validated patch is being run to align the UI, permanent tests, and browser asset version. Do not merge until exact-head CI, temporary workflow cleanup, Cloudflare deployment, conflict inspection, and authenticated Samsung/Chrome acceptance pass.
 
-## Root causes
-- Rejected imported guides keep their source row. The importer checked matching fingerprints before checking `status = rejected`, so re-import returned `unchanged` and never rebuilt the guide.
-- Recent-action Undo only accepted currently published bulk results. Rejected imported guides were invisible and could not be restored.
-- Busy state was attached only to the original button node. A rerender could replace that node while the request was active, removing visible feedback and permitting another tap.
-- Press feedback was cleared after two animation frames instead of following the pointer lifecycle, which is less reliable in Samsung Browser.
-- Chrome appeared better partly because it loaded the newest assets in a fresh browser cache.
+## Findings
+- Rejected imported rows remain in D1 so restoration is possible.
+- The importer previously treated a rejected row with an unchanged fingerprint as unchanged; it now bypasses that shortcut when status is rejected.
+- The recent-actions backend now includes rejected imported guides from the last 48 hours and can return published or rejected guides to draft.
+- The browser still says Published for rejected reversible items and only describes bulk publications.
+- Samsung Browser had older immutable Control Center assets while a first Chrome load received the current runtime.
+- Whop tiles are Experiences powered by apps; discovery remains experience-first and app-aware rather than treating those modules as files.
 
 ## Changes in validation
-- Rejected guides bypass the unchanged fingerprint shortcut and are rebuilt as drafts.
-- Recent rejected imported guides are included in the 48-hour reversible history and restore to draft with their source decision reset to pending.
-- Async operations use stable operation keys, paint feedback before network work, and reject duplicate taps even if a card rerenders.
-- Pointer press feedback uses capture-phase pointerdown/pointerup/pointercancel handling.
-- Control Center assets receive a new immutable version.
+- Truthful Restore recent imported changes copy and status labels.
+- Permanent regression checks for rejected-guide re-import and rejected-guide restoration.
+- Fresh version for every Control Center asset.
+- Preserve immediate pointer feedback, persistent operation progress, and duplicate-submit locks.
 
 ## Validation required
 - Full Node 22 build and regression suite.
-- Rejected-guide re-import test.
-- Undo published and rejected actions.
-- No duplicate operation submission after node replacement.
-- Existing Whop video, R2, publishing, discovery, responsive, and security regressions pass.
-- Temporary write workflow removed after validated commit.
-- Cloudflare deploys exact cleaned head.
+- Rejected imported guide can be restored to draft through recent actions.
+- Rejected guide with unchanged source fingerprint can be imported again.
+- UI distinguishes Published · can undo from Rejected · can restore.
+- No temporary workflow, package lock, duplicated runtime, or conflicting code remains.
+- Cloudflare deploys the exact cleaned head.
+- Authenticated Samsung and Chrome tests confirm taps register, progress remains visible, undo works, and re-import recreates corrected course drafts.
 
 ## Backlog
 None. Stay on this task until Definition of Done passes.
