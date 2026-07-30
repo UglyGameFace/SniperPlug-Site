@@ -1,30 +1,33 @@
-name: Verify SniperPlug
+name: Package SniperPlug source
 
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, agent/whop-guide-importer]
 
 permissions:
   contents: read
 
 concurrency:
-  group: verify-sniperplug-${{ github.ref }}
+  group: package-sniperplug-source
   cancel-in-progress: true
 
 jobs:
-  build:
+  package:
+    if: github.head_ref == 'agent/whop-guide-importer'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out repository
+      - name: Check out active branch
         uses: actions/checkout@v4
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - name: Install dependencies
-        run: npm install --ignore-scripts
-      - name: Run full build and regression suite
-        run: npm run build
+          ref: agent/whop-guide-importer
+      - name: Upload current source
+        uses: actions/upload-artifact@v4
+        with:
+          name: sniperplug-course-video-base-${{ github.sha }}
+          path: |
+            .
+            !.git
+            !node_modules
+          include-hidden-files: true
+          retention-days: 1
