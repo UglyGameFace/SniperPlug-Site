@@ -6,12 +6,12 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Guide Control Center | SniperPlug</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.8">
-  <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.8">
-  <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.8">
-  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260730.8">
-  <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.8">
-  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.8">
+  <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -89,9 +89,9 @@
                 <div><strong data-bulk-job-title>Bulk job</strong><span data-bulk-job-summary></span></div>
                 <div class="button-row"><button class="btn primary" type="button" data-resume-bulk-job>Resume</button><button class="btn ghost" type="button" data-cancel-bulk-job>Cancel job</button></div>
               </div>
-              <section class="recent-actions" data-recent-actions>
-                <header><div><h3>Restore recent imported changes</h3><p>For 48 hours, return published guides or rejected imported guides to private drafts. Restore never deletes the content.</p></div></header>
-                <div class="recent-actions-controls"><button class="btn ghost" type="button" data-select-recent-actions>Select all reversible</button><button class="btn ghost" type="button" data-clear-recent-actions>Clear</button><button class="decision disapprove" type="button" data-undo-selected-actions disabled>Undo selected</button><button class="decision disapprove" type="button" data-undo-all-actions disabled>Undo all recent</button></div>
+              <section class="recent-actions" data-recent-actions data-history-collapsed="true">
+                <header><div><h3>Removed Whop imports</h3><p>Rejected imported guides stay private for 48 hours. Keep this list collapsed unless you need to restore or clear them.</p></div></header>
+                <div class="recent-actions-controls"><button class="btn ghost" type="button" data-select-recent-actions>Select all reversible</button><button class="btn ghost" type="button" data-clear-recent-actions>Clear selection</button><button class="decision disapprove" type="button" data-undo-selected-actions disabled>Restore selected</button><button class="decision disapprove" type="button" data-undo-all-actions disabled>Restore all recent</button></div>
                 <div class="recent-action-list" data-recent-action-list></div>
                 <p class="bulk-progress" data-recent-action-status role="status" aria-live="polite"></p>
               </section>
@@ -170,15 +170,16 @@
     </section>
   </main>
 
-  <div class="preview-backdrop" data-post-preview hidden>
+  <div class="preview-backdrop" data-post-preview hidden aria-hidden="true">
     <section class="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="post-preview-title">
-      <header><h2 id="post-preview-title" data-preview-title>Content preview</h2><button type="button" data-close-preview aria-label="Close">×</button></header>
+      <header><h2 id="post-preview-title" data-preview-title>Content preview</h2><button type="button" data-close-preview aria-label="Close preview">×</button></header>
       <p data-preview-meta></p><div class="preview-content" data-preview-body></div><footer><button class="btn ghost" type="button" data-close-preview>Close</button></footer>
     </section>
   </div>
 
-  <script src="/assets/js/control-center-network-guard.js?v=20260730.11" defer></script>
-  <script src="/assets/js/control-center-v2.js?v=20260730.11" defer></script>
-  <script src="/assets/js/control-center-lifecycle.js?v=20260730.11" defer></script>
+  <script src="/assets/js/control-center-network-guard.js?v=20260730.14" defer></script>
+  <script src="/assets/js/control-center-v2.js?v=20260730.14" defer></script>
+  <script src="/assets/js/control-center-lifecycle.js?v=20260730.14" defer></script>
+  <script src="/assets/js/control-center-integrity-fix.js?v=20260730.14" defer></script>
 </body>
 </html>
