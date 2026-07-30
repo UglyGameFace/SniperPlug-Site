@@ -28,3 +28,13 @@ jobs:
         run: npm install --ignore-scripts
       - name: Run full build and regression suite
         run: npm run build
+      - name: Package current source for active-task implementation
+        uses: actions/upload-artifact@v4
+        with:
+          name: sniperplug-hard-free-source-${{ github.sha }}
+          path: |
+            .
+            !.git
+            !node_modules
+          include-hidden-files: true
+          retention-days: 1
