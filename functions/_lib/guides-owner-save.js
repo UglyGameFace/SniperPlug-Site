@@ -3,6 +3,7 @@ import { restoreGuideSnapshot, snapshotGuide } from './guide-snapshots.js';
 import { saveGuideDraft as saveGuideDraftWithCleanup } from './guides-media.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
+import { assertGuideNotRecovering } from './recovery-leases.js';
 
 function submittedStateMatches(row, input, preparedBody) {
   if (!row || row.status !== 'draft') return false;
@@ -14,6 +15,7 @@ function submittedStateMatches(row, input, preparedBody) {
 }
 
 export async function saveGuideDraft(env, id, input) {
+  await assertGuideNotRecovering(env, id);
   const snapshot = await snapshotGuide(env, id);
   if (!snapshot) throw new HttpError(404, 'Guide draft not found.');
   const videoSnapshot = await snapshotCourseVideos(env, id);
