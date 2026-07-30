@@ -33,6 +33,14 @@ jobs:
             "https://api.github.com/repos/${{ github.repository }}/git/blobs/2babf358d405ec8d332350d16fac3d44751629a9" \
             | jq -r .content | base64 -d > /tmp/apply_video_review.py
           python /tmp/apply_video_review.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/audit-control-performance-media.mjs')
+          text = path.read_text()
+          text = text.replace("runtime.includes('requestIdleCallback') && runtime.includes('appendChunk')", "runtime.includes('requestIdleCallback') && runtime.includes('appendRemaining') && runtime.includes('appendCount(Math.min(12')")
+          text = text.replace("runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize')", "runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize') && !/function createPostCard[\\s\\S]*?contentVisibility/.test(runtime)")
+          path.write_text(text)
+          PY
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
