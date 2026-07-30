@@ -27,6 +27,17 @@ async function ensureBulkTable(db) {
   `).run();
 }
 
+async function ensureDismissalTable(db) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS recent_action_dismissals (
+      admin_session_id TEXT NOT NULL,
+      action_id TEXT NOT NULL,
+      dismissed_at TEXT NOT NULL,
+      PRIMARY KEY (admin_session_id, action_id)
+    )
+  `).run();
+}
+
 function actionId(jobId, guideId) {
   return `${jobId}:${guideId}`;
 }
@@ -52,6 +63,7 @@ async function recentJobs(db) {
 export async function listRecentActions(env, admin) {
   if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
   const db = requireDatabase(env);
+  await ensureDismissalTable(db);
   const jobs = await recentJobs(db);
   const references = [];
   for (const job of jobs) {
@@ -88,7 +100,12 @@ export async function listRecentActions(env, admin) {
       guideId: Number(guide.id),
     });
   }
-  const unique = new Map(references.map((item) => [item.actionId, item]));
+  const dismissedRows = await db.prepare(`
+    SELECT action_id FROM recent_action_dismissals
+    WHERE admin_session_id = ?
+  `).bind(OWNER_KEY).all();
+  const dismissed = new Set((dismissedRows.results || []).map((row) => String(row.action_id)));
+  const unique = new Map(references.filter((item) => !dismissed.has(item.actionId)).map((item) => [item.actionId, item]));
   const values = [...unique.values()].slice(0, MAX_ACTIONS);
   if (!values.length) return { windowHours: HISTORY_HOURS, actions: [], reversibleCount: 0 };
   const ids = [...new Set(values.map((item) => item.guideId))];
@@ -123,6 +140,25 @@ export async function listRecentActions(env, admin) {
     actions,
     reversibleCount: actions.filter((item) => item.reversible).length,
   };
+}
+
+export async function dismissRecentActions(env, admin, input = {}) {
+  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const db = requireDatabase(env);
+  await ensureDismissalTable(db);
+  const history = await listRecentActions(env, admin);
+  const requested = new Set((Array.isArray(input.actionIds) ? input.actionIds : []).map((value) => String(value || '').trim()).filter(Boolean));
+  const allRejected = input.allRejected === true;
+  const selected = history.actions.filter((item) => (allRejected && item.status === 'rejected') || requested.has(item.actionId));
+  if (!selected.length) return { dismissed: 0, history };
+  if (selected.length > MAX_ACTIONS) throw new HttpError(422, `Clear at most ${MAX_ACTIONS} history rows at once.`);
+  const now = new Date().toISOString();
+  await db.batch(selected.map((item) => db.prepare(`
+    INSERT INTO recent_action_dismissals (admin_session_id, action_id, dismissed_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(admin_session_id, action_id) DO UPDATE SET dismissed_at = excluded.dismissed_at
+  `).bind(OWNER_KEY, item.actionId, now)));
+  return { dismissed: selected.length, history: await listRecentActions(env, admin) };
 }
 
 export async function undoRecentActions(env, admin, input = {}) {
