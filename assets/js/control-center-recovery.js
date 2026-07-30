@@ -25,8 +25,9 @@
   const stateCopy = panel.querySelector('[data-recovery-state]');
   const list = panel.querySelector('[data-recovery-list]');
   const rights = panel.querySelector('[data-recovery-rights]');
-  const refresh = panel.querySelector('[data-recovery-refresh]');
   const pending = new Set();
+  const activeControllers = new Set();
+  let loadSequence = 0;
 
   const progress = document.createElement('div');
   progress.className = 'recovery-operation';
@@ -43,22 +44,36 @@
     if (strong) strong.textContent = label;
   }
 
-  async function request(url, options = {}) {
-    const response = await fetch(url, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      ...options,
-      headers: {
-        accept: 'application/json',
-        ...(options.body ? { 'content-type': 'application/json' } : {}),
-        ...(options.headers || {}),
-      },
-    });
-    const text = await response.text();
-    let body = {};
-    try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
-    if (!response.ok) throw new Error(body.error || `Recovery request failed (${response.status}).`);
-    return body;
+  async function request(url, options = {}, timeoutMs = 30_000) {
+    const controller = new AbortController();
+    activeControllers.add(controller);
+    const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+    try {
+      const response = await fetch(url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        ...options,
+        signal: controller.signal,
+        headers: {
+          accept: 'application/json',
+          ...(options.body ? { 'content-type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+      const text = await response.text();
+      let body = {};
+      try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
+      if (!response.ok) throw new Error(body.error || `Recovery request failed (${response.status}).`);
+      return body;
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error('The recovery request took too long or the page was closed. Refresh the removed-item list before trying again; the server-side lease prevents duplicate rebuilds.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      activeControllers.delete(controller);
+    }
   }
 
   function render(items) {
@@ -97,6 +112,7 @@
   }
 
   async function load(button = null) {
+    const sequence = ++loadSequence;
     if (button instanceof HTMLButtonElement) {
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
@@ -106,8 +122,10 @@
     stateCopy.dataset.state = 'working';
     try {
       const output = await request('/api/guide-repair');
+      if (sequence !== loadSequence) return;
       render(output.removed || []);
     } catch (error) {
+      if (sequence !== loadSequence) return;
       stateCopy.textContent = error.message;
       stateCopy.dataset.state = 'error';
     } finally {
@@ -134,7 +152,7 @@
     button.setAttribute('aria-busy', 'true');
     button.textContent = 'Re-fetching from Whop…';
     row.dataset.busy = 'true';
-    stateCopy.textContent = 'Whop item accepted. Re-fetching content, rebuilding the draft, and restoring video/media data…';
+    stateCopy.textContent = 'Request sent. SniperPlug is locking this exact guide, re-fetching its Whop content, and rebuilding its video/media data…';
     stateCopy.dataset.state = 'working';
     setProgress(true, 'Restoring and re-importing…');
 
@@ -142,7 +160,7 @@
       const output = await request('/api/guide-repair', {
         method: 'POST',
         body: JSON.stringify({ guideId, rightsConfirmed: true }),
-      });
+      }, 180_000);
       row.remove();
       stateCopy.textContent = `${output.guide?.title || 'Guide'} returned to the private draft queue with fresh Whop content and media data.`;
       stateCopy.dataset.state = 'ok';
@@ -154,7 +172,7 @@
       stateCopy.dataset.state = 'error';
       button.disabled = false;
       button.removeAttribute('aria-busy');
-      button.textContent = 'Retry restore & re-import';
+      button.textContent = 'Refresh status before retrying';
       delete row.dataset.busy;
     } finally {
       pending.delete(guideId);
@@ -185,11 +203,13 @@
     }
   });
 
-  // Samsung Internet benefits from an explicit non-delayed tap policy.
   for (const element of document.querySelectorAll('button,.btn,[data-action]')) {
     if (element instanceof HTMLElement) element.style.touchAction = 'manipulation';
   }
 
+  window.addEventListener('pagehide', () => {
+    for (const controller of activeControllers) controller.abort('pagehide');
+  }, { once: true });
   root.addEventListener('sniperplug:dashboard-refreshed', () => load());
   load();
 })();
