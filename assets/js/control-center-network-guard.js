@@ -5,6 +5,8 @@
   const nativeFetch = window.fetch.bind(window);
   const READ_TIMEOUT_MS = 45_000;
   const WRITE_TIMEOUT_MS = 120_000;
+  const guideVersions = new Map();
+  window.SniperPlugGuideVersions = guideVersions;
 
   function requestDetails(input, options = {}) {
     const request = input instanceof Request ? input : null;
@@ -12,6 +14,42 @@
     const method = String(options.method || request?.method || 'GET').toUpperCase();
     const signal = options.signal || request?.signal || null;
     return { url, method, signal };
+  }
+
+  function controlAction(url) {
+    return url.pathname === '/api/control' ? String(url.searchParams.get('action') || '') : '';
+  }
+
+  function rememberGuide(guide) {
+    const id = Number(guide?.id);
+    const updatedAt = String(guide?.updatedAt || '').trim();
+    if (Number.isFinite(id) && id > 0 && updatedAt) guideVersions.set(id, updatedAt);
+  }
+
+  function rememberPayload(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    rememberGuide(payload.guide);
+    for (const guide of Array.isArray(payload.guides) ? payload.guides : []) rememberGuide(guide);
+  }
+
+  function versionedOptions(details, options) {
+    const action = controlAction(details.url);
+    if (details.method !== 'POST' || !['guide-save', 'guide-status'].includes(action) || typeof options.body !== 'string') return options;
+    try {
+      const body = JSON.parse(options.body);
+      const id = Number(body?.id);
+      if (!Number.isFinite(id) || id <= 0 || body.expectedUpdatedAt) return options;
+      const expectedUpdatedAt = guideVersions.get(id);
+      if (!expectedUpdatedAt) return options;
+      return { ...options, body: JSON.stringify({ ...body, expectedUpdatedAt }) };
+    } catch {
+      return options;
+    }
+  }
+
+  async function rememberResponse(response) {
+    if (!response?.ok || !String(response.headers.get('content-type') || '').includes('application/json')) return;
+    try { rememberPayload(await response.clone().json()); } catch { /* malformed or streaming JSON stays owned by the caller */ }
   }
 
   function timeoutResponse(method, timeoutMs) {
@@ -40,6 +78,7 @@
       return nativeFetch(input, options);
     }
 
+    const guardedOptions = versionedOptions(details, options);
     const timeoutMs = details.method === 'GET' || details.method === 'HEAD' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
     const controller = new AbortController();
     let timedOut = false;
@@ -57,7 +96,9 @@
     }, timeoutMs);
 
     try {
-      return await nativeFetch(input, { ...options, signal: controller.signal });
+      const response = await nativeFetch(input, { ...guardedOptions, signal: controller.signal });
+      await rememberResponse(response);
+      return response;
     } catch (error) {
       if (timedOut && !callerAborted) return timeoutResponse(details.method, timeoutMs);
       throw error;
