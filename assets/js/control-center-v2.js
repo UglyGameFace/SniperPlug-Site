@@ -144,6 +144,7 @@
     recentSelection: new Set(),
     previewPostKey: null,
     activeOperations: 0,
+    activeOperationKeys: new Set(),
   };
 
   const operationBar = document.createElement('div');
@@ -257,13 +258,22 @@
     root.setAttribute('aria-busy', state.activeOperations > 0 ? 'true' : 'false');
   }
 
+  function operationKey(button, label) {
+    if (!(button instanceof HTMLElement)) return String(label || 'operation');
+    return [button.dataset.action, button.dataset.guideId, button.dataset.experienceId, button.getAttribute('data-logout') !== null ? 'logout' : '', label].filter(Boolean).join(':') || 'operation';
+  }
+
   async function withButton(button, label, work) {
-    if (button instanceof HTMLButtonElement && button.getAttribute('aria-busy') === 'true') return;
+    const key = operationKey(button, label);
+    if (state.activeOperationKeys.has(key) || (button instanceof HTMLButtonElement && button.getAttribute('aria-busy') === 'true')) return;
+    state.activeOperationKeys.add(key);
     setWorking(button, true, label);
     setOperationWorking(true, label);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     try {
       return await work();
     } finally {
+      state.activeOperationKeys.delete(key);
       setWorking(button, false);
       setOperationWorking(false);
       syncButtons();
@@ -1698,10 +1708,16 @@
 
   root.addEventListener('pointerdown', (event) => {
     const target = event.target instanceof Element ? event.target.closest('button,.btn,[data-action]') : null;
-    if (!target || target.hasAttribute('disabled')) return;
+    if (!target || target.hasAttribute('disabled') || target.getAttribute('aria-busy') === 'true') return;
     target.dataset.pressed = 'true';
-    requestAnimationFrame(() => requestAnimationFrame(() => { delete target.dataset.pressed; }));
-  }, { passive: true });
+  }, { passive: true, capture: true });
+  const releasePressed = (event) => {
+    const target = event.target instanceof Element ? event.target.closest('button,.btn,[data-action]') : null;
+    if (!target) return;
+    requestAnimationFrame(() => { delete target.dataset.pressed; });
+  };
+  root.addEventListener('pointerup', releasePressed, { passive: true, capture: true });
+  root.addEventListener('pointercancel', releasePressed, { passive: true, capture: true });
 
   root.addEventListener('click', async (event) => {
     const target = event.target instanceof Element ? event.target : null;

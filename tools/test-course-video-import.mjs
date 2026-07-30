@@ -103,6 +103,7 @@ assert.ok(whopItems.includes('duration_seconds:'), 'Course review cards must rec
 assert.ok(guideImport.includes('_mediaContext: item._mediaContext || null'), 'The exact course asset was not carried to media enhancement.');
 assert.ok(guideMedia.includes("['created-draft', 'updated-draft', 'unchanged']"), 'Existing unchanged course drafts would not be repaired after rescanning.');
 assert.ok(guideImport.includes("attachment?.role !== 'hosted-video'"), 'Hosted course videos must bypass generic R2 attachment copying.');
+assert.ok(guideImport.includes("existing.status !== 'rejected'"), 'Rejected guides would still be incorrectly treated as unchanged on re-import.');
 assert.ok(guideMedia.includes("['hosted-video-player', 'hosted-video-download', 'hosted-video-archive']"), 'Transient refreshes must not preserve obsolete raw hosted-video R2 warnings.');
 assert.ok(guideMedia.includes('const { _mediaContext, ...publicResult }'), 'Signed playback context must be stripped before API results leave the server.');
 

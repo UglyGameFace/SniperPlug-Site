@@ -69,6 +69,25 @@ export async function listRecentActions(env, admin) {
       }
     }
   }
+  const cutoff = new Date(Date.now() - HISTORY_HOURS * 3_600_000).toISOString();
+  const rejected = await db.prepare(`
+    SELECT id, source_key, source_group, updated_at
+    FROM guides
+    WHERE status = 'rejected' AND source_key IS NOT NULL AND updated_at >= ?
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).bind(cutoff, MAX_ACTIONS).all();
+  for (const guide of rejected.results || []) {
+    references.push({
+      actionId: `manual-reject:${guide.id}`,
+      jobId: null,
+      jobStatus: 'manual',
+      jobCreatedAt: guide.updated_at,
+      sourceId: null,
+      sourceTitle: guide.source_group || 'Imported Whop source',
+      guideId: Number(guide.id),
+    });
+  }
   const unique = new Map(references.map((item) => [item.actionId, item]));
   const values = [...unique.values()].slice(0, MAX_ACTIONS);
   if (!values.length) return { windowHours: HISTORY_HOURS, actions: [], reversibleCount: 0 };
@@ -96,7 +115,7 @@ export async function listRecentActions(env, admin) {
       sourceGroup: guide.source_group,
       publishedAt: guide.published_at,
       updatedAt: guide.updated_at,
-      reversible: guide.status === 'published',
+      reversible: ['published', 'rejected'].includes(guide.status),
     };
   }).filter(Boolean).sort((a, b) => String(b.publishedAt || b.updatedAt || '').localeCompare(String(a.publishedAt || a.updatedAt || '')));
   return {
@@ -113,7 +132,7 @@ export async function undoRecentActions(env, admin, input = {}) {
   const requested = new Set((Array.isArray(input.actionIds) ? input.actionIds : []).map((value) => String(value || '').trim()).filter(Boolean));
   const all = input.all === true;
   const selected = history.actions.filter((item) => item.reversible && (all || requested.has(item.actionId)));
-  if (!selected.length) throw new HttpError(422, all ? 'No published bulk actions from the last 48 hours remain to undo.' : 'Select at least one published action to undo.');
+  if (!selected.length) throw new HttpError(422, all ? 'No published or rejected imported actions from the last 48 hours remain to undo.' : 'Select at least one published or rejected action to undo.');
   if (selected.length > MAX_ACTIONS) throw new HttpError(422, `Undo at most ${MAX_ACTIONS} actions at once.`);
 
   const now = new Date().toISOString();
@@ -124,8 +143,8 @@ export async function undoRecentActions(env, admin, input = {}) {
     statements.push(db.prepare(`
       UPDATE guides
       SET status = 'draft', published_at = NULL, updated_at = ?, integrity_json = ?
-      WHERE id = ? AND status = 'published'
-    `).bind(now, JSON.stringify({ ...integrity, undone: true, undoneAt: now, undoReason: 'Owner reversed a recent bulk-publish action.' }), item.guideId));
+      WHERE id = ? AND status IN ('published', 'rejected')
+    `).bind(now, JSON.stringify({ ...integrity, undone: true, undoneAt: now, undoReason: item.status === 'rejected' ? 'Owner restored a rejected imported guide.' : 'Owner reversed a recent bulk-publish action.' }), item.guideId));
     if (item.sourceKey) {
       statements.push(db.prepare(`
         UPDATE whop_posts SET decision = 'pending', decision_updated_at = NULL

@@ -183,3 +183,6 @@ button[data-pressed="true"],.btn[data-pressed="true"]{transform:scale(.985)}
 button[aria-busy=true],.btn[aria-busy=true]{position:relative;cursor:wait;opacity:.82;pointer-events:none}
 button[aria-busy=true]::after,.btn[aria-busy=true]::after{content:'';display:inline-block;width:.82em;height:.82em;margin-left:.55em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-.1em;animation:control-spin .65s linear infinite}
 @keyframes control-spin{to{transform:rotate(360deg)}}
+
+[data-pressed=true]{transform:scale(.975)!important;filter:brightness(1.12);transition:none!important}
+.control-operation-bar{touch-action:none}

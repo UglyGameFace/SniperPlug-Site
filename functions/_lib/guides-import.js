@@ -136,7 +136,7 @@ export async function importApprovedPosts(env, whopSession, input) {
     }));
 
     const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
-    if (existing?.source_fingerprint === sourceFingerprint) {
+    if (existing?.source_fingerprint === sourceFingerprint && existing.status !== 'rejected') {
       results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug, _mediaContext: item._mediaContext || null });
       continue;
     }
