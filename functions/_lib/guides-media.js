@@ -20,7 +20,8 @@ import {
   registerCourseVideo,
   removeOtherCourseVideos,
 } from './course-video.js';
-import { requireDatabase } from './http.js';
+import { acquireImportLeases, releaseImportLeases, renewImportLeases } from './import-leases.js';
+import { HttpError, requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
 import { pruneDetachedGuideMedia } from './media-storage.js';
@@ -220,6 +221,8 @@ async function enhanceGuideMedia(env, whopSession, result) {
   const db = requireDatabase(env);
   const row = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(result.sourceKey).first();
   if (!row) return result;
+  const expectedUpdatedAt = String(row.updated_at || '');
+  const expectedFingerprint = row.source_fingerprint == null ? null : String(row.source_fingerprint);
   const attachmentState = safeJson(row.attachment_json, {});
   const savedFiles = Array.isArray(attachmentState.files) ? attachmentState.files : [];
   const supplementResult = await courseSupplementFiles(env, whopSession, row, result._mediaContext);
@@ -259,9 +262,9 @@ async function enhanceGuideMedia(env, whopSession, result) {
   const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
   const currentIntegrity = safeJson(row.integrity_json, {});
   const updatedAt = new Date().toISOString();
-  await db.prepare(`
+  const write = await db.prepare(`
     UPDATE guides SET body_markdown = ?, attachment_json = ?, integrity_json = ?, updated_at = ?
-    WHERE id = ?
+    WHERE id = ? AND updated_at = ? AND source_fingerprint IS ?
   `).bind(
     prepared.body,
     JSON.stringify({
@@ -273,23 +276,38 @@ async function enhanceGuideMedia(env, whopSession, result) {
     JSON.stringify({ ...currentIntegrity, ...integrity, mediaMirrored: mirroredMedia, mediaReviewCount: reviewCount }),
     updatedAt,
     row.id,
+    expectedUpdatedAt,
+    expectedFingerprint,
   ).run();
+  if (Number(write.meta?.changes || 0) !== 1) {
+    throw new HttpError(409, 'This guide changed while SniperPlug was preparing its media. The newer saved version was preserved; refresh before retrying.', {
+      code: 'guide_media_stale',
+      guideId: Number(row.id),
+      sourceKey: result.sourceKey,
+    });
+  }
 
   return { ...result, mirroredMedia, attachmentReviewCount: reviewCount };
 }
 
 export async function importApprovedPosts(env, whopSession, input) {
-  const output = await importBase(env, whopSession, input);
-  const results = [];
-  for (const result of output.results || []) {
-    const enhanced = await enhanceGuideMedia(env, whopSession, result);
-    const { _mediaContext, ...publicResult } = enhanced || {};
-    results.push(publicResult);
+  const lease = await acquireImportLeases(env, input?.sourceKeys);
+  try {
+    const output = await importBase(env, whopSession, input);
+    const results = [];
+    for (const result of output.results || []) {
+      await renewImportLeases(env, lease);
+      const enhanced = await enhanceGuideMedia(env, whopSession, result);
+      const { _mediaContext, ...publicResult } = enhanced || {};
+      results.push(publicResult);
+    }
+    return {
+      ...output,
+      results,
+      mirroredMedia: results.reduce((sum, result) => sum + Number(result.mirroredMedia || 0), 0),
+      attachmentReviews: results.reduce((sum, result) => sum + Number(result.attachmentReviewCount || 0), 0),
+    };
+  } finally {
+    await releaseImportLeases(env, lease).catch(() => null);
   }
-  return {
-    ...output,
-    results,
-    mirroredMedia: results.reduce((sum, result) => sum + Number(result.mirroredMedia || 0), 0),
-    attachmentReviews: results.reduce((sum, result) => sum + Number(result.attachmentReviewCount || 0), 0),
-  };
 }
