@@ -30,10 +30,19 @@ jobs:
           set -euo pipefail
           curl -fsSL \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github.raw+json" \
+            -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/git/blobs/0b8cc529a57ed01b2dea0385e3867252fb08a572" \
-            > /tmp/sniperplug.patch.bz2.b64
-          base64 -d /tmp/sniperplug.patch.bz2.b64 | bunzip2 > /tmp/sniperplug.patch
+            > /tmp/sniperplug.blob.json
+          python - <<'PY'
+          import base64
+          import bz2
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('/tmp/sniperplug.blob.json').read_text())
+          encoded_text = base64.b64decode(payload['content']).decode('ascii')
+          compressed = base64.b64decode(encoded_text)
+          Path('/tmp/sniperplug.patch').write_bytes(bz2.decompress(compressed))
+          PY
           git apply --check /tmp/sniperplug.patch
           git apply /tmp/sniperplug.patch
           rm -f .hard-free-trigger
