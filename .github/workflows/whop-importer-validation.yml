@@ -1,66 +1,25 @@
-name: Apply and verify SniperPlug video review fix
+name: Verify SniperPlug
 
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main, agent/whop-guide-importer]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: apply-sniperplug-video-review-fix
-  cancel-in-progress: false
+  group: verify-sniperplug-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
-    if: github.head_ref == 'agent/whop-guide-importer'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Check out active branch
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: agent/whop-guide-importer
-          fetch-depth: 0
-      - name: Apply exact video review implementation
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          curl -fsSL \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/git/blobs/2babf358d405ec8d332350d16fac3d44751629a9" \
-            | jq -r .content | base64 -d > /tmp/apply_video_review.py
-          python /tmp/apply_video_review.py
-          python - <<'PY'
-          from pathlib import Path
-
-          performance = Path('tools/audit-control-performance-media.mjs')
-          text = performance.read_text()
-          text = text.replace("runtime.includes('requestIdleCallback') && runtime.includes('appendChunk')", "runtime.includes('requestIdleCallback') && runtime.includes('appendRemaining') && runtime.includes('appendCount(Math.min(12')")
-          old = "assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen cards are still fully laid out and painted.');"
-          new = "assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen source and group cards lost their layout optimization.');\nassert.ok(!runtime.includes(\"card.dataset.type = post.contentType || 'forum';\\n    card.style.contentVisibility\"), 'Post review cards still use unstable mobile content-visibility.');"
-          if old not in text:
-              raise SystemExit('Expected performance assertion was not found.')
-          performance.write_text(text.replace(old, new))
-
-          quality = Path('tools/audit-import-quality-recovery.mjs')
-          text = quality.read_text()
-          old = "assert.ok(!items.includes('mapConcurrent'), 'Course scanning still fans out detail requests.');"
-          new = "assert.ok(items.includes('COURSE_DETAIL_CONCURRENCY = 4') && items.includes('mapConcurrent'), 'Course media detail reads are not strictly bounded.');"
-          if old not in text:
-              raise SystemExit('Expected course scan assertion was not found.')
-          quality.write_text(text.replace(old, new))
-
-          video_test = Path('tools/test-course-video-import.mjs')
-          text = video_test.read_text()
-          old = "assert.ok(whopItems.includes(\"role: 'course-thumbnail'\"), 'Course review cards must receive lesson thumbnails when Whop exposes them.');"
-          new = "assert.ok(whopItems.includes(\"fileInput(lesson?.thumbnail, 'course-thumbnail')\"), 'Course review cards must receive lesson thumbnails when Whop exposes them.');"
-          if old not in text:
-              raise SystemExit('Expected thumbnail test assertion was not found.')
-          video_test.write_text(text.replace(old, new))
-          PY
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -69,13 +28,3 @@ jobs:
         run: npm install --ignore-scripts
       - name: Run full build and regression suite
         run: npm run build
-      - name: Commit exact validated implementation
-        run: |
-          set -euo pipefail
-          rm -f package-lock.json
-          git add -A
-          git diff --cached --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Restore course video review and mobile rendering"
-          git push origin HEAD:agent/whop-guide-importer
