@@ -62,6 +62,16 @@ async function reserveGuideVersion(db, id, expectedUpdatedAt) {
   return reservation;
 }
 
+function cleanupMatchesSavedGuide(row, saved, attachments) {
+  if (!row || row.status !== 'draft') return false;
+  if (String(row.title || '') !== String(saved.title || '')) return false;
+  if (String(row.description || '') !== String(saved.description || '')) return false;
+  if (String(row.category_slug || '') !== String(saved.category || '')) return false;
+  if (String(row.body_markdown || '') !== String(saved.body || '')) return false;
+  if (Boolean(row.featured) !== Boolean(saved.featured)) return false;
+  return JSON.stringify(safeJson(row.attachment_json, {})) === JSON.stringify(attachments || {});
+}
+
 export async function saveGuideDraft(env, id, input) {
   const db = requireDatabase(env);
   const before = await db.prepare('SELECT integrity_json, updated_at FROM guides WHERE id = ?').bind(id).first();
@@ -89,9 +99,23 @@ export async function saveGuideDraft(env, id, input) {
     publishHoldReason: null,
     editedByOwnerAt: new Date().toISOString(),
   };
-  const finalizedAt = nextVersion(saved.updatedAt);
-  const finalized = await db.prepare('UPDATE guides SET integrity_json = ?, updated_at = ? WHERE id = ? AND updated_at = ?')
-    .bind(JSON.stringify(nextIntegrity), finalizedAt, id, saved.updatedAt).run();
+  const cleaned = await db.prepare(`
+    SELECT title, description, category_slug, body_markdown, status, featured, attachment_json, updated_at
+    FROM guides WHERE id = ?
+  `).bind(id).first();
+  if (!cleanupMatchesSavedGuide(cleaned, saved, attachments)) {
+    throw new HttpError(409, 'The guide changed while SniperPlug was cleaning up detached media. The newer version was preserved; refresh before editing again.', {
+      code: 'guide_save_cleanup_stale',
+      guideId: Number(id),
+      currentUpdatedAt: cleaned?.updated_at || null,
+      currentStatus: cleaned?.status || null,
+    });
+  }
+  const finalizedAt = nextVersion(cleaned.updated_at);
+  const finalized = await db.prepare(`
+    UPDATE guides SET integrity_json = ?, updated_at = ?
+    WHERE id = ? AND updated_at = ? AND status = 'draft'
+  `).bind(JSON.stringify(nextIntegrity), finalizedAt, id, cleaned.updated_at).run();
   if (Number(finalized.meta?.changes || 0) !== 1) {
     throw new HttpError(409, 'The guide changed while SniperPlug was finishing its save. The newer version was preserved; refresh before editing again.', {
       code: 'guide_save_finalize_stale',
