@@ -45,7 +45,7 @@ const rendition = await findMuxStaticRendition(asset);
 assert.equal(rendition?.filename, 'capped-1080p.mp4');
 assert.equal(rendition?.size, 123456789);
 assert.ok(rendition?.url.includes('token=header.payload.signature'));
-assert.ok(probes.length >= 2, 'Static rendition fallbacks were not checked.');
+assert.equal(probes.length, 6, 'Every preferred static rendition should be checked inside one bounded parallel window.');
 assert.ok(probes.every((probe) => probe.options.method === 'GET'), 'Static Mux renditions must be probed with GET, not HEAD.');
 assert.ok(probes.every((probe) => probe.options.headers.range === 'bytes=0-0'), 'Static rendition probes must request only one byte.');
 
@@ -86,13 +86,19 @@ assert.equal(detected, 'forum', 'Renamed native content was not recovered throug
 assert.deepEqual(apiCalls.slice(0, 2), ['/api/v1/courses', '/api/v1/forum_posts']);
 
 const route = read('functions/course-video/[key].js');
+const courseVideo = read('functions/_lib/course-video.js');
 const migration = read('migrations/0004_course_video_sources.sql');
 const guideImport = read('functions/_lib/guides-import.js');
 const guideMedia = read('functions/_lib/guides-media.js');
 const whopItems = read('functions/_lib/whop-items.js');
-assert.ok(route.includes('course_lessons/${encodeURIComponent(source.lesson_id)}'));
+assert.ok(route.includes('retrieveLessonWithRefresh'));
+assert.ok(route.includes('expireSelectedOwnerSession'));
+assert.ok(route.includes('error.status !== 401'));
+assert.ok(route.includes('Open the Control Center and reconnect Whop'));
 assert.ok(route.includes('findMuxStaticRendition(asset)'));
 assert.ok(route.includes('playerPage(playerUrl, source.title)'));
+assert.ok(courseVideo.includes('Promise.all('), 'Static rendition probes must not run sequentially.');
+assert.ok(courseVideo.includes('STATIC_PROBE_TIMEOUT_MS = 8_000'), 'Static rendition probing must remain bounded to one short window.');
 assert.ok(!migration.includes('signed_video_playback_token'));
 assert.ok(!migration.includes('playback_id TEXT'), 'Expiring or reusable playback credentials must not be persisted in D1.');
 assert.ok(whopItems.includes('_mediaContext: mediaContext'), 'Exact course media must stay available in-memory for the media enhancer.');
@@ -110,7 +116,8 @@ assert.ok(guideMedia.includes('const { _mediaContext, ...publicResult }'), 'Sign
 globalThis.fetch = originalFetch;
 
 console.log('\nSNIPERPLUG COURSE VIDEO AND CAPABILITY PROBE TESTS PASSED\n');
-console.log('✓ Mux static renditions use one-byte GET probes instead of unreliable HEAD requests.');
+console.log('✓ Mux static renditions use one-byte GET probes inside one bounded parallel window.');
 console.log('✓ Adaptive signed playback keeps every source rendition available through Mux Player.');
+console.log('✓ Stale owner access tokens force one refresh before a reconnect error is shown.');
 console.log('✓ Stable SniperPlug player URLs never persist expiring Whop playback credentials.');
 console.log('✓ Renamed native modules are recovered by probing official Whop read endpoints.');
