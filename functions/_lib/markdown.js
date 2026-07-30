@@ -40,6 +40,14 @@ function inlineMarkdown(value) {
   const stash = (html) => `\u0001TOKEN${tokens.push(html) - 1}\u0001`;
 
   source = source.replace(/`([^`\n]+)`/g, (_, content) => stash(`<code>${escapeHtml(content)}</code>`));
+  source = source.replace(/!\[video-player:\s*([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/gi, (_, labelValue, target) => {
+    const label = String(labelValue || 'Course video').trim();
+    const url = safeUrl(target, { image: true });
+    if (!url || !/^\/(?!\/)/.test(url)) return stash(`video: ${escapeHtml(label)} (${escapeHtml(target)})`);
+    const escapedUrl = escapeHtml(url);
+    const escapedLabel = escapeHtml(label);
+    return stash(`<figure class="guide-media guide-media-video guide-media-embed"><iframe src="${escapedUrl}" title="${escapedLabel}" loading="lazy" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe><figcaption>${escapedLabel}</figcaption></figure>`);
+  });
   source = source.replace(/!\[(video|audio):\s*([^\]]*)\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/gi, (_, kindValue, labelValue, target) => {
     const kind = String(kindValue || '').toLowerCase();
     const label = String(labelValue || (kind === 'video' ? 'Video' : 'Audio')).trim();

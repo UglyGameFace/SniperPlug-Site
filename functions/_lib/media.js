@@ -50,6 +50,8 @@ export function mediaMarkdown(file) {
   const label = String(file?.filename || 'Media').replace(/[\[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 160) || 'Media';
   const url = String(file?.url || '').trim();
   if (!url) return '';
+  if (file?.role === 'hosted-video-player') return `![video-player: ${label}](${url})`;
+  if (file?.role === 'hosted-video-archive') return `- [${label}](${url})`;
   const kind = mediaKind(file?.contentType);
   if (kind === 'image') return `![${label}](${url})`;
   if (kind === 'video') return `![video: ${label}](${url})`;

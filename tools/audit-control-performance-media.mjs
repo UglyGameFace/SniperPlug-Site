@@ -25,7 +25,10 @@ const sourcePolicy = read('functions/_lib/source-policy.js');
 const controlApi = read('functions/api/control.js');
 const bulkJobs = read('functions/_lib/bulk-jobs.js');
 const mediaRoute = read('functions/media/[key].js');
+const courseVideo = read('functions/_lib/course-video.js');
+const courseVideoRoute = read('functions/course-video/[key].js');
 const mediaMigration = read('migrations/0003_media_hard_free.sql');
+const courseVideoMigration = read('migrations/0004_course_video_sources.sql');
 const middleware = read('functions/_middleware.js');
 const templates = read('functions/_lib/templates.js');
 
@@ -65,9 +68,9 @@ assert.ok(runtime.includes('50 MB per file') && runtime.includes('8 GB total') &
 assert.ok(!lifecycle.includes('softenMediaNotice'), 'The lifecycle helper can overwrite the authoritative storage state.');
 assert.ok(page.includes('panel-action') && hardeningCss.includes('.panel-head>.panel-action'), 'Panel actions can still stretch into oversized mobile bars.');
 assert.ok(!hardeningCss.includes('.button-row,.decision-row,.editor-actions{\n    display:grid;\n    grid-template-columns:1fr;'), 'A global mobile rule can still stack every button into one column.');
-assert.ok(page.includes('<option value="external">External app modules</option>'), 'External app filter is missing.');
-assert.ok(runtime.includes('Separate connection required'), 'External modules still look like generic importer failures.');
-assert.ok(runtime.includes('Your membership access is valid'), 'The UI can still imply the owner lacks access.');
+assert.ok(page.includes('<option value="external">App-specific modules</option>'), 'External app filter is missing.');
+assert.ok(runtime.includes('Native API probe completed'), 'External modules still look like generic importer failures.');
+assert.ok(runtime.includes('not a guessed endpoint'), 'The UI can still imply SniperPlug skipped native endpoint checks.');
 assert.ok(!page.toLowerCase().includes('unsupported'), 'Owner-facing Control Center markup still uses the vague unsupported label.');
 assert.ok(runtime.includes('state.dashboard.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
 assert.ok(runtime.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
@@ -77,12 +80,15 @@ assert.ok(controlApi.includes('mediaStorageUsage') && controlApi.includes('runMe
 const image = mediaMarkdown({ filename: 'proof.png', contentType: 'image/png', url: '/media/whop-0123456789abcdef0123456789abcdef-proof.png' });
 const video = mediaMarkdown({ filename: 'walkthrough.mp4', contentType: 'video/mp4', url: '/media/whop-0123456789abcdef0123456789abcdef-walkthrough.mp4' });
 const audio = mediaMarkdown({ filename: 'lesson.m4a', contentType: 'audio/mp4', url: '/media/whop-0123456789abcdef0123456789abcdef-lesson.m4a' });
+const adaptive = mediaMarkdown({ filename: 'Course video', contentType: 'video/x-mux', role: 'hosted-video-player', url: '/course-video/wcv-0123456789abcdef0123456789abcdef01234567' });
 assert.ok(image.startsWith('!['), 'Images are not emitted as inline media.');
 assert.ok(video.startsWith('![video:'), 'Videos are not emitted as playable media.');
 assert.ok(audio.startsWith('![audio:'), 'Audio is not emitted as playable media.');
+assert.ok(adaptive.startsWith('![video-player:'), 'Adaptive Whop course video is not emitted as an embedded player.');
 assert.match(renderMarkdown(video), /<video controls preload="metadata" playsinline/);
 assert.match(renderMarkdown(audio), /<audio controls preload="metadata"/);
 assert.match(renderMarkdown(image), /<img src="\/media\//);
+assert.match(renderMarkdown(adaptive), /<iframe src="\/course-video\//);
 assert.ok(!renderMarkdown('`![video: fake](/media/fake.mp4)`').includes('<video'), 'Media syntax inside code is being executed.');
 
 assert.ok(media.includes('SNIPERPLUG_MEDIA') && media.includes('.put(key, bounded.stream'), 'Private media is not copied to SniperPlug R2 storage.');
@@ -98,7 +104,11 @@ assert.ok(mediaStorage.includes('managed INTEGER') && mediaStorage.includes('lis
 assert.ok(guideMedia.includes('pruneDetachedGuideMedia'), 'Owner replacements leave obsolete media permanently referenced.');
 assert.ok(media.includes('blockedHostname') && media.includes('metadata.google.internal'), 'Remote media copying lacks SSRF destination guards.');
 assert.ok(guideMedia.includes('courseSupplementFiles') && guideMedia.includes('course-thumbnail'), 'Course pictures are not carried into guides.');
-assert.ok(guideMedia.includes('muxDownloadableFile') && guideMedia.includes('highest.mp4'), 'Downloadable hosted course video is not detected.');
+assert.ok(guideMedia.includes('findMuxStaticRendition') && guideMedia.includes('hosted-video-player'), 'Hosted course video is not upgraded to adaptive playback plus optional download.');
+assert.ok(courseVideo.includes("method: 'GET'") && courseVideo.includes("range: 'bytes=0-0'") && !courseVideo.includes("method: 'HEAD'"), 'Mux static renditions are still probed with unsupported HEAD requests.');
+assert.ok(courseVideo.includes('https://player.mux.com/') && courseVideo.includes("playback-token"), 'Signed adaptive Mux playback is not constructed correctly.');
+assert.ok(courseVideoRoute.includes('requireOwnerWhopSession') && courseVideoRoute.includes('course_lessons/') && courseVideoRoute.includes('guide_status'), 'Course-video playback is not refreshed from the exact authorized lesson or bounded to a guide.');
+assert.ok(courseVideoMigration.includes('course_video_sources') && !courseVideoMigration.includes('playback_token'), 'Stable course-video mapping is missing or persists expiring playback credentials.');
 assert.ok(guideMedia.includes('mirrorWhopMedia') && guideMedia.includes('Media and attachments'), 'Imported attachments do not pass through the durable media layer.');
 assert.ok(controlApi.includes("from '../_lib/guides-media.js'"), 'Manual imports bypass media preservation.');
 assert.ok(bulkJobs.includes("from './guides-media.js'"), 'Bulk imports bypass media preservation.');
@@ -118,6 +128,7 @@ for (const file of [
   'functions/_lib/source-policy.js',
   'functions/_lib/media.js',
   'functions/_lib/media-storage.js',
+  'functions/_lib/course-video.js',
   'functions/_lib/guides-media.js',
   'functions/_lib/markdown.js',
   'functions/_lib/bulk-jobs.js',
@@ -125,6 +136,7 @@ for (const file of [
   'functions/api/recent-actions.js',
   'functions/api/control.js',
   'functions/media/[key].js',
+  'functions/course-video/[key].js',
   'functions/_middleware.js',
   'functions/_lib/templates.js',
 ]) {

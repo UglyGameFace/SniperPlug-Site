@@ -46,8 +46,8 @@ import {
   disconnectWhop,
   finishWhopOAuth,
   requireWhopSession,
+  resolveWhopExperienceType,
   retrieveExperience,
-  whopExperienceType,
 } from '../_lib/whop.js';
 
 const MAX_BATCH_SOURCES = 100;
@@ -240,7 +240,7 @@ async function scan(request, env, admin) {
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, body.source || body.experienceId);
   const posts = await scanApprovedSource(env, whop, experience);
-  const sourceType = whopExperienceType(experience);
+  const sourceType = await resolveWhopExperienceType(whop, experience);
   const suggestedCategory = suggestedCategoryForText([
     experience?.company?.title,
     experience?.name,

@@ -4,7 +4,7 @@ import { listCategories, slugify, suggestedCategoryForText } from './guides.js';
 import { HttpError, requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { retrieveExperienceItem } from './whop-items.js';
-import { retrieveExperience, retrieveWhopFile, whopExperienceType } from './whop.js';
+import { resolveWhopExperienceType, retrieveExperience, retrieveWhopFile } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 const MAX_IMPORT = 50;
@@ -101,7 +101,7 @@ export async function importApprovedPosts(env, whopSession, input) {
   if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
 
   const experience = await retrieveExperience(whopSession, experienceId);
-  const sourceType = whopExperienceType(experience);
+  const sourceType = await resolveWhopExperienceType(whopSession, experience);
   const results = [];
 
   for (const sourceKey of sourceKeys) {
@@ -137,7 +137,7 @@ export async function importApprovedPosts(env, whopSession, input) {
 
     const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
     if (existing?.source_fingerprint === sourceFingerprint) {
-      results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug });
+      results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug, _mediaContext: item._mediaContext || null });
       continue;
     }
 
@@ -215,6 +215,7 @@ export async function importApprovedPosts(env, whopSession, input) {
       action: existing ? 'updated-draft' : 'created-draft',
       attachmentReviewCount: attachmentInfo.reviewCount,
       sourceType,
+      _mediaContext: item._mediaContext || null,
     });
   }
   return {

@@ -1,6 +1,6 @@
 import { whopContentToMarkdown } from './content-policy.js';
 import { HttpError } from './http.js';
-import { sourceKeyForWhopItem, whopApi, whopExperienceType } from './whop.js';
+import { resolveWhopExperienceType, sourceKeyForWhopItem, whopApi } from './whop.js';
 
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
@@ -126,6 +126,12 @@ function courseAttachments(lesson) {
 }
 
 function courseItem(lesson, course, experience, { detailDeferred = false } = {}) {
+  const mediaContext = detailDeferred ? null : {
+    lessonId: String(lesson?.id || ''),
+    title: cleanTitle(lesson?.title, course?.title || 'Course lesson'),
+    thumbnail: lesson?.thumbnail || null,
+    videoAsset: lesson?.video_asset || null,
+  };
   return {
     sourceType: 'course',
     id: String(lesson?.id || ''),
@@ -135,6 +141,7 @@ function courseItem(lesson, course, experience, { detailDeferred = false } = {})
     attachments: courseAttachments(lesson),
     created_at: lesson?.created_at || course?.created_at || null,
     updated_at: lesson?.updated_at || lesson?.created_at || course?.updated_at || null,
+    _mediaContext: mediaContext,
     sourceMeta: {
       ...sourceContext(experience),
       courseId: course?.id || lesson?.course?.id || null,
@@ -179,7 +186,7 @@ function chatItem(message, experience) {
 }
 
 export async function listExperienceItemsLite(session, experience) {
-  const type = whopExperienceType(experience);
+  const type = await resolveWhopExperienceType(session, experience);
   if (type === 'forum') {
     const posts = await allPages(session, 'forum_posts', { experience_id: experience.id });
     return posts.filter((post) => !post?.parent_id).map((post) => forumItem(post, experience)).filter((item) => item.id);
@@ -197,7 +204,7 @@ export async function listExperienceItemsLite(session, experience) {
     const messages = await allPages(session, 'messages', { channel_id: experience.id, direction: 'asc' });
     return messages.map((message) => chatItem(message, experience)).filter((item) => item.id && !item.sourceMeta.replyingTo);
   }
-  throw new HttpError(422, 'Only Whop Forums, Courses, and Chat expose supported content APIs.');
+  throw new HttpError(422, 'Whop’s official Course, Forum, and Chat endpoints returned no readable items for this app-specific module. A publisher-documented app API is required.');
 }
 
 function idFromSourceKey(sourceKey, expectedPrefix) {
@@ -209,7 +216,7 @@ function idFromSourceKey(sourceKey, expectedPrefix) {
 }
 
 export async function retrieveExperienceItem(session, experience, sourceKey) {
-  const type = whopExperienceType(experience);
+  const type = await resolveWhopExperienceType(session, experience);
   if (type === 'forum') {
     const id = idFromSourceKey(sourceKey, 'forum-post:');
     return forumItem(await whopApi(session, `forum_posts/${encodeURIComponent(id)}`), experience);
@@ -223,7 +230,7 @@ export async function retrieveExperienceItem(session, experience, sourceKey) {
     const id = idFromSourceKey(sourceKey, 'chat-message:');
     return chatItem(await whopApi(session, `messages/${encodeURIComponent(id)}`), experience);
   }
-  throw new HttpError(422, 'This source does not expose an exact readable Whop item.');
+  throw new HttpError(422, 'This app-specific source does not expose an exact item through Whop’s official Course, Forum, or Chat APIs.');
 }
 
 export { sourceKeyForWhopItem };

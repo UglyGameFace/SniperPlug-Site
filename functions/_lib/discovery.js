@@ -1,9 +1,11 @@
 import { HttpError } from './http.js';
 import { sourceDecision } from './source-policy.js';
 import {
+  inspectWhopApp,
+  requiredScopeForType,
   requiredScopeForExperience,
+  resolveWhopExperienceType,
   whopApi,
-  whopExperienceType,
 } from './whop.js';
 
 const PAGE_SIZE = 50;
@@ -146,15 +148,16 @@ function discoveryFailure(label, error) {
   return `${label} failed${message ? `: ${message}` : ''}`;
 }
 
-function capability(experience, grantedScopes) {
-  const sourceType = whopExperienceType(experience);
-  const requiredScope = requiredScopeForExperience(experience);
+async function capability(session, experience, grantedScopes) {
+  const sourceType = await resolveWhopExperienceType(session, experience);
+  const requiredScope = requiredScopeForType(sourceType) || requiredScopeForExperience(experience);
   return {
     sourceType,
     supported: SUPPORTED_TYPES.has(sourceType),
     requiredScope,
     scopeGranted: !requiredScope || grantedScopes.has(requiredScope),
     appName: String(experience?.app?.name || 'Unknown app').trim() || 'Unknown app',
+    detectedBy: sourceType !== 'unsupported' && requiredScopeForExperience(experience) == null ? 'official-endpoint-probe' : 'app-metadata',
   };
 }
 
@@ -199,12 +202,27 @@ async function discoverCompanySources(session, env, company, grantedScopes) {
 
   const sources = [];
   const externalApps = [];
-  for (const experience of discovered.values()) {
-    const details = capability(experience, grantedScopes);
+  const inspected = await mapConcurrent([...discovered.values()], async (experience) => ({
+    experience,
+    details: await capability(session, experience, grantedScopes),
+  }), Math.min(3, CONCURRENCY));
+  for (const { experience, details } of inspected) {
     if (!details.supported) {
-      externalApps.push({ experience, capability: details });
+      const app = await inspectWhopApp(session, experience);
+      externalApps.push({
+        experience,
+        capability: {
+          ...details,
+          app,
+          probeAttempted: true,
+          reason: app?.hasOpenapiView
+            ? 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This app advertises its own OpenAPI view, which still requires the app publisher’s documented authorization contract.'
+            : 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This is an app-specific experience, so its content requires an API published by that app rather than a guessed or scraped endpoint.',
+        },
+      });
       continue;
     }
+    experience.resolved_source_type = details.sourceType;
     sources.push({
       experience,
       capability: details,

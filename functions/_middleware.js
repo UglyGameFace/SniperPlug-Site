@@ -36,17 +36,20 @@ export async function onRequest(context) {
   const original = await context.next();
   const response = new Response(original.body, original);
   const pathname = url.pathname;
-  response.headers.set('X-Frame-Options', 'DENY');
+  const courseVideoFrame = pathname.startsWith('/course-video/');
+  response.headers.set('X-Frame-Options', courseVideoFrame ? 'SAMEORIGIN' : 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-  response.headers.set('Content-Security-Policy', "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+  response.headers.set('Content-Security-Policy', courseVideoFrame
+    ? "default-src 'none'; frame-src https://player.mux.com; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
+    : "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; frame-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
   if (url.protocol === 'https:') {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/')) {
+  if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/') || courseVideoFrame) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');

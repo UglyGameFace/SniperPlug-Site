@@ -12,7 +12,11 @@ SniperPlug automatically discovers active membership products and their experien
 
 Discovery checks both the company-wide experience list and every active membership product, then deduplicates exact `exp_...` sources. This catches modules that Whop exposes at the company level instead of attaching to one product. Groups with no current readable content are hidden instead of lingering as empty cards.
 
-Whop custom apps such as Telegram, Discord, Wheels, or third-party embedded apps do not have one universal content API. SniperPlug labels those as **external app modules**. Your membership access can still be valid; the content simply lives in another service and needs that service's own authorized importer connection.
+For every unknown module, SniperPlug now probes Whop's official Course, Forum, and Chat collection endpoints before classifying it as app-specific. This catches renamed or oddly labeled native modules instead of trusting the sidebar label alone.
+
+Genuinely custom apps such as Telegram, Discord, Wheels, or third-party embedded apps do not share one universal content API. SniperPlug keeps those modules visible, records the app metadata, and reports whether the app advertises an OpenAPI view. It does not guess private endpoints or scrape an authenticated iframe. Importing those items requires a documented read API and authorization contract from that app's publisher.
+
+Whop-hosted course videos use the exact lesson's current Mux playback credentials. SniperPlug first checks for a downloadable static rendition with a ranged GET request. Regardless of static-download availability, ready videos receive a stable SniperPlug player route that re-fetches fresh signed playback credentials and embeds Mux's adaptive player at the highest rendition available to the source. A download link appears only when Mux exposes a downloadable MP4/M4A rendition.
 
 ## Cloudflare storage
 

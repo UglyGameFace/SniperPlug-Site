@@ -4,7 +4,7 @@ import { HttpError, requireDatabase } from './http.js';
 import { savePostDecision, scanApprovedSource } from './posts.js';
 import { publishReadyGuides } from './publish.js';
 import { saveSourceDecision } from './source-policy.js';
-import { requiredScopeForExperience, retrieveExperience, whopExperienceType } from './whop.js';
+import { requiredScopeForType, resolveWhopExperienceType, retrieveExperience } from './whop.js';
 
 const MAX_SOURCES = 100;
 const LEASE_MS = 90_000;
@@ -185,9 +185,10 @@ async function prepareSource(env, whopSession, experienceId) {
     if (required) return { held: true, result: { experienceId, title: experienceId, sourceType: 'unknown', category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: required, published: emptyPublished() } };
     throw error;
   }
-  const required = requiredScopeForExperience(experience);
+  const sourceType = await resolveWhopExperienceType(whopSession, experience);
+  const required = requiredScopeForType(sourceType);
   if (required && !scopeSet(whopSession).has(required)) {
-    return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType: whopExperienceType(experience), category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: required, published: emptyPublished() } };
+    return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: required, published: emptyPublished() } };
   }
   await saveSourceDecision(env, experience, experience.id, 'approved');
   let posts;
@@ -195,7 +196,7 @@ async function prepareSource(env, whopSession, experienceId) {
     posts = await scanApprovedSource(env, whopSession, experience);
   } catch (error) {
     const missing = permissionMessage(error);
-    if (missing) return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType: whopExperienceType(experience), category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: missing, published: emptyPublished() } };
+    if (missing) return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: missing, published: emptyPublished() } };
     throw error;
   }
   const guideReady = posts.filter((item) => item.decision !== 'blocked' && item.integrity?.autoPublishEligible === true);
@@ -206,7 +207,7 @@ async function prepareSource(env, whopSession, experienceId) {
     current: {
       experienceId,
       title: experience?.name || experienceId,
-      sourceType: whopExperienceType(experience),
+      sourceType,
       readyKeys,
       cursor: 0,
       scanned: posts.length,

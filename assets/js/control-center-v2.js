@@ -562,10 +562,10 @@
     const wrapper = document.createElement('section');
     wrapper.className = 'external-apps';
     const heading = document.createElement('strong');
-    heading.textContent = 'External app content';
+    heading.textContent = 'App-specific content';
     const intro = document.createElement('p');
     intro.className = 'external-app-intro';
-    intro.textContent = 'Your membership access is valid. These modules open another service, so their posts and files need that service’s own authorized connection.';
+    intro.textContent = 'SniperPlug checked Whop’s native Course, Forum, and Chat endpoints first. Items listed here are powered by a separate app and need that app’s documented read interface—not a guessed endpoint.';
     wrapper.append(heading, intro);
     for (const entry of group.unsupported) {
       const card = document.createElement('article');
@@ -573,9 +573,10 @@
       const title = document.createElement('strong');
       title.textContent = entry.experience?.name || 'External module';
       const label = document.createElement('span');
-      label.textContent = `${entry.capability?.appName || 'External app'} · Separate connection required`;
+      const app = entry.capability?.app;
+      label.textContent = `${entry.capability?.appName || 'Whop app'} · Native API probe completed${app?.hasOpenapiView ? ' · App advertises OpenAPI' : ''}`;
       const detail = document.createElement('p');
-      detail.textContent = 'This is detected membership content, not a missing Whop permission. It cannot be read through Whop’s Forum, Course, or Chat APIs.';
+      detail.textContent = entry.capability?.reason || 'No readable native Whop content endpoint returned items for this module.';
       card.append(title, label, detail);
       wrapper.append(card);
     }

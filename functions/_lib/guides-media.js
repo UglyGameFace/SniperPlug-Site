@@ -13,6 +13,13 @@ import {
   importApprovedPosts as importBase,
 } from './guides-import.js';
 import { saveGuideDraft as saveGuideDraftBase } from './guides.js';
+import {
+  findMuxStaticRendition,
+  muxPlayback,
+  pruneDetachedCourseVideos,
+  registerCourseVideo,
+  removeOtherCourseVideos,
+} from './course-video.js';
 import { requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
@@ -29,6 +36,7 @@ export async function saveGuideDraft(env, id, input) {
   const previousIntegrity = safeJson(before?.integrity_json, {});
   const saved = await saveGuideDraftBase(env, id, input);
   const pruned = await pruneDetachedGuideMedia(env, id, saved.body);
+  const attachments = await pruneDetachedCourseVideos(env, id, saved.body, pruned.attachments);
   const nextIntegrity = {
     ...previousIntegrity,
     ...(saved.integrity || {}),
@@ -41,7 +49,7 @@ export async function saveGuideDraft(env, id, input) {
   };
   await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
     .bind(JSON.stringify(nextIntegrity), id).run();
-  return { ...saved, attachments: pruned.attachments, integrity: nextIntegrity };
+  return { ...saved, attachments, integrity: nextIntegrity };
 }
 
 function withoutGeneratedMediaSection(body) {
@@ -64,95 +72,33 @@ function normalizedFilename(value, fallback) {
   return String(value || fallback || 'media-file').normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 180);
 }
 
-function extensionForContentType(contentType, fallback = 'bin') {
-  const type = String(contentType || '').toLowerCase();
-  if (type.includes('jpeg')) return 'jpg';
-  if (type.includes('png')) return 'png';
-  if (type.includes('webp')) return 'webp';
-  if (type.includes('gif')) return 'gif';
-  if (type.includes('mp4')) return 'mp4';
-  if (type.includes('mpeg')) return 'mp3';
-  if (type.includes('audio/mp4')) return 'm4a';
-  return fallback;
-}
-
-async function muxDownloadableFile(lesson, row) {
-  const asset = lesson?.video_asset;
-  if (!asset) return null;
-  const signedPlaybackId = String(asset.signed_playback_id || '').trim();
-  const publicPlaybackId = String(asset.playback_id || '').trim();
-  const playbackId = signedPlaybackId || publicPlaybackId;
-  const token = String(asset.signed_video_playback_token || '').trim();
-  const audioOnly = Boolean(asset.audio_only);
-  const label = normalizedFilename(lesson?.title || row.title, 'Course lesson');
-  if (!playbackId) {
-    return {
-      id: String(asset.id || ''),
-      filename: `${label} hosted ${audioOnly ? 'audio' : 'video'}`,
-      contentType: audioOnly ? 'audio/mp4' : 'video/mp4',
-      url: null,
-      durable: false,
-      role: 'hosted-video',
-      reviewReason: 'Whop did not provide a playback ID for this hosted course media.',
+async function courseSupplementFiles(env, whopSession, row, mediaContext = null) {
+  if (!String(row.source_key || '').startsWith('course-lesson:') || !row.source_post_id) {
+    await removeOtherCourseVideos(env, row.id).catch(() => null);
+    return { files: [], videoKey: null };
+  }
+  let lesson = null;
+  if (String(mediaContext?.lessonId || '') === String(row.source_post_id || '')) {
+    lesson = {
+      id: mediaContext.lessonId,
+      title: mediaContext.title || row.title,
+      thumbnail: mediaContext.thumbnail || null,
+      video_asset: mediaContext.videoAsset || null,
     };
   }
-
-  const candidates = audioOnly
-    ? ['audio.m4a']
-    : ['highest.mp4', 'capped-1080p.mp4', 'high.mp4', 'medium.mp4'];
-  for (const filename of candidates) {
-    const url = new URL(`https://stream.mux.com/${encodeURIComponent(playbackId)}/${filename}`);
-    if (token) url.searchParams.set('token', token);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10_000);
+  if (!lesson) {
     try {
-      const response = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
-      if (!response.ok) continue;
-      const contentType = String(response.headers.get('content-type') || (audioOnly ? 'audio/mp4' : 'video/mp4')).split(';')[0].trim();
-      return {
-        id: String(asset.id || playbackId),
-        filename: `${label}.${extensionForContentType(contentType, audioOnly ? 'm4a' : 'mp4')}`,
-        contentType,
-        size: Number(response.headers.get('content-length') || 0) || null,
-        url: url.toString(),
-        visibility: token ? 'private' : 'public',
-        uploadStatus: 'ready',
-        durable: !token,
-        role: 'hosted-video',
-        reviewReason: token ? 'This signed Whop-hosted video must be copied into SniperPlug media storage before publishing.' : null,
-      };
+      lesson = await whopApi(whopSession, `course_lessons/${encodeURIComponent(row.source_post_id)}`);
     } catch {
-      // Try the next rendition name.
-    } finally {
-      clearTimeout(timer);
+      return { files: [], videoKey: null, preserveExistingVideo: true };
     }
-  }
-
-  return {
-    id: String(asset.id || playbackId),
-    filename: `${label} hosted ${audioOnly ? 'audio' : 'video'}`,
-    contentType: audioOnly ? 'audio/mp4' : 'video/mp4',
-    url: null,
-    durable: false,
-    role: 'hosted-video',
-    reviewReason: 'Whop exposes this course video for streaming, but no downloadable MP4/M4A rendition was available. Upload an authorized permanent copy before publishing.',
-  };
-}
-
-async function courseSupplementFiles(whopSession, row) {
-  if (!String(row.source_key || '').startsWith('course-lesson:') || !row.source_post_id) return [];
-  let lesson;
-  try {
-    lesson = await whopApi(whopSession, `course_lessons/${encodeURIComponent(row.source_post_id)}`);
-  } catch {
-    return [];
   }
   const output = [];
   const thumbnailUrl = String(lesson?.thumbnail?.url || '').trim();
   if (/^https:\/\//i.test(thumbnailUrl)) {
     const title = normalizedFilename(lesson?.title || row.title, 'Course lesson');
     output.push({
-      id: String(lesson?.thumbnail?.id || ''),
+      id: String(lesson?.thumbnail?.id || thumbnailUrl),
       filename: `${title} thumbnail.jpg`,
       contentType: String(lesson?.thumbnail?.content_type || 'image/jpeg'),
       url: thumbnailUrl,
@@ -163,9 +109,96 @@ async function courseSupplementFiles(whopSession, row) {
       reviewReason: null,
     });
   }
-  const hosted = await muxDownloadableFile(lesson, row);
-  if (hosted) output.push(hosted);
-  return output;
+
+  const asset = lesson?.video_asset;
+  if (!asset) {
+    await removeOtherCourseVideos(env, row.id).catch(() => null);
+    return { files: output, videoKey: null };
+  }
+  const playback = muxPlayback(asset);
+  const label = normalizedFilename(lesson?.title || row.title, 'Course lesson');
+  if (!playback || (playback.status && !['ready', 'prepared'].includes(playback.status))) {
+    await removeOtherCourseVideos(env, row.id).catch(() => null);
+    output.push({
+      id: String(asset.id || ''),
+      filename: `${label} hosted ${asset.audio_only ? 'audio' : 'video'}`,
+      contentType: asset.audio_only ? 'audio/mp4' : 'video/mp4',
+      url: null,
+      durable: false,
+      role: 'hosted-video',
+      reviewReason: playback
+        ? `Whop reports this upload as “${playback.status || 'not ready'}”. Rescan after the video finishes processing.`
+        : 'Whop did not return a playback ID for this hosted course video. Rescan after the upload finishes.',
+    });
+    return { files: output, videoKey: null };
+  }
+
+  const registration = await registerCourseVideo(env, {
+    guideId: row.id,
+    lessonId: lesson.id || row.source_post_id,
+    sourceKey: row.source_key,
+    title: label,
+    asset,
+  });
+  if (!registration) {
+    output.push({
+      id: String(asset.id || ''),
+      filename: `${label} hosted video`,
+      contentType: 'video/mp4',
+      url: null,
+      durable: false,
+      role: 'hosted-video',
+      reviewReason: 'SniperPlug could not register a safe playback route for this Whop course video.',
+    });
+    return { files: output, videoKey: null };
+  }
+
+  await removeOtherCourseVideos(env, row.id, registration.videoKey);
+  output.push({
+    id: String(asset.id || registration.videoKey),
+    filename: `${label} · source-quality adaptive ${playback.audioOnly ? 'audio' : 'video'}`,
+    contentType: playback.audioOnly ? 'audio/x-mux' : 'video/x-mux',
+    url: registration.playerUrl,
+    visibility: 'authorized-source',
+    uploadStatus: 'ready',
+    durable: true,
+    sourceBacked: true,
+    role: 'hosted-video-player',
+    durationSeconds: playback.durationSeconds,
+    reviewReason: null,
+  });
+
+  const staticRendition = await findMuxStaticRendition(asset);
+  if (staticRendition) {
+    output.push({
+      id: `${String(asset.id || registration.videoKey)}-archive`,
+      filename: `${label} · permanent copy ${staticRendition.filename}`,
+      contentType: staticRendition.contentType,
+      url: staticRendition.url,
+      visibility: playback.signed ? 'private' : 'public',
+      uploadStatus: 'ready',
+      durable: false,
+      optionalMirror: true,
+      role: 'hosted-video-archive',
+      size: staticRendition.size,
+      reviewReason: null,
+    });
+    output.push({
+      id: `${String(asset.id || registration.videoKey)}-download`,
+      filename: `${label} · download ${staticRendition.filename}`,
+      contentType: 'application/octet-stream',
+      url: registration.downloadUrl,
+      visibility: 'authorized-source',
+      uploadStatus: 'ready',
+      durable: true,
+      sourceBacked: true,
+      role: 'hosted-video-download',
+      size: staticRendition.size,
+      rendition: staticRendition.filename,
+      reviewReason: null,
+    });
+  }
+  return { files: output, videoKey: registration.videoKey };
 }
 
 function uniqueFiles(values) {
@@ -173,7 +206,7 @@ function uniqueFiles(values) {
   const output = [];
   for (const file of values) {
     if (!file) continue;
-    const key = String(file.id || file.url || `${file.role}:${file.filename}`);
+    const key = `${String(file.role || 'attachment')}:${String(file.id || file.url || file.filename || '')}`;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     output.push(file);
@@ -182,23 +215,31 @@ function uniqueFiles(values) {
 }
 
 async function enhanceGuideMedia(env, whopSession, result) {
-  if (!result?.guideId || !['created-draft', 'updated-draft'].includes(result.action)) return result;
+  if (!result?.guideId || !['created-draft', 'updated-draft', 'unchanged'].includes(result.action)) return result;
+  if (result.action === 'unchanged' && !String(result.sourceKey || '').startsWith('course-lesson:')) return result;
   const db = requireDatabase(env);
   const row = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(result.sourceKey).first();
   if (!row) return result;
   const attachmentState = safeJson(row.attachment_json, {});
   const savedFiles = Array.isArray(attachmentState.files) ? attachmentState.files : [];
-  const supplements = await courseSupplementFiles(whopSession, row);
+  const supplementResult = await courseSupplementFiles(env, whopSession, row, result._mediaContext);
+  const supplements = supplementResult.files;
+  const replacedRoles = new Set(['hosted-video', 'hosted-video-player', 'hosted-video-download', 'hosted-video-archive']);
+  const preservedVideo = supplementResult.preserveExistingVideo
+    ? savedFiles.filter((file) => replacedRoles.has(file.role))
+    : [];
   const files = uniqueFiles([
     ...supplements.filter((file) => file.role === 'course-thumbnail'),
-    ...savedFiles.filter((file) => file.role !== 'hosted-video'),
+    ...savedFiles.filter((file) => !replacedRoles.has(file.role) && file.role !== 'course-thumbnail'),
+    ...preservedVideo,
     ...supplements.filter((file) => file.role !== 'course-thumbnail'),
-    ...savedFiles.filter((file) => file.role === 'hosted-video' && !supplements.some((item) => item.role === 'hosted-video')),
   ]);
-  if (!files.length) return { ...result, mirroredMedia: 0, attachmentReviewCount: 0 };
-
   const preparedFiles = [];
-  for (const file of files) preparedFiles.push(await mirrorWhopMedia(env, file, result.sourceKey));
+  for (const file of files) {
+    const preparedFile = file.sourceBacked ? file : await mirrorWhopMedia(env, file, result.sourceKey);
+    if (file.optionalMirror && (!preparedFile.durable || !preparedFile.url)) continue;
+    preparedFiles.push(preparedFile);
+  }
   const lines = [];
   let reviewCount = 0;
   let mirroredMedia = 0;
@@ -240,7 +281,11 @@ async function enhanceGuideMedia(env, whopSession, result) {
 export async function importApprovedPosts(env, whopSession, input) {
   const output = await importBase(env, whopSession, input);
   const results = [];
-  for (const result of output.results || []) results.push(await enhanceGuideMedia(env, whopSession, result));
+  for (const result of output.results || []) {
+    const enhanced = await enhanceGuideMedia(env, whopSession, result);
+    const { _mediaContext, ...publicResult } = enhanced || {};
+    results.push(publicResult);
+  }
   return {
     ...output,
     results,

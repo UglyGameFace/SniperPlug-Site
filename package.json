@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "audit": "node tools/audit-whop-importer.mjs && node tools/audit-runtime-config.mjs && node tools/audit-whop-discovery.mjs && node tools/audit-bulk-publish.mjs && node tools/audit-control-hardening.mjs && node tools/audit-control-performance-media.mjs && node tools/audit-import-quality-recovery.mjs && node tools/test-media-hard-free.mjs",
+    "audit": "node tools/audit-whop-importer.mjs && node tools/audit-runtime-config.mjs && node tools/audit-whop-discovery.mjs && node tools/audit-bulk-publish.mjs && node tools/audit-control-hardening.mjs && node tools/audit-control-performance-media.mjs && node tools/audit-import-quality-recovery.mjs && node tools/test-media-hard-free.mjs && node tools/test-course-video-import.mjs",
     "test": "npm run audit",
     "build": "npm run audit"
   },

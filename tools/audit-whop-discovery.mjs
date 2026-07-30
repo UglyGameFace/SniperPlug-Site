@@ -45,8 +45,10 @@ assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types a
 assert.ok(client.includes("requestJson('/api/discover'"), 'Browser does not call automatic discovery.');
 assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
 assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');
-assert.ok(client.includes('External app content') && client.includes('Your membership access is valid'), 'External app modules are not explained clearly.');
-assert.ok(client.includes('not a missing Whop permission'), 'External app modules can still look like missing Whop access.');
+assert.ok(discovery.includes('resolveWhopExperienceType') && discovery.includes('probeAttempted: true'), 'Unknown modules are not checked against native Whop content endpoints.');
+assert.ok(discovery.includes('inspectWhopApp') && discovery.includes('hasOpenapiView'), 'App-specific modules do not retain their documented app capability metadata.');
+assert.ok(client.includes('App-specific content') && client.includes('Native API probe completed'), 'App-specific modules are not explained clearly.');
+assert.ok(client.includes('not a guessed endpoint'), 'The UI can still imply SniperPlug gave up without probing safe read paths.');
 assert.ok(client.includes('groupSelectionCount') && client.includes('updateGroupSelectionCards'), 'Select group has no immediate local confirmation.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 

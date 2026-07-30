@@ -3,7 +3,7 @@ import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
 import { listExperienceItemsLite, sourceKeyForWhopItem } from './whop-items.js';
-import { whopExperienceType } from './whop.js';
+import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 function plainExcerpt(value, limit = 260) {
@@ -156,9 +156,9 @@ export async function scanApprovedSource(env, whopSession, experience) {
   const db = requireDatabase(env);
   const experienceId = String(experience?.id || '');
   await requireApprovedSource(env, experienceId);
-  const sourceType = whopExperienceType(experience);
+  const sourceType = await resolveWhopExperienceType(whopSession, experience);
   if (!['forum', 'course', 'chat'].includes(sourceType)) {
-    throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” cannot be imported. Forums, Courses, and Chat are supported.`);
+    throw new HttpError(422, `SniperPlug checked Whop’s official Course, Forum, and Chat read endpoints for “${String(experience?.app?.name || 'Unknown')}”, but none returned readable content. This app needs its publisher’s documented API and authorization method; SniperPlug will not guess or scrape a private app session.`);
   }
   const rawItems = await listExperienceItemsLite(whopSession, experience);
   const topLevelItems = rawItems.filter((item) => sourceType !== 'chat' || !item?.sourceMeta?.replyingTo);

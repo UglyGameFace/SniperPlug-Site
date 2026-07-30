@@ -16,6 +16,8 @@ const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_SOURCE_ITEMS = 2000;
 const ITEM_CONCURRENCY = 6;
+const EXPERIENCE_TYPE_CACHE_MS = 15 * 60_000;
+const experienceTypeCache = new Map();
 
 function config(request, env) {
   const clientId = String(env?.WHOP_CLIENT_ID || '').trim();
@@ -239,6 +241,27 @@ export async function requireWhopSession(request, env, adminSession) {
   }
 }
 
+export async function requireOwnerWhopSession(request, env) {
+  const cfg = config(request, env);
+  const db = requireDatabase(env);
+  const row = await db.prepare(`
+    SELECT * FROM whop_sessions
+    ORDER BY CASE WHEN admin_session_id = 'sniperplug-owner' THEN 0 ELSE 1 END, updated_at DESC
+    LIMIT 1
+  `).first();
+  if (!row) throw new HttpError(401, 'Whop is not connected. Reconnect it from the SniperPlug Control Center.');
+  const session = await decryptSession(row, cfg);
+  if (Date.parse(session.expiresAt) - Date.now() > REFRESH_BUFFER_MS) return session;
+  try {
+    return await refreshWhopSession(request, env, { sid: row.admin_session_id }, row, session);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 401) {
+      await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(row.admin_session_id).run();
+    }
+    throw error;
+  }
+}
+
 export async function whopSessionSummary(env, adminSession) {
   const db = requireDatabase(env);
   const row = await db.prepare('SELECT scopes, expires_at, user_json FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
@@ -295,6 +318,8 @@ function normalizedAppName(experience) {
 }
 
 export function whopExperienceType(experience) {
+  const resolved = String(experience?.resolved_source_type || experience?.source_type || '').trim().toLowerCase();
+  if (['forum', 'course', 'chat'].includes(resolved)) return resolved;
   const app = normalizedAppName(experience);
   if (app.includes('forum')) return 'forum';
   if (app.includes('course')) return 'course';
@@ -302,12 +327,85 @@ export function whopExperienceType(experience) {
   return 'unsupported';
 }
 
-export function requiredScopeForExperience(experience) {
-  const type = whopExperienceType(experience);
+export function requiredScopeForType(type) {
   if (type === 'forum') return 'forum:read';
   if (type === 'course') return 'courses:read';
   if (type === 'chat') return 'chat:read';
   return null;
+}
+
+export function requiredScopeForExperience(experience) {
+  return requiredScopeForType(whopExperienceType(experience));
+}
+
+function probeDenied(error) {
+  return error instanceof HttpError && [401, 403, 404, 422].includes(Number(error.status));
+}
+
+async function sourceProbe(session, type, experienceId) {
+  const request = type === 'course'
+    ? ['courses', { experience_id: experienceId }]
+    : type === 'forum'
+      ? ['forum_posts', { experience_id: experienceId }]
+      : ['messages', { channel_id: experienceId, direction: 'asc' }];
+  try {
+    const payload = await whopApi(session, request[0], { ...request[1], first: 1 });
+    return Array.isArray(payload?.data) && payload.data.length > 0;
+  } catch (error) {
+    if (probeDenied(error)) return false;
+    throw error;
+  }
+}
+
+export async function resolveWhopExperienceType(session, experience) {
+  const known = whopExperienceType(experience);
+  if (known !== 'unsupported') return known;
+  const experienceId = String(experience?.id || '').trim();
+  if (!experienceId) return 'unsupported';
+  const cacheKey = `${experienceId}:${String(session?.tokenVersion || session?.scopes || '')}`;
+  const cached = experienceTypeCache.get(cacheKey);
+  if (cached && Date.now() - cached.checkedAt < EXPERIENCE_TYPE_CACHE_MS) return cached.type;
+
+  for (const type of ['course', 'forum', 'chat']) {
+    if (await sourceProbe(session, type, experienceId)) {
+      experienceTypeCache.set(cacheKey, { type, checkedAt: Date.now() });
+      return type;
+    }
+  }
+  experienceTypeCache.set(cacheKey, { type: 'unsupported', checkedAt: Date.now() });
+  return 'unsupported';
+}
+
+function safeAppUrl(origin, path, experienceId) {
+  try {
+    if (!origin || !path) return null;
+    const route = String(path).replace(/\[experienceId\]/g, encodeURIComponent(experienceId));
+    const url = new URL(route, origin);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function inspectWhopApp(session, experience) {
+  const appId = String(experience?.app?.id || '').trim();
+  if (!appId) return null;
+  try {
+    const app = await whopApi(session, `apps/${encodeURIComponent(appId)}`);
+    const origin = String(app?.origin || app?.base_url || '').trim() || null;
+    return {
+      id: String(app?.id || appId),
+      name: String(app?.name || experience?.app?.name || 'Whop app').trim(),
+      verified: Boolean(app?.verified),
+      appType: String(app?.app_type || '').trim() || null,
+      origin,
+      experienceUrl: safeAppUrl(origin, app?.experience_path, experience?.id),
+      openapiUrl: safeAppUrl(origin, app?.openapi_path, experience?.id),
+      hasOpenapiView: Boolean(app?.openapi_path),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function allPages(session, path, query, maxItems = MAX_SOURCE_ITEMS) {
@@ -497,7 +595,7 @@ async function listChatItems(session, experience) {
 }
 
 export async function listExperienceItems(session, experience) {
-  const type = whopExperienceType(experience);
+  const type = await resolveWhopExperienceType(session, experience);
   if (type === 'forum') {
     const posts = await listForumPosts(session, experience.id);
     return posts.map((post) => ({
@@ -518,7 +616,7 @@ export async function listExperienceItems(session, experience) {
   }
   if (type === 'course') return listCourseItems(session, experience);
   if (type === 'chat') return listChatItems(session, experience);
-  throw new HttpError(422, `Whop app type “${String(experience?.app?.name || 'Unknown')}” does not expose a supported read API. Forums, Courses, and Chat are supported.`);
+  throw new HttpError(422, `Whop’s official Course, Forum, and Chat endpoints returned no readable content for “${String(experience?.app?.name || 'Unknown')}”. This app requires its own documented read API.`);
 }
 
 export async function retrieveWhopFile(session, input) {
