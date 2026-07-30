@@ -185,8 +185,9 @@ export async function importApprovedPosts(env, whopSession, input) {
     const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
     const postIntegrity = safeJson(savedDecision?.integrity_json, {});
     const author = item.user ? { id: item.user.id || null, name: item.user.name || null, username: item.user.username || null } : {};
+    const expectedUpdatedAt = existing?.updated_at == null ? null : String(existing.updated_at);
 
-    await db.prepare(`
+    const write = await db.prepare(`
       INSERT INTO guides (
         slug, title, description, category_slug, body_markdown, status, featured, sort_order,
         source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
@@ -211,6 +212,7 @@ export async function importApprovedPosts(env, whopSession, input) {
         source_updated_at = excluded.source_updated_at,
         updated_at = excluded.updated_at,
         published_at = NULL
+      WHERE guides.updated_at IS ?
     `).bind(
       slug,
       title,
@@ -229,8 +231,22 @@ export async function importApprovedPosts(env, whopSession, input) {
       item.updated_at || item.created_at || null,
       existing?.imported_at || now,
       now,
+      expectedUpdatedAt,
     ).run();
-    const saved = await db.prepare('SELECT id, slug, title, category_slug FROM guides WHERE source_key = ?').bind(sourceKey).first();
+    if (Number(write.meta?.changes || 0) !== 1) {
+      throw new HttpError(409, 'This guide changed while SniperPlug was preparing the Whop import. The newer saved version was preserved; refresh before retrying.', {
+        code: 'guide_import_stale',
+        guideId: Number(existing?.id || 0) || null,
+        sourceKey,
+      });
+    }
+    const saved = await db.prepare('SELECT id, slug, title, category_slug, status, source_fingerprint FROM guides WHERE source_key = ?').bind(sourceKey).first();
+    if (!saved || saved.status !== 'draft' || String(saved.source_fingerprint || '') !== sourceFingerprint) {
+      throw new HttpError(409, 'SniperPlug could not confirm the exact imported guide in D1. Refresh before retrying.', {
+        code: 'guide_import_unconfirmed',
+        sourceKey,
+      });
+    }
     results.push({
       sourceKey,
       guideId: saved.id,
