@@ -52,7 +52,7 @@ assert.ok(reconciliation.includes('importer_maintenance') && reconciliation.incl
 assert.ok(runtime.includes('updateGroupSelectionCards') && runtime.includes('groupSelectionCount'), 'Group selection does not update locally on the tapped card.');
 assert.ok(runtime.includes("root.addEventListener('pointerdown'") && runtime.includes("dataset.pressed = 'true'"), 'Controls do not acknowledge touch immediately.');
 assert.ok(runtime.includes("preview: $('[data-post-preview]', document)"), 'The modal lives outside the Control Center root and can crash the entire runtime if queried from the wrong scope.');
-assert.ok(page.includes('?v=20260730.2') && middleware.includes("url.searchParams.has('v')"), 'Control Center assets can remain stale after deployment.');
+assert.ok(page.includes('?v=20260730.3') && middleware.includes("url.searchParams.has('v')"), 'Control Center assets can remain stale after deployment.');
 assert.ok(!/listAdminGuideSummaries[\s\S]*body_markdown/.test(guides.slice(guides.indexOf('export async function listAdminGuideSummaries'), guides.indexOf('export async function adminGuide'))), 'Dashboard guide summaries still include every full guide body.');
 assert.ok(siteClient.includes('const indexed = cards.map') && siteClient.includes('requestAnimationFrame(apply)'), 'Public deal filtering still repeatedly scans live card text on every keystroke.');
 assert.ok(controlApi.includes('saveSourceDecisions') && controlApi.includes('requestedSourceValues'), 'The server does not accept validated multi-source decisions.');

@@ -47,6 +47,7 @@ import {
   finishWhopOAuth,
   requireWhopSession,
   resolveWhopExperienceType,
+  whopSessionSummary,
   retrieveExperience,
 } from '../_lib/whop.js';
 
@@ -119,15 +120,37 @@ async function verifiedWhopSummary(request, env, admin) {
   try {
     const session = await requireWhopSession(request, env, admin);
     return {
-      scopes: String(session.scopes || '').split(/\s+/).filter(Boolean),
-      expiresAt: session.expiresAt,
-      user: session.profile || {},
-      verifiedAt: new Date().toISOString(),
+      connected: true,
+      verified: true,
+      status: 'connected',
+      message: 'Whop OAuth session verified.',
+      session: {
+        scopes: String(session.scopes || '').split(/\s+/).filter(Boolean),
+        expiresAt: session.expiresAt,
+        user: session.profile || {},
+        verifiedAt: new Date().toISOString(),
+      },
     };
   } catch (error) {
     if (error instanceof HttpError && [401, 403].includes(error.status)) {
       await disconnectWhop(request, env, admin).catch(() => null);
-      return null;
+      return {
+        connected: false,
+        verified: false,
+        status: 'disconnected',
+        message: 'Whop is not connected.',
+        session: null,
+      };
+    }
+    const saved = await whopSessionSummary(env, admin).catch(() => null);
+    if (saved) {
+      return {
+        connected: true,
+        verified: false,
+        status: 'checking',
+        message: 'Saved Whop connection found. Live verification is retrying before source access is enabled.',
+        session: saved,
+      };
     }
     throw error;
   }
@@ -185,7 +208,7 @@ async function dashboard(request, env, admin, context) {
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
   if (mediaStorageUsage.inventoryDue || mediaStorageUsage.cleanupDue) scheduleMediaMaintenance(context, env);
   return json({
-    whop: { connected: Boolean(whop), verified: Boolean(whop), session: whop },
+    whop,
     capabilities: {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
       mediaStorageUsage,

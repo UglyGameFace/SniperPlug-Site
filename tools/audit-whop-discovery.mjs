@@ -11,6 +11,7 @@ const endpoint = read('functions/api/discover.js');
 const page = read('control-center/index.html');
 const client = read('assets/js/control-center-v2.js');
 const styles = read('assets/css/whop-discovery.css');
+const capabilityMigration = read('migrations/0005_whop_capability_cache.sql');
 
 assert.ok(discovery.includes("'memberships'"), 'Membership discovery endpoint is missing.');
 assert.ok(discovery.includes("'forums'"), 'Forum discovery endpoint is missing.');
@@ -45,10 +46,20 @@ assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types a
 assert.ok(client.includes("requestJson('/api/discover'"), 'Browser does not call automatic discovery.');
 assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
 assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');
-assert.ok(discovery.includes('resolveWhopExperienceType') && discovery.includes('probeAttempted: true'), 'Unknown modules are not checked against native Whop content endpoints.');
+assert.ok(discovery.includes('resolveWhopExperienceType') && discovery.includes('probeAttempted') && discovery.includes('MAX_CAPABILITY_PROBES_PER_REQUEST'), 'Unknown modules are not checked through bounded native Whop endpoint probes.');
 assert.ok(discovery.includes('inspectWhopApp') && discovery.includes('hasOpenapiView'), 'App-specific modules do not retain their documented app capability metadata.');
 assert.ok(client.includes('App-specific content') && client.includes('Native API probe completed'), 'App-specific modules are not explained clearly.');
 assert.ok(client.includes('not a guessed endpoint'), 'The UI can still imply SniperPlug gave up without probing safe read paths.');
+assert.ok(discovery.includes('whop_experience_capabilities') && discovery.includes('capabilityCacheFresh'), 'Whop capability probes are not cached between bounded discovery passes.');
+assert.ok(discovery.includes('isTransientDiscoveryError') && discovery.includes('probe_status') && discovery.includes("'transient'"), 'One temporary app probe can still abort or starve the complete source scan.');
+assert.ok(discovery.includes('budget.take()') && discovery.includes('capabilityProbe'), 'Discovery does not expose bounded background-probe progress.');
+assert.ok(capabilityMigration.includes('CREATE TABLE IF NOT EXISTS whop_experience_capabilities'), 'The durable Whop capability cache migration is missing.');
+assert.ok(endpoint.includes('DISCOVERY_TRANSIENT') && endpoint.includes('retryable: true'), 'Unexpected source-discovery failures still collapse into an unexplained generic importer error.');
+assert.ok(client.includes('Whop connected · source refresh retrying') && client.includes('scheduleDiscoveryContinuation'), 'The browser does not retry bounded discovery work while preserving the verified connection state.');
+assert.ok(client.includes('Connected & verified') && page.includes('data-whop-connection-detail'), 'The UI does not distinguish a verified OAuth connection from source-discovery progress.');
+assert.ok(client.includes("dataset.idleDisabled = String(button.disabled)") && client.includes("button.disabled = button.dataset.idleDisabled === 'true'"), 'Temporary working labels can still leave buttons permanently disabled.');
+assert.ok(!client.slice(client.indexOf('async function loadDiscovery'), client.indexOf('function updateSourceDecision')).includes("showStatus(error.message, 'error')"), 'A source-list failure can still overwrite the global connection truth with a contradictory red error.');
+assert.ok(styles.includes('.state-pill[data-state="checking"]') && styles.includes('.whop-connection-detail'), 'Whop verification and connection details have no explicit visual states.');
 assert.ok(client.includes('groupSelectionCount') && client.includes('updateGroupSelectionCards'), 'Select group has no immediate local confirmation.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 

@@ -19,6 +19,7 @@
     whopState: $('[data-whop-state]'),
     whopConnect: $('[data-whop-connect]'),
     whopDisconnect: $('[data-whop-disconnect]'),
+    whopConnectionDetail: $('[data-whop-connection-detail]'),
     scopeWarning: $('[data-scope-warning]'),
     sourceOptions: $('[data-source-options]'),
     sourceForm: $('[data-source-form]'),
@@ -119,6 +120,9 @@
   const state = {
     dashboard: null,
     discovery: null,
+    discoveryRequestToken: 0,
+    discoveryAutoPasses: 0,
+    discoveryTimer: null,
     selectedSources: new Set(),
     expandedGroups: new Set(),
     sourceCards: new Map(),
@@ -142,24 +146,44 @@
   };
 
   async function requestJson(url, options = {}) {
-    const response = await fetch(url, {
-      credentials: 'same-origin',
-      cache: 'no-store',
-      ...options,
-      headers: {
-        accept: 'application/json',
-        ...(options.body ? { 'content-type': 'application/json' } : {}),
-        ...(options.headers || {}),
-      },
-    });
-    const data = await response.json().catch(() => ({}));
+    let response;
+    try {
+      response = await fetch(url, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        ...options,
+        headers: {
+          accept: 'application/json',
+          ...(options.body ? { 'content-type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+    } catch (cause) {
+      const error = new Error('The network request did not reach SniperPlug. Retrying is safe.');
+      error.status = 0;
+      error.code = 'NETWORK_ERROR';
+      error.retryable = true;
+      error.cause = cause;
+      throw error;
+    }
+    const text = await response.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
     if (!response.ok) {
-      const error = new Error(data.error || `Request failed (${response.status}).`);
+      const error = new Error(data.error || `SniperPlug request failed (${response.status}).`);
       error.status = response.status;
+      error.code = data.code || 'REQUEST_FAILED';
+      error.retryable = Boolean(data.retryable || [408, 425, 429, 500, 502, 503, 504].includes(response.status));
       error.data = data;
       throw error;
     }
     return data;
+  }
+
+  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  function isTransientClientError(error) {
+    return Boolean(error?.retryable || [0, 408, 425, 429, 500, 502, 503, 504].includes(Number(error?.status || 0)));
   }
 
   function api(action, options = {}) {
@@ -202,12 +226,15 @@
     if (!(button instanceof HTMLButtonElement)) return;
     if (working) {
       if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent;
+      if (!Object.prototype.hasOwnProperty.call(button.dataset, 'idleDisabled')) button.dataset.idleDisabled = String(button.disabled);
       if (label) button.textContent = label;
       button.disabled = true;
       button.setAttribute('aria-busy', 'true');
     } else {
       if (button.dataset.idleLabel) button.textContent = button.dataset.idleLabel;
+      if (Object.prototype.hasOwnProperty.call(button.dataset, 'idleDisabled')) button.disabled = button.dataset.idleDisabled === 'true';
       delete button.dataset.idleLabel;
+      delete button.dataset.idleDisabled;
       button.removeAttribute('aria-busy');
     }
   }
@@ -227,6 +254,9 @@
     elements.app.hidden = true;
     state.dashboard = null;
     state.discovery = null;
+    state.discoveryRequestToken += 1;
+    clearTimeout(state.discoveryTimer);
+    state.discoveryTimer = null;
   }
 
   function unlock() {
@@ -334,16 +364,28 @@
   }
 
   function renderWhop() {
-    const connected = Boolean(state.dashboard?.whop?.connected);
-    elements.whopState.dataset.state = connected ? 'connected' : 'disconnected';
-    elements.whopState.textContent = connected ? 'Connected' : 'Not connected';
+    const whop = state.dashboard?.whop || {};
+    const connected = whop.connected === true;
+    const verified = connected && whop.verified === true;
+    const checking = connected && !verified;
+    elements.whopState.dataset.state = verified ? 'connected' : checking ? 'checking' : 'disconnected';
+    elements.whopState.textContent = verified ? 'Connected & verified' : checking ? 'Checking connection' : 'Not connected';
     elements.whopConnect.hidden = connected;
     elements.whopDisconnect.hidden = !connected;
-    elements.refreshGroups.disabled = !connected;
-    const scopes = new Set(state.dashboard?.whop?.session?.scopes || []);
+    elements.refreshGroups.disabled = !verified;
+    if (elements.whopConnectionDetail) {
+      const verifiedAt = whop.session?.verifiedAt ? new Date(whop.session.verifiedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+      elements.whopConnectionDetail.dataset.state = verified ? 'ok' : checking ? 'working' : 'idle';
+      elements.whopConnectionDetail.textContent = verified
+        ? `Connection verified${verifiedAt ? ` at ${verifiedAt}` : ''}. Source access is enabled.`
+        : checking
+          ? whop.message || 'A saved Whop connection exists. Live verification is retrying before source access is enabled.'
+          : 'Connect Whop before loading private memberships, lessons, or media.';
+    }
+    const scopes = new Set(whop.session?.scopes || []);
     const required = ['forum:read', 'courses:read', 'chat:read', 'member:basic:read', 'member:email:read'];
     const missing = required.filter((scope) => !scopes.has(scope));
-    elements.scopeWarning.hidden = !connected || missing.length === 0;
+    elements.scopeWarning.hidden = !verified || missing.length === 0;
     elements.scopeWarning.textContent = missing.length
       ? `Reconnect Whop after enabling: ${missing.join(', ')}.`
       : '';
@@ -574,7 +616,10 @@
       title.textContent = entry.experience?.name || 'External module';
       const label = document.createElement('span');
       const app = entry.capability?.app;
-      label.textContent = `${entry.capability?.appName || 'Whop app'} · Native API probe completed${app?.hasOpenapiView ? ' · App advertises OpenAPI' : ''}`;
+      const probeState = entry.capability?.probeDeferred
+        ? entry.capability?.probeFailed ? 'Capability check retrying' : 'Capability check queued'
+        : 'Native API probe completed';
+      label.textContent = `${entry.capability?.appName || 'Whop app'} · ${probeState}${app?.hasOpenapiView ? ' · App advertises OpenAPI' : ''}`;
       const detail = document.createElement('p');
       detail.textContent = entry.capability?.reason || 'No readable native Whop content endpoint returned items for this module.';
       card.append(title, label, detail);
@@ -650,10 +695,11 @@
 
   function renderDiscovery() {
     state.sourceCards.clear();
-    const connected = Boolean(state.dashboard?.whop?.connected);
+    const whop = state.dashboard?.whop || {};
+    const connected = Boolean(whop.connected && whop.verified);
     if (!connected) {
-      elements.discoverySummary.textContent = 'Connect Whop to load sources.';
-      elements.discoveryMessage.textContent = '';
+      elements.discoverySummary.textContent = whop.connected ? 'Waiting for Whop verification…' : 'Connect Whop to load sources.';
+      elements.discoveryMessage.textContent = whop.connected ? 'The saved connection exists, but source access is paused until verification succeeds.' : '';
       elements.discoveryBulk.hidden = true;
       elements.sourceTools.hidden = true;
       elements.discoveredGroups.replaceChildren();
@@ -715,24 +761,80 @@
     }
   }
 
-  async function loadDiscovery() {
-    if (!state.dashboard?.whop?.connected) {
+  function discoveryStatusText(data) {
+    const counts = data?.counts || {};
+    const probe = data?.capabilityProbe || {};
+    if (Number(probe.pending || 0) > 0) {
+      return `${counts.forums || 0} Forum · ${counts.courses || 0} Course · ${counts.chats || 0} Chat · checking ${probe.pending} app-specific module${probe.pending === 1 ? '' : 's'} in bounded background passes`;
+    }
+    return `${counts.forums || 0} Forum · ${counts.courses || 0} Course · ${counts.chats || 0} Chat${counts.unsupported ? ` · ${counts.unsupported} app-specific module${counts.unsupported === 1 ? '' : 's'} checked` : ''}`;
+  }
+
+  function scheduleDiscoveryContinuation(data) {
+    clearTimeout(state.discoveryTimer);
+    state.discoveryTimer = null;
+    const probe = data?.capabilityProbe || {};
+    const pending = Number(probe.pending || 0);
+    const checked = Number(probe.checked || 0);
+    if (!pending || !checked || state.discoveryAutoPasses >= 8) return;
+    state.discoveryAutoPasses += 1;
+    state.discoveryTimer = setTimeout(() => {
+      state.discoveryTimer = null;
+      loadDiscovery({ background: true }).catch(() => null);
+    }, 350);
+  }
+
+  async function loadDiscovery({ background = false, manual = false } = {}) {
+    const whop = state.dashboard?.whop || {};
+    if (!whop.connected || !whop.verified) {
       state.discovery = null;
       renderDiscovery();
-      return;
+      elements.discoverySummary.textContent = whop.connected ? 'Waiting for Whop verification…' : 'Connect Whop to load sources.';
+      elements.discoveryMessage.textContent = whop.connected
+        ? 'The saved connection exists, but private source access stays disabled until live verification succeeds.'
+        : '';
+      return false;
     }
-    elements.discoverySummary.textContent = 'Finding your active Whop content…';
-    elements.discoveryMessage.textContent = '';
-    try {
-      state.discovery = await requestJson('/api/discover');
-      renderDiscovery();
-    } catch (error) {
-      state.discovery = { groups: [], counts: {} };
-      renderDiscovery();
-      elements.discoverySummary.textContent = 'Automatic discovery needs attention.';
-      elements.discoveryMessage.textContent = error.message;
-      showStatus(error.message, 'error');
+    if (manual) state.discoveryAutoPasses = 0;
+    const token = ++state.discoveryRequestToken;
+    const previous = state.discovery;
+    if (!background || !previous) {
+      elements.discoverySummary.textContent = previous ? 'Refreshing your active Whop content…' : 'Finding your active Whop content…';
+      elements.discoveryMessage.textContent = 'Whop is connected and verified. Source discovery is running separately.';
     }
+
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const data = await requestJson('/api/discover');
+        if (token !== state.discoveryRequestToken) return false;
+        state.discovery = data;
+        renderDiscovery();
+        elements.discoveryMessage.textContent = discoveryStatusText(data);
+        scheduleDiscoveryContinuation(data);
+        return true;
+      } catch (error) {
+        lastError = error;
+        if (token !== state.discoveryRequestToken) return false;
+        if (!isTransientClientError(error) || attempt === 2) break;
+        elements.discoverySummary.textContent = 'Whop connected · source refresh retrying…';
+        elements.discoveryMessage.textContent = `The connection is valid. A temporary source-discovery request failed; retry ${attempt + 1} of 2 is automatic.`;
+        await wait(450 * (attempt + 1));
+      }
+    }
+
+    if (token !== state.discoveryRequestToken) return false;
+    if (previous) state.discovery = previous;
+    else state.discovery = { groups: [], counts: {} };
+    renderDiscovery();
+    const connectionStillVerified = Boolean(state.dashboard?.whop?.connected && state.dashboard?.whop?.verified);
+    elements.discoverySummary.textContent = connectionStillVerified
+      ? 'Whop connected · source refresh paused'
+      : 'Whop connection needs verification';
+    elements.discoveryMessage.textContent = connectionStillVerified
+      ? `${lastError?.message || 'Source discovery could not refresh.'} Your saved sources and the rest of the Control Center remain available.`
+      : 'Source loading is disabled until the Whop connection is verified again.';
+    return false;
   }
 
   function updateSourceDecision(id, decision) {
@@ -1134,8 +1236,27 @@
   async function loadDashboard({ discovery = false } = {}) {
     const data = await api('dashboard', { method: 'GET' });
     ingestDashboard(data);
-    if (discovery) await loadDiscovery();
-    else renderDiscovery();
+    renderDiscovery();
+    if (discovery && data.whop?.connected && data.whop?.verified) await loadDiscovery();
+    return data;
+  }
+
+  async function verifyWhopUntilSettled() {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const whop = state.dashboard?.whop || {};
+      if (!whop.connected || whop.verified) return whop;
+      await wait(700 * (attempt + 1));
+      try {
+        const data = await loadDashboard({ discovery: false });
+        if (data.whop?.verified) {
+          await loadDiscovery({ manual: true });
+          return data.whop;
+        }
+      } catch (error) {
+        if (!isTransientClientError(error)) throw error;
+      }
+    }
+    return state.dashboard?.whop || {};
   }
 
   function syncBulkButtons() {
@@ -1392,15 +1513,25 @@
     try {
       const session = await api('session', { method: 'GET' });
       if (!session.authenticated) return lock();
-      await loadDashboard({ discovery: true });
-      await Promise.all([loadBulkJob(), loadRecentActions()]);
+      const dashboard = await loadDashboard({ discovery: false });
+      const background = [loadBulkJob(), loadRecentActions()];
+      if (dashboard.whop?.verified) background.push(loadDiscovery({ manual: true }));
+      else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
+      await Promise.allSettled(background);
       const params = new URLSearchParams(location.search);
       if (params.get('whop') === 'error') showStatus(params.get('message') || 'Whop login failed.', 'error');
-      else if (params.get('whop') === 'connected') showStatus('Whop connected successfully.');
+      else if (params.get('whop') === 'connected' && state.dashboard?.whop?.verified) showStatus('Whop connected and verified successfully.');
     } catch (error) {
-      lock();
-      elements.loginMessage.textContent = error.message;
-      elements.loginMessage.hidden = false;
+      if (error.status === 401) {
+        lock();
+        elements.loginMessage.textContent = 'Your Control Center session expired. Unlock it again.';
+        elements.loginMessage.hidden = false;
+        return;
+      }
+      unlock();
+      showStatus(isTransientClientError(error)
+        ? 'SniperPlug is temporarily retrying its startup services. Your saved data has not been disconnected.'
+        : error.message, isTransientClientError(error) ? 'warning' : 'error');
     }
   }
 
@@ -1414,8 +1545,11 @@
       await withButton(button, 'Unlocking…', async () => {
         await api('session', { method: 'POST', body: JSON.stringify({ password: new FormData(form).get('password') }) });
         form.reset();
-        await loadDashboard({ discovery: true });
-        await Promise.all([loadBulkJob(), loadRecentActions()]);
+        const dashboard = await loadDashboard({ discovery: false });
+        const background = [loadBulkJob(), loadRecentActions()];
+        if (dashboard.whop?.verified) background.push(loadDiscovery({ manual: true }));
+        else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
+        await Promise.allSettled(background);
       }).catch((error) => {
         elements.loginMessage.textContent = error.message;
         elements.loginMessage.hidden = false;
@@ -1535,7 +1669,7 @@
       return;
     }
     if (button === elements.refreshGroups) {
-      await withButton(button, 'Refreshing sources…', loadDiscovery).catch((error) => showStatus(error.message, 'error'));
+      await withButton(button, 'Refreshing sources…', () => loadDiscovery({ manual: true }));
       return;
     }
     if (button === elements.approveSelected) return decideSources([...state.selectedSources], 'approved', button);

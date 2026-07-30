@@ -254,3 +254,17 @@
   background:rgba(104,227,132,.09);
   color:var(--brand);
 }
+
+.whop-connection-detail{
+  margin:0;
+  padding:.72rem .9rem;
+  border:1px solid rgba(255,255,255,.1);
+  border-radius:14px;
+  background:#0d1421;
+  color:var(--muted);
+  overflow-wrap:anywhere;
+}
+.whop-connection-detail[data-state="ok"]{border-color:rgba(104,227,132,.3);color:var(--brand)}
+.whop-connection-detail[data-state="working"]{border-color:rgba(53,194,255,.3);color:var(--brand2)}
+.state-pill[data-state="checking"]{border-color:rgba(53,194,255,.38);background:rgba(53,194,255,.09);color:var(--brand2)}
+.discovery-status[data-state="working"]{border-color:rgba(53,194,255,.3)}

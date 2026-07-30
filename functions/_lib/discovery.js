@@ -1,4 +1,4 @@
-import { HttpError } from './http.js';
+import { HttpError, requireDatabase } from './http.js';
 import { sourceDecision } from './source-policy.js';
 import {
   inspectWhopApp,
@@ -6,6 +6,7 @@ import {
   requiredScopeForExperience,
   resolveWhopExperienceType,
   whopApi,
+  whopExperienceType,
 } from './whop.js';
 
 const PAGE_SIZE = 50;
@@ -14,6 +15,10 @@ const MAX_MEMBERSHIPS = 1000;
 const MAX_ITEMS_PER_SCOPE = 500;
 const MAX_COMPANIES = 100;
 const CONCURRENCY = 5;
+const SQL_BATCH_SIZE = 60;
+const CAPABILITY_CACHE_TTL_MS = 24 * 60 * 60_000;
+const TRANSIENT_CAPABILITY_RETRY_MS = 2 * 60_000;
+export const MAX_CAPABILITY_PROBES_PER_REQUEST = 6;
 const ACCESS_GRANTING_MEMBERSHIP_STATUSES = new Set([
   'active',
   'trialing',
@@ -28,6 +33,7 @@ const DEFAULT_GROUPS = new Map([
 ]);
 const SUPPORTED_TYPES = new Set(['forum', 'course', 'chat']);
 const REQUIRED_CONTENT_SCOPES = ['forum:read', 'courses:read', 'chat:read'];
+let capabilitySchemaPromise = null;
 
 function normalize(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
@@ -40,6 +46,125 @@ function exactExperienceId(value) {
 
 function scopeSet(session) {
   return new Set(String(session?.scopes || '').replaceAll('::', ':').split(/\s+/).map((scope) => scope.trim()).filter(Boolean));
+}
+
+function safeJson(value, fallback = null) {
+  try { return JSON.parse(value || ''); } catch { return fallback; }
+}
+
+function chunks(values, size = SQL_BATCH_SIZE) {
+  const output = [];
+  for (let index = 0; index < values.length; index += size) output.push(values.slice(index, index + size));
+  return output;
+}
+
+export function isTransientDiscoveryError(error) {
+  const status = Number(error?.status || 0);
+  return !status || [408, 425, 429, 500, 502, 503, 504].includes(status);
+}
+
+export function capabilityCacheFresh(row, now = Date.now()) {
+  if (!row?.checked_at) return false;
+  const checked = Date.parse(String(row.checked_at));
+  if (!Number.isFinite(checked) || now - checked > CAPABILITY_CACHE_TTL_MS) return false;
+  if (String(row.probe_status || '') === 'transient') {
+    const retryAfter = Date.parse(String(row.retry_after || ''));
+    return Number.isFinite(retryAfter) && retryAfter > now;
+  }
+  return String(row.probe_status || '') === 'complete';
+}
+
+export function createCapabilityProbeBudget(limit = MAX_CAPABILITY_PROBES_PER_REQUEST) {
+  const numericLimit = Math.max(0, Number.parseInt(limit, 10) || 0);
+  return {
+    limit: numericLimit,
+    remaining: numericLimit,
+    used: 0,
+    take() {
+      if (this.remaining <= 0) return false;
+      this.remaining -= 1;
+      this.used += 1;
+      return true;
+    },
+  };
+}
+
+async function ensureCapabilityCache(env) {
+  if (capabilitySchemaPromise) return capabilitySchemaPromise;
+  const db = requireDatabase(env);
+  capabilitySchemaPromise = db.batch([
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS whop_experience_capabilities (
+        experience_id TEXT PRIMARY KEY,
+        source_type TEXT NOT NULL CHECK (source_type IN ('forum', 'course', 'chat', 'unsupported')),
+        app_json TEXT NOT NULL DEFAULT '{}',
+        probe_status TEXT NOT NULL CHECK (probe_status IN ('complete', 'transient')),
+        probe_error TEXT,
+        retry_after TEXT,
+        checked_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_capabilities_checked ON whop_experience_capabilities (checked_at)'),
+  ]).then(() => db).catch((error) => {
+    capabilitySchemaPromise = null;
+    throw error;
+  });
+  return capabilitySchemaPromise;
+}
+
+async function loadCapabilityCache(env, ids) {
+  const exactIds = [...new Set(ids.map(exactExperienceId).filter(Boolean))];
+  if (!exactIds.length) return new Map();
+  try {
+    const db = await ensureCapabilityCache(env);
+    const output = new Map();
+    for (const batch of chunks(exactIds)) {
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = await db.prepare(`
+        SELECT experience_id, source_type, app_json, probe_status, probe_error, retry_after, checked_at
+        FROM whop_experience_capabilities
+        WHERE experience_id IN (${placeholders})
+      `).bind(...batch).all();
+      for (const row of rows.results || []) output.set(String(row.experience_id), row);
+    }
+    return output;
+  } catch (error) {
+    console.warn('Whop capability cache is unavailable; discovery will continue with a bounded live probe.', error);
+    return new Map();
+  }
+}
+
+async function saveCapabilityRows(env, rows) {
+  if (!rows.length) return;
+  try {
+    const db = await ensureCapabilityCache(env);
+    const statements = rows.map((row) => db.prepare(`
+      INSERT INTO whop_experience_capabilities (
+        experience_id, source_type, app_json, probe_status, probe_error, retry_after, checked_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(experience_id) DO UPDATE SET
+        source_type = excluded.source_type,
+        app_json = excluded.app_json,
+        probe_status = excluded.probe_status,
+        probe_error = excluded.probe_error,
+        retry_after = excluded.retry_after,
+        checked_at = excluded.checked_at,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.experienceId,
+      row.sourceType,
+      JSON.stringify(row.app || {}),
+      row.probeStatus,
+      row.probeError || null,
+      row.retryAfter || null,
+      row.checkedAt,
+      row.updatedAt,
+    ));
+    for (const batch of chunks(statements, 50)) await db.batch(batch);
+  } catch (error) {
+    console.warn('Whop capability results could not be cached; current discovery results remain usable.', error);
+  }
 }
 
 export function membershipGrantsAccess(membership) {
@@ -148,20 +273,7 @@ function discoveryFailure(label, error) {
   return `${label} failed${message ? `: ${message}` : ''}`;
 }
 
-async function capability(session, experience, grantedScopes) {
-  const sourceType = await resolveWhopExperienceType(session, experience);
-  const requiredScope = requiredScopeForType(sourceType) || requiredScopeForExperience(experience);
-  return {
-    sourceType,
-    supported: SUPPORTED_TYPES.has(sourceType),
-    requiredScope,
-    scopeGranted: !requiredScope || grantedScopes.has(requiredScope),
-    appName: String(experience?.app?.name || 'Unknown app').trim() || 'Unknown app',
-    detectedBy: sourceType !== 'unsupported' && requiredScopeForExperience(experience) == null ? 'official-endpoint-probe' : 'app-metadata',
-  };
-}
-
-async function discoverCompanySources(session, env, company, grantedScopes) {
+async function discoverCompanyListings(session, company) {
   const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
   const scopes = [
     { id: null, title: 'company-wide access' },
@@ -199,51 +311,152 @@ async function discoverCompanySources(session, env, company, grantedScopes) {
       if (experience) discovered.set(experience.id, experience);
     }
   }
+  return { company, experiences: [...discovered.values()], failures: [...failures] };
+}
 
+function cachedCapability(row) {
+  if (!row) return null;
+  return {
+    sourceType: String(row.source_type || 'unsupported'),
+    app: safeJson(row.app_json, null),
+    probeStatus: String(row.probe_status || ''),
+    probeError: String(row.probe_error || '').trim() || null,
+    retryAfter: row.retry_after || null,
+  };
+}
+
+async function capability(session, experience, grantedScopes, cache, budget, writes) {
+  const appName = String(experience?.app?.name || 'Unknown app').trim() || 'Unknown app';
+  const knownType = whopExperienceType(experience);
+  let sourceType = knownType;
+  let app = null;
+  let detectedBy = knownType === 'unsupported' ? 'unresolved' : 'app-metadata';
+  let probeAttempted = false;
+  let probeDeferred = false;
+  let probeFailed = false;
+  let probeError = null;
+  let cached = false;
+
+  if (knownType === 'unsupported') {
+    const row = cache.get(experience.id);
+    if (capabilityCacheFresh(row)) {
+      const saved = cachedCapability(row);
+      sourceType = saved.sourceType;
+      app = saved.app;
+      cached = true;
+      detectedBy = saved.probeStatus === 'complete' ? 'capability-cache' : 'temporary-probe-hold';
+      probeAttempted = true;
+      probeFailed = saved.probeStatus === 'transient';
+      probeError = saved.probeError;
+      probeDeferred = probeFailed;
+    } else if (!budget.take()) {
+      probeDeferred = true;
+      detectedBy = 'queued-probe';
+    } else {
+      probeAttempted = true;
+      const now = new Date();
+      try {
+        sourceType = await resolveWhopExperienceType(session, experience);
+        detectedBy = sourceType === 'unsupported' ? 'official-endpoint-probe' : 'official-endpoint-probe';
+        if (sourceType === 'unsupported') app = await inspectWhopApp(session, experience);
+        writes.push({
+          experienceId: experience.id,
+          sourceType,
+          app,
+          probeStatus: 'complete',
+          probeError: null,
+          retryAfter: null,
+          checkedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        });
+      } catch (error) {
+        probeFailed = true;
+        probeDeferred = true;
+        probeError = discoveryFailure('Native content probe', error);
+        detectedBy = 'temporary-probe-failure';
+        if (!isTransientDiscoveryError(error)) console.warn(`Whop capability probe failed for ${experience.id}.`, error);
+        const retryAt = new Date(now.getTime() + TRANSIENT_CAPABILITY_RETRY_MS).toISOString();
+        writes.push({
+          experienceId: experience.id,
+          sourceType: 'unsupported',
+          app: null,
+          probeStatus: 'transient',
+          probeError,
+          retryAfter: retryAt,
+          checkedAt: now.toISOString(),
+          updatedAt: now.toISOString(),
+        });
+        sourceType = 'unsupported';
+      }
+    }
+  }
+
+  const requiredScope = requiredScopeForType(sourceType) || requiredScopeForExperience(experience);
+  return {
+    sourceType,
+    supported: SUPPORTED_TYPES.has(sourceType),
+    requiredScope,
+    scopeGranted: !requiredScope || grantedScopes.has(requiredScope),
+    appName,
+    detectedBy,
+    app,
+    probeAttempted,
+    probeDeferred,
+    probeFailed,
+    probeError,
+    cached,
+  };
+}
+
+async function classifyCompanySources(session, env, listing, grantedScopes, capabilityCache, budget, writes) {
   const sources = [];
   const externalApps = [];
-  const inspected = await mapConcurrent([...discovered.values()], async (experience) => ({
+  const failures = new Set(listing.failures || []);
+  const inspected = await mapConcurrent(listing.experiences || [], async (experience) => ({
     experience,
-    details: await capability(session, experience, grantedScopes),
+    details: await capability(session, experience, grantedScopes, capabilityCache, budget, writes),
   }), Math.min(3, CONCURRENCY));
+
   for (const { experience, details } of inspected) {
     if (!details.supported) {
-      const app = await inspectWhopApp(session, experience);
       externalApps.push({
         experience,
         capability: {
           ...details,
-          app,
-          probeAttempted: true,
-          reason: app?.hasOpenapiView
-            ? 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This app advertises its own OpenAPI view, which still requires the app publisher’s documented authorization contract.'
-            : 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This is an app-specific experience, so its content requires an API published by that app rather than a guessed or scraped endpoint.',
+          probeAttempted: details.probeAttempted,
+          reason: details.probeDeferred
+            ? details.probeError || 'This app-specific module is queued for a bounded automatic capability check. Whop remains connected while SniperPlug finishes checking modules in the background.'
+            : details.app?.hasOpenapiView
+              ? 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This app advertises its own OpenAPI view, which still requires the app publisher’s documented authorization contract.'
+              : 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This is app-specific content, so it requires an API published by that app rather than a guessed or scraped endpoint.',
         },
       });
       continue;
     }
+
     experience.resolved_source_type = details.sourceType;
-    sources.push({
-      experience,
-      capability: details,
-      source: await sourceDecision(env, experience, experience.id),
-    });
+    let savedSource;
+    try {
+      savedSource = await sourceDecision(env, experience, experience.id);
+    } catch (error) {
+      failures.add(discoveryFailure(`${experience.name || experience.id} saved decision`, error));
+      savedSource = {
+        experienceId: experience.id,
+        label: experience.name || experience.id,
+        appName: details.appName,
+        decision: 'pending',
+      };
+    }
+    sources.push({ experience, capability: details, source: savedSource });
   }
 
   let error = null;
   if (!sources.length && !externalApps.length) {
     error = failures.size
-      ? `Whop found the membership, but company-wide and product-scoped discovery could not read its modules: ${[...failures].join('; ')}.`
+      ? `Whop found the membership, but its source checks need attention: ${[...failures].join('; ')}.`
       : 'Whop found the membership product, but it has no current readable experiences attached.';
   }
-
-  return {
-    company,
-    sources,
-    externalApps,
-    failures: [...failures],
-    error,
-  };
+  return { company: listing.company, sources, externalApps, failures: [...failures], error };
 }
 
 export async function discoverWhopSources(session, env) {
@@ -260,7 +473,35 @@ export async function discoverWhopSources(session, env) {
   const grantedScopes = scopeSet(session);
   const activeMemberships = memberships.filter(membershipGrantsAccess);
   const companies = membershipCompanies(activeMemberships);
-  const results = await mapConcurrent(companies, (company) => discoverCompanySources(session, env, company, grantedScopes));
+  const listings = await mapConcurrent(companies, async (company) => {
+    try {
+      return await discoverCompanyListings(session, company);
+    } catch (error) {
+      return {
+        company,
+        experiences: [],
+        failures: [discoveryFailure(`${company.title} discovery`, error)],
+      };
+    }
+  });
+
+  const unknownIds = listings.flatMap((listing) => listing.experiences || [])
+    .filter((experience) => whopExperienceType(experience) === 'unsupported')
+    .map((experience) => experience.id);
+  const capabilityCache = await loadCapabilityCache(env, unknownIds);
+  const budget = createCapabilityProbeBudget();
+  const writes = [];
+  const results = await mapConcurrent(listings, (listing) => classifyCompanySources(
+    session,
+    env,
+    listing,
+    grantedScopes,
+    capabilityCache,
+    budget,
+    writes,
+  ), Math.min(3, CONCURRENCY));
+  await saveCapabilityRows(env, writes);
+
   const emptyGroups = results.filter((result) => !result.sources.length && !result.externalApps.length).length;
   const groups = results.map(({ company, sources, externalApps, failures, error }) => ({
     company: {
@@ -278,7 +519,7 @@ export async function discoverWhopSources(session, env) {
     unsupported: externalApps,
     failures,
     error,
-  })).filter((group) => group.sources.length || group.externalApps.length);
+  })).filter((group) => group.sources.length || group.externalApps.length || group.error);
 
   groups.sort((left, right) => left.defaultRank - right.defaultRank || left.company.title.localeCompare(right.company.title));
   const sources = groups.flatMap((group) => group.sources);
@@ -287,10 +528,20 @@ export async function discoverWhopSources(session, env) {
     counts[entry.capability.sourceType] = (counts[entry.capability.sourceType] || 0) + 1;
     return counts;
   }, {});
+  const pendingProbes = externalApps.filter((entry) => entry.capability?.probeDeferred).length;
+  const failedProbes = externalApps.filter((entry) => entry.capability?.probeFailed).length;
 
   return {
     groups,
     missingScopes: REQUIRED_CONTENT_SCOPES.filter((scope) => !grantedScopes.has(scope)),
+    capabilityProbe: {
+      limit: budget.limit,
+      checked: budget.used,
+      pending: pendingProbes,
+      failed: failedProbes,
+      complete: pendingProbes === 0,
+      cacheReady: capabilityCache.size > 0 || unknownIds.length === 0,
+    },
     counts: {
       memberships: activeMemberships.length,
       ignoredMemberships: memberships.length - activeMemberships.length,
