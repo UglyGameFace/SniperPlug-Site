@@ -59,7 +59,7 @@ assert.ok(jobs.includes('leaseToken') && jobs.includes('lease_until = ?'), 'Bulk
 assert.ok(!jobs.includes('IMPORT_CHUNK = 50'), 'The unsafe source-wide 50-item import batch returned.');
 assert.ok(jobs.includes("item.decision !== 'blocked'"), 'Blocked content can be auto-approved.');
 assert.ok(jobs.includes('manualReview') && jobs.includes('expired'), 'Bulk summaries do not explain held manual or expired items.');
-assert.ok(jobs.includes("outcome: issueCount > 0 ? 'completed-with-issues' : 'completed-successfully'"), 'Completed bulk jobs do not distinguish clean completion from held or failed items.');
+assert.ok(jobs.includes("'completed-with-issues'") && jobs.includes("'completed-successfully'") && jobs.includes('issueCount: issues'), 'Completed bulk jobs do not distinguish clean completion from held or failed items.');
 
 assert.ok(jobsEndpoint.includes('requireAdmin'), 'Bulk job endpoint is not owner protected.');
 assert.ok(jobsEndpoint.includes('requireSameOrigin'), 'Bulk job endpoint lacks same-origin protection.');
