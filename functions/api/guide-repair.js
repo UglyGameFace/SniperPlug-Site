@@ -1,17 +1,17 @@
 import { requireAdmin } from '../_lib/auth.js';
 import { restoreCourseVideos, snapshotCourseVideos } from '../_lib/course-video.js';
+import { restoreGuideSnapshot } from '../_lib/guide-snapshots.js';
 import { adminGuide, importApprovedPosts } from '../_lib/guides-media.js';
 import { handleError, HttpError, json, methodNotAllowed, readJson, requireDatabase, requireSameOrigin } from '../_lib/http.js';
+import {
+  acquireRecoveryLease,
+  assertRecoveryLeaseOwned,
+  releaseRecoveryLease,
+  renewRecoveryLease,
+} from '../_lib/recovery-leases.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 const MAX_RECOVERY_ROWS = 250;
-const RECOVERY_LEASE_MS = 5 * 60 * 1000;
-const GUIDE_RESTORE_COLUMNS = [
-  'slug', 'title', 'description', 'category_slug', 'body_markdown', 'status', 'featured', 'sort_order',
-  'source_key', 'source_group', 'source_experience_id', 'source_post_id', 'source_fingerprint',
-  'attachment_json', 'integrity_json', 'author_json', 'source_created_at', 'source_updated_at',
-  'imported_at', 'updated_at', 'published_at',
-];
 
 function numericId(value) {
   const id = Number.parseInt(value, 10);
@@ -42,46 +42,6 @@ async function rejectedImports(env) {
   }));
 }
 
-async function ensureRecoveryLeaseTable(db) {
-  await db.prepare(`
-    CREATE TABLE IF NOT EXISTS guide_recovery_leases (
-      guide_id INTEGER PRIMARY KEY,
-      lease_token TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      FOREIGN KEY (guide_id) REFERENCES guides(id) ON DELETE CASCADE
-    )
-  `).run();
-}
-
-async function acquireRecoveryLease(db, guideId) {
-  await ensureRecoveryLeaseTable(db);
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const token = crypto.randomUUID();
-  await db.prepare('DELETE FROM guide_recovery_leases WHERE expires_at <= ?').bind(nowIso).run();
-  const result = await db.prepare(`
-    INSERT OR IGNORE INTO guide_recovery_leases (guide_id, lease_token, expires_at, created_at)
-    VALUES (?, ?, ?, ?)
-  `).bind(guideId, token, new Date(now.getTime() + RECOVERY_LEASE_MS).toISOString(), nowIso).run();
-  if (!Number(result.meta?.changes || 0)) {
-    throw new HttpError(409, 'This guide is already being restored in another tab or request. Wait for that operation to finish, then refresh.');
-  }
-  return token;
-}
-
-async function releaseRecoveryLease(db, guideId, token) {
-  await db.prepare('DELETE FROM guide_recovery_leases WHERE guide_id = ? AND lease_token = ?')
-    .bind(guideId, token).run();
-}
-
-async function restoreGuideSnapshot(db, row) {
-  const assignments = GUIDE_RESTORE_COLUMNS.map((column) => `${column} = ?`).join(', ');
-  await db.prepare(`UPDATE guides SET ${assignments} WHERE id = ?`)
-    .bind(...GUIDE_RESTORE_COLUMNS.map((column) => row[column] ?? null), row.id)
-    .run();
-}
-
 async function repairGuide(request, env, admin) {
   requireSameOrigin(request);
   const input = await readJson(request, { maxBytes: 20_000 });
@@ -98,7 +58,7 @@ async function repairGuide(request, env, admin) {
     throw new HttpError(422, 'This guide was not imported from a recoverable Whop Experience.');
   }
 
-  const leaseToken = await acquireRecoveryLease(db, id);
+  const lease = await acquireRecoveryLease(env, id);
   try {
     const lockedRow = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
     if (!lockedRow || lockedRow.status !== 'rejected' || lockedRow.source_key !== row.source_key) {
@@ -110,6 +70,7 @@ async function repairGuide(request, env, admin) {
     const videoSnapshot = await snapshotCourseVideos(env, id);
 
     try {
+      await renewRecoveryLease(env, lease);
       const output = await importApprovedPosts(env, whop, {
         experienceId: experience.id,
         sourceKeys: [lockedRow.source_key],
@@ -141,10 +102,19 @@ async function repairGuide(request, env, admin) {
       });
     } catch (error) {
       try {
-        await restoreGuideSnapshot(db, lockedRow);
+        await assertRecoveryLeaseOwned(env, lease);
+        const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
+        if (!current || String(current.source_key || '') !== String(lockedRow.source_key || '')) {
+          throw new HttpError(409, 'The guide changed identity while recovery was running. Newer work was preserved.', {
+            code: 'guide_recovery_rollback_stale',
+            guideId: id,
+          });
+        }
+        await restoreGuideSnapshot(env, lockedRow, { expectedUpdatedAt: current.updated_at });
         await restoreCourseVideos(env, id, videoSnapshot);
       } catch (rollbackError) {
-        throw new HttpError(500, 'Recovery failed and SniperPlug could not restore the original rejected guide and video state.', {
+        throw new HttpError(500, 'Recovery failed and SniperPlug could not safely restore the original rejected guide and video state.', {
+          code: 'guide_recovery_rollback_failed',
           recoveryError: String(error?.message || error),
           rollbackError: String(rollbackError?.message || rollbackError),
         });
@@ -152,7 +122,7 @@ async function repairGuide(request, env, admin) {
       throw error;
     }
   } finally {
-    await releaseRecoveryLease(db, id, leaseToken).catch(() => null);
+    await releaseRecoveryLease(env, lease).catch(() => null);
   }
 }
 
