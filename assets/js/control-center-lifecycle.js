@@ -171,8 +171,8 @@
 
 (() => {
   // Loaded from the already-versioned lifecycle asset so old Samsung Internet
-  // tabs cannot silently omit recovery or authoritative bulk-status hardening.
-  const version = '20260730.9';
+  // tabs cannot silently omit recovery, bulk status, or browser compatibility hardening.
+  const version = '20260730.10';
   if (!document.querySelector('link[data-control-recovery]')) {
     const style = document.createElement('link');
     style.rel = 'stylesheet';
@@ -183,6 +183,7 @@
   for (const [name, src] of [
     ['controlRecovery', `/assets/js/control-center-recovery.js?v=${version}`],
     ['controlBulkStatus', `/assets/js/control-center-bulk-status.js?v=${version}`],
+    ['controlBrowserCompat', `/assets/js/control-center-browser-compat.js?v=${version}`],
   ]) {
     const selector = `script[data-${name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}]`;
     if (document.querySelector(selector)) continue;
