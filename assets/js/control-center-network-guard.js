@@ -2,6 +2,19 @@
   if (window.__sniperplugApiFetchGuardInstalled) return;
   window.__sniperplugApiFetchGuardInstalled = true;
 
+  const loginPanel = document.querySelector('[data-login-panel]');
+  const ownerForm = document.querySelector('[data-login-form]');
+  if (loginPanel instanceof HTMLElement && ownerForm instanceof HTMLFormElement && !loginPanel.querySelector('[data-customer-whop-login]')) {
+    const customer = document.createElement('div');
+    customer.className = 'customer-whop-login';
+    customer.innerHTML = '<a class="btn primary" href="/api/importer-login" data-customer-whop-login>Sign in with Whop</a><p>Customer access is verified against the importer product and the Discord account linked to Whop.</p><hr><small>Owner emergency access</small>';
+    ownerForm.before(customer);
+    const label = ownerForm.querySelector('label span');
+    if (label) label.textContent = 'Private owner password';
+    const button = ownerForm.querySelector('button[type="submit"]');
+    if (button) button.textContent = 'Owner unlock';
+  }
+
   const nativeFetch = window.fetch.bind(window);
   const READ_TIMEOUT_MS = 45_000;
   const WRITE_TIMEOUT_MS = 120_000;
