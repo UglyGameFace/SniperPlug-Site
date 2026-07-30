@@ -7,14 +7,7 @@ import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
 
 function plainExcerpt(value, limit = 260) {
-  return String(value || '')
-    .replace(/^ {0,3}#{1,6}\s+/gm, '')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/[`*_~>|]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, limit);
+  return String(value || '').replace(/^ {0,3}#{1,6}\s+/gm, '').replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[`*_~>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, limit);
 }
 
 function fallbackTitle(content, sourceType) {
@@ -57,19 +50,11 @@ async function normalizeItem(item, experienceId, sourceType) {
     contentType: sourceType,
     title,
     excerpt: plainExcerpt(body),
-    author: item?.user ? {
-      id: item.user.id || null,
-      name: item.user.name || null,
-      username: item.user.username || null,
-    } : null,
+    author: item?.user ? { id: item.user.id || null, name: item.user.name || null, username: item.user.username || null } : null,
     attachments,
     sourceCreatedAt: item?.created_at || null,
     sourceUpdatedAt: item?.updated_at || item?.created_at || null,
-    sourceMeta: {
-      type: sourceType,
-      ...(item?.sourceMeta || {}),
-      importPolicy: policy,
-    },
+    sourceMeta: { type: sourceType, ...(item?.sourceMeta || {}), importPolicy: policy },
   };
 
   if (policy.blocked) {
@@ -77,41 +62,19 @@ async function normalizeItem(item, experienceId, sourceType) {
       ...base,
       body,
       sourceFingerprint: null,
-      integrity: {
-        blocked: true,
-        sourceType,
-        sourceMeta: base.sourceMeta,
-        error: policy.reason,
-        code: policy.code,
-        autoPublishEligible: false,
-        policy,
-      },
+      integrity: { blocked: true, sourceType, sourceMeta: base.sourceMeta, error: policy.reason, code: policy.code, autoPublishEligible: false, policy },
       scanDecision: 'blocked',
     };
   }
 
   try {
     const integrity = await prepareGuideBody(body, { source: `Whop ${sourceType} item ${base.postId}` });
-    const sourceFingerprint = await sha256(JSON.stringify({
-      sourceKey,
-      title: base.title,
-      body: integrity.body,
-      attachments: base.attachments,
-      sourceUpdatedAt: base.sourceUpdatedAt,
-      sourceMeta: base.sourceMeta,
-    }));
+    const sourceFingerprint = await sha256(JSON.stringify({ sourceKey, title: base.title, body: integrity.body, attachments: base.attachments, sourceUpdatedAt: base.sourceUpdatedAt, sourceMeta: base.sourceMeta }));
     return {
       ...base,
       body: integrity.body,
       sourceFingerprint,
-      integrity: {
-        blocked: false,
-        sourceType,
-        sourceMeta: base.sourceMeta,
-        autoPublishEligible: policy.autoPublishEligible,
-        policy,
-        ...integrity,
-      },
+      integrity: { blocked: false, sourceType, sourceMeta: base.sourceMeta, autoPublishEligible: policy.autoPublishEligible, policy, ...integrity },
       scanDecision: 'pending',
     };
   } catch (error) {
@@ -119,15 +82,7 @@ async function normalizeItem(item, experienceId, sourceType) {
       ...base,
       body,
       sourceFingerprint: null,
-      integrity: {
-        blocked: true,
-        sourceType,
-        sourceMeta: base.sourceMeta,
-        error: error?.message || 'Formatting integrity validation failed.',
-        code: error?.details?.code || 'invalid_content',
-        autoPublishEligible: false,
-        policy,
-      },
+      integrity: { blocked: true, sourceType, sourceMeta: base.sourceMeta, error: error?.message || 'Formatting integrity validation failed.', code: error?.details?.code || 'invalid_content', autoPublishEligible: false, policy },
       scanDecision: 'blocked',
     };
   }
@@ -196,20 +151,9 @@ export async function scanApprovedSource(env, whopSession, experience) {
       END,
       last_scanned_at = excluded.last_scanned_at
   `).bind(
-    post.sourceKey,
-    post.experienceId,
-    post.postId,
-    post.title,
-    post.excerpt,
-    post.body,
-    JSON.stringify(post.author || {}),
-    JSON.stringify(post.attachments),
-    post.sourceCreatedAt,
-    post.sourceUpdatedAt,
-    post.sourceFingerprint,
-    JSON.stringify(post.integrity),
-    post.scanDecision,
-    now,
+    post.sourceKey, post.experienceId, post.postId, post.title, post.excerpt, post.body,
+    JSON.stringify(post.author || {}), JSON.stringify(post.attachments), post.sourceCreatedAt,
+    post.sourceUpdatedAt, post.sourceFingerprint, JSON.stringify(post.integrity), post.scanDecision, now,
   ));
   if (statements.length) await db.batch(statements);
 
@@ -257,7 +201,6 @@ export async function savePostDecisionVerified(env, sourceKeys, decision) {
   `).bind(decision, decision === 'pending' ? null : now, key));
   const results = await db.batch(statements);
   const changed = results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
-
   const rows = await rowsForSourceKeys(db, keys);
   const byKey = new Map(rows.map((row) => [String(row.source_key), row]));
   const missing = keys.filter((key) => !byKey.has(key));
@@ -267,7 +210,6 @@ export async function savePostDecisionVerified(env, sourceKeys, decision) {
     return row && row.decision !== 'blocked' && row.decision !== decision;
   });
   const confirmed = keys.filter((key) => byKey.get(key)?.decision === decision);
-
   return {
     requested: keys.length,
     changed,
@@ -277,18 +219,22 @@ export async function savePostDecisionVerified(env, sourceKeys, decision) {
     missing,
     mismatched,
     complete: missing.length === 0 && mismatched.length === 0 && blocked.length === 0 && confirmed.length === keys.length,
-    rows: rows.map((row) => ({
-      sourceKey: row.source_key,
-      experienceId: row.experience_id,
-      title: row.title,
-      decision: row.decision,
-      decisionUpdatedAt: row.decision_updated_at,
-    })),
+    rows: rows.map((row) => ({ sourceKey: row.source_key, experienceId: row.experience_id, title: row.title, decision: row.decision, decisionUpdatedAt: row.decision_updated_at })),
   };
 }
 
 export async function savePostDecision(env, sourceKeys, decision) {
   const result = await savePostDecisionVerified(env, sourceKeys, decision);
+  if (!result.complete) {
+    throw new HttpError(409, 'SniperPlug could not confirm every content decision in D1. Refresh the source before retrying.', {
+      code: 'post_decision_unconfirmed',
+      requested: result.requested,
+      confirmed: result.confirmed,
+      blocked: result.blocked,
+      missing: result.missing,
+      mismatched: result.mismatched,
+    });
+  }
   return result.changed;
 }
 
