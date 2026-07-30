@@ -171,8 +171,8 @@
 
 (() => {
   // Loaded from the already-versioned lifecycle asset so old Samsung Internet
-  // tabs cannot silently omit recovery, bulk status, or browser compatibility hardening.
-  const version = '20260730.10';
+  // tabs cannot silently omit recovery, bulk status, browser, or network hardening.
+  const version = '20260730.11';
   if (!document.querySelector('link[data-control-recovery]')) {
     const style = document.createElement('link');
     style.rel = 'stylesheet';
@@ -181,6 +181,7 @@
     document.head.append(style);
   }
   for (const [name, src] of [
+    ['controlNetworkGuard', `/assets/js/control-center-network-guard.js?v=${version}`],
     ['controlRecovery', `/assets/js/control-center-recovery.js?v=${version}`],
     ['controlBulkStatus', `/assets/js/control-center-bulk-status.js?v=${version}`],
     ['controlBrowserCompat', `/assets/js/control-center-browser-compat.js?v=${version}`],
@@ -189,6 +190,7 @@
     if (document.querySelector(selector)) continue;
     const script = document.createElement('script');
     script.src = src;
+    script.async = false;
     script.dataset[name] = '';
     document.body.append(script);
   }
