@@ -42,6 +42,8 @@ assert.ok(ownerSave.includes('restoreCourseVideos(env, id, videoSnapshot)'), 'Co
 assert.ok(ownerSave.includes("code: 'guide_save_rollback_failed'"), 'Incomplete rollback does not return a clear fatal state.');
 assert.ok(snapshots.includes('expectedUpdatedAt') && snapshots.includes("code: 'guide_rollback_stale'"), 'Snapshot restoration can overwrite a newer guide version.');
 assert.ok(safeEndpoint.includes("import { saveGuideDraft } from '../_lib/guides-owner-save.js'"), 'The safe endpoint bypasses the rollback service.');
+assert.ok(safeEndpoint.includes('runMediaStorageMaintenance') && safeEndpoint.includes('context.waitUntil'), 'Rollback-safe owner saves no longer schedule deferred media maintenance.');
+assert.ok(safeEndpoint.indexOf('const guide = await saveGuideDraft') < safeEndpoint.indexOf('scheduleMediaMaintenance(context)'), 'Media maintenance is scheduled before the safe save is confirmed.');
 
 assert.ok(versioning.includes('reserveGuideVersion') && versioning.includes('restoreGuideVersion'), 'Guide status operations do not have reusable optimistic reservations.');
 assert.ok(versioning.includes("code: 'guide_version_required'") && versioning.includes("code: 'guide_version_stale'"), 'Unversioned or stale status requests do not fail closed.');
@@ -68,4 +70,5 @@ console.log('✓ Control Center writes carry the exact guide version last confir
 console.log('✓ Old-tab draft saves fail closed instead of overwriting newer work.');
 console.log('✓ The save accepts its own attachment/video cleanup while rejecting real outside edits.');
 console.log('✓ Partial owner saves restore the complete guide row and course-video mappings safely.');
+console.log('✓ Rollback-safe saves still schedule deferred media inventory and cleanup.');
 console.log('✓ Publish, reject, and return-to-draft reserve the version before auditing or changing status.');
