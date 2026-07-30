@@ -43,7 +43,9 @@ assert.ok(ownerSave.includes("code: 'guide_save_rollback_failed'"), 'Incomplete 
 assert.ok(snapshots.includes('expectedUpdatedAt') && snapshots.includes("code: 'guide_rollback_stale'"), 'Snapshot restoration can overwrite a newer guide version.');
 assert.ok(safeEndpoint.includes("import { saveGuideDraft } from '../_lib/guides-owner-save.js'"), 'The safe endpoint bypasses the rollback service.');
 assert.ok(safeEndpoint.includes('runMediaStorageMaintenance') && safeEndpoint.includes('context.waitUntil'), 'Rollback-safe owner saves no longer schedule deferred media maintenance.');
-assert.ok(safeEndpoint.indexOf('const guide = await saveGuideDraft') < safeEndpoint.indexOf('scheduleMediaMaintenance(context)'), 'Media maintenance is scheduled before the safe save is confirmed.');
+const safeSaveIndex = safeEndpoint.indexOf('const guide = await saveGuideDraft');
+const maintenanceCallIndex = safeEndpoint.indexOf('scheduleMediaMaintenance(context);', safeSaveIndex);
+assert.ok(safeSaveIndex >= 0 && maintenanceCallIndex > safeSaveIndex, 'Media maintenance is scheduled before the safe save is confirmed.');
 
 assert.ok(versioning.includes('reserveGuideVersion') && versioning.includes('restoreGuideVersion'), 'Guide status operations do not have reusable optimistic reservations.');
 assert.ok(versioning.includes("code: 'guide_version_required'") && versioning.includes("code: 'guide_version_stale'"), 'Unversioned or stale status requests do not fail closed.');
