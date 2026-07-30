@@ -20,6 +20,8 @@ const bulkApi = read('functions/api/bulk-jobs.js');
 const publicSearch = read('functions/_lib/guide-search.js');
 const publicGuides = read('functions/_lib/guides-public.js');
 const page = read('control-center/index.html');
+const recent = read('functions/_lib/recent-actions.js');
+const runtime = read('assets/js/control-center-v2.js');
 const publishingCss = read('assets/css/control-center-publishing.css');
 
 const longChat = classifyWhopItem({
@@ -136,6 +138,10 @@ assert.ok(imports.includes('retrieveExperienceItem'), 'Import still re-lists an 
 assert.ok(imports.includes("action: 'held-policy'"), 'Exact content that fails revalidation is not held safely.');
 assert.ok(imports.includes("action: 'duplicate-held'"), 'Exact duplicate guides are not held.');
 assert.ok(imports.includes('MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM'), 'Attachment-heavy content can still exceed a bounded automatic step.');
+assert.ok(imports.includes("existing.status !== 'rejected'"), 'Rejected imported guides are still mistaken for unchanged and cannot be re-imported.');
+assert.ok(recent.includes("status = 'rejected'") && recent.includes("status IN ('published', 'rejected')"), 'Rejected imported guides are missing from 48-hour restore or cannot return to draft.');
+assert.ok(runtime.includes('Rejected · can restore') && runtime.includes('published or rejected imported guides'), 'The Undo panel still mislabels rejected-guide restoration as publication-only.');
+assert.ok(page.includes('Restore recent imported changes'), 'The Control Center does not explain that rejected imports can be restored.');
 
 assert.ok(reconcile.includes("status IN ('draft', 'published')"), 'Cleanup does not inspect the full active imported guide queue.');
 assert.ok(reconcile.includes('reconcileImportedGuides'), 'Unified imported-guide cleanup is missing.');

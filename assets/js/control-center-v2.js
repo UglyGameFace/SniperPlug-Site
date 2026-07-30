@@ -1497,7 +1497,7 @@
       copy.append(title, meta);
       const status = document.createElement('span');
       status.className = 'recent-action-status';
-      status.textContent = action.reversible ? 'Published' : action.status;
+      status.textContent = action.status === 'rejected' ? 'Rejected · can restore' : action.status === 'published' ? 'Published · can undo' : action.status;
       row.append(checkbox, copy, status);
       fragment.append(row);
     }
@@ -1505,7 +1505,7 @@
     if (!actions.length) {
       const empty = document.createElement('p');
       empty.className = 'recent-actions-empty';
-      empty.textContent = 'No reversible bulk publications from the last 48 hours.';
+      empty.textContent = 'No reversible published or rejected imported guides from the last 48 hours.';
       elements.recentList.append(empty);
     }
     const selected = [...state.recentSelection].filter((id) => actions.some((action) => action.actionId === id && action.reversible)).length;
@@ -1528,7 +1528,7 @@
   async function undoActions({ all = false, button = null } = {}) {
     const actionIds = all ? [] : [...state.recentSelection];
     if (!all && !actionIds.length) return;
-    if (all && !window.confirm('Undo every reversible bulk publication from the last 48 hours? The guides will return to private drafts and any active bulk job will be canceled.')) return;
+    if (all && !window.confirm('Restore every reversible published or rejected imported guide from the last 48 hours? They will return to private drafts and any active bulk job will be canceled.')) return;
     await withButton(button, all ? 'Undoing all…' : `Undoing ${actionIds.length}…`, async () => {
       const output = await recentApi({ all, actionIds, cancelActive: all });
       state.recent = output.history;
