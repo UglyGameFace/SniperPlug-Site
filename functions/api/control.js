@@ -28,6 +28,7 @@ import {
   suggestedCategoryForText,
 } from '../_lib/guides-media.js';
 import { reconcileRecentBulkImports } from '../_lib/import-reconciliation.js';
+import { getMediaStorageStatus, runMediaStorageMaintenance } from '../_lib/media-storage.js';
 import {
   listSavedPosts,
   savePostDecision,
@@ -132,20 +133,62 @@ async function verifiedWhopSummary(request, env, admin) {
   }
 }
 
-async function dashboard(request, env, admin) {
+function scheduleMediaMaintenance(context, env) {
+  if (!env?.SNIPERPLUG_MEDIA || typeof context?.waitUntil !== 'function') return;
+  context.waitUntil(runMediaStorageMaintenance(env).catch(() => {
+    console.warn('Optional SniperPlug media maintenance was deferred so the Control Center can remain responsive.');
+  }));
+}
+
+async function safeMediaStorageStatus(env) {
+  try {
+    return await getMediaStorageStatus(env);
+  } catch {
+    console.warn('SniperPlug media budget accounting is temporarily unavailable; new media copies remain fail-closed.');
+    return {
+      connected: Boolean(env?.SNIPERPLUG_MEDIA),
+      mode: 'hard-free',
+      hardStopped: Boolean(env?.SNIPERPLUG_MEDIA),
+      stopReason: 'accounting-unavailable',
+      limitBytes: 8_000_000_000,
+      maxFileBytes: 50_000_000,
+      maxObjects: 25_000,
+      maxCopiesPerMonth: 50_000,
+      maxCopiesPerDay: 2_000,
+      maxOriginReadsPerDay: 10_000,
+      usedBytes: 0,
+      reservedBytes: 0,
+      totalCommittedBytes: 0,
+      remainingBytes: 8_000_000_000,
+      objectCount: 0,
+      copiesThisMonth: 0,
+      copiesToday: 0,
+      originReadsToday: 0,
+      usagePercent: 0,
+      inventoryDue: false,
+      cleanupDue: false,
+      unavailable: true,
+    };
+  }
+}
+
+async function dashboard(request, env, admin, context) {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
   const cleanup = await reconcileRecentBulkImports(env);
-  const [whop, sources, categories, guides] = await Promise.all([
+  const [whop, sources, categories, guides, mediaStorageUsage] = await Promise.all([
     verifiedWhopSummary(request, env, admin),
     listSourceOptions(env),
     listCategories(env, { includeInactive: true }),
     listAdminGuideSummaries(env),
+    safeMediaStorageStatus(env),
   ]);
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
+  if (mediaStorageUsage.inventoryDue || mediaStorageUsage.cleanupDue) scheduleMediaMaintenance(context, env);
   return json({
     whop: { connected: Boolean(whop), verified: Boolean(whop), session: whop },
     capabilities: {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
+      mediaStorageUsage,
       cleanup,
     },
     sources,
@@ -252,16 +295,18 @@ async function guideDetail(request, env) {
   return json({ guide });
 }
 
-async function guideSave(request, env) {
+async function guideSave(request, env, context) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 1_200_000 });
   const id = Number.parseInt(body.id, 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide draft.');
-  return json({ guide: await saveGuideDraft(env, id, body) });
+  const guide = await saveGuideDraft(env, id, body);
+  scheduleMediaMaintenance(context, env);
+  return json({ guide });
 }
 
-async function guideStatus(request, env) {
+async function guideStatus(request, env, context) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request);
@@ -269,7 +314,9 @@ async function guideStatus(request, env) {
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
   const status = String(body.status || '');
   if (status === 'published') await assertGuidePublishable(env, id);
-  return json({ guide: await setGuideStatus(env, id, status) });
+  const guide = await setGuideStatus(env, id, status);
+  scheduleMediaMaintenance(context, env);
+  return json({ guide });
 }
 
 export async function onRequest(context) {
@@ -278,7 +325,7 @@ export async function onRequest(context) {
   try {
     if (currentAction === 'session') return await login(context.request, context.env);
     const admin = await requireAdmin(context.request, context.env);
-    if (currentAction === 'dashboard') return await dashboard(context.request, context.env, admin);
+    if (currentAction === 'dashboard') return await dashboard(context.request, context.env, admin, context);
     if (currentAction === 'oauth-start') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
       return redirect(await beginWhopOAuth(context.request, context.env, admin));
@@ -296,8 +343,8 @@ export async function onRequest(context) {
     if (currentAction === 'import') return await importPosts(context.request, context.env, admin);
     if (currentAction === 'category-save') return await categorySave(context.request, context.env);
     if (currentAction === 'guide-detail') return await guideDetail(context.request, context.env);
-    if (currentAction === 'guide-save') return await guideSave(context.request, context.env);
-    if (currentAction === 'guide-status') return await guideStatus(context.request, context.env);
+    if (currentAction === 'guide-save') return await guideSave(context.request, context.env, context);
+    if (currentAction === 'guide-status') return await guideStatus(context.request, context.env, context);
     if (currentAction === 'posts') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
       return json({ posts: await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '') });

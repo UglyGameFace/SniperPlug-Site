@@ -6,12 +6,12 @@
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>Guide Control Center | SniperPlug</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/css/styles.css?v=20260729.5">
-  <link rel="stylesheet" href="/assets/css/control-center.css?v=20260729.5">
-  <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260729.5">
-  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260729.5">
-  <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260729.5">
-  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260729.5">
+  <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.2">
+  <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.2">
+  <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.2">
+  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260730.2">
+  <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.2">
+  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.2">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -52,7 +52,14 @@
       <section class="control-panel" id="source-browser" data-discovery-panel>
         <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Source lists stay collapsed until opened so every tap remains responsive.</p></div><button class="btn ghost panel-action" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
-        <div class="media-readiness-inline" data-media-readiness><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
+        <div class="media-readiness-inline" data-media-readiness>
+          <div class="media-readiness-copy"><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
+          <div class="media-usage" data-media-usage hidden>
+            <div class="media-usage-labels"><span data-media-usage-label>0 B of 8 GB used</span><span data-media-usage-objects>0 files</span></div>
+            <progress data-media-usage-progress max="100" value="0">0%</progress>
+            <span class="media-usage-operations" data-media-usage-operations>0 uncached reads today · 0 copy attempts today · 0 this month</span>
+          </div>
+        </div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
           <label><span>Find a source</span><input type="search" data-source-search placeholder="Search group, course, forum, chat, or external app"></label>
           <label><span>Show</span><select data-source-filter><option value="all">All sources</option><option value="pending">Needs decision</option><option value="approved">Approved</option><option value="disapproved">Disapproved</option><option value="course">Courses</option><option value="forum">Forums</option><option value="chat">Chat</option><option value="external">External app modules</option></select></label>
@@ -169,7 +176,7 @@
     </section>
   </div>
 
-  <script src="/assets/js/control-center-v2.js?v=20260729.5" defer></script>
-  <script src="/assets/js/control-center-lifecycle.js?v=20260729.5" defer></script>
+  <script src="/assets/js/control-center-v2.js?v=20260730.2" defer></script>
+  <script src="/assets/js/control-center-lifecycle.js?v=20260730.2" defer></script>
 </body>
 </html>

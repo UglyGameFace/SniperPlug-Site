@@ -109,6 +109,11 @@
     previewMeta: $('[data-preview-meta]', document),
     previewBody: $('[data-preview-body]', document),
     mediaReadiness: $('[data-media-readiness]'),
+    mediaUsage: $('[data-media-usage]'),
+    mediaUsageLabel: $('[data-media-usage-label]'),
+    mediaUsageObjects: $('[data-media-usage-objects]'),
+    mediaUsageOperations: $('[data-media-usage-operations]'),
+    mediaUsageProgress: $('[data-media-usage-progress]'),
   };
 
   const state = {
@@ -263,16 +268,69 @@
     return (state.dashboard?.categories || []).filter((category) => Number(category.active) === 1);
   }
 
+  function formatStorageBytes(value) {
+    const bytes = Math.max(0, Number(value || 0));
+    if (bytes >= 1_000_000_000) return `${(bytes / 1_000_000_000).toFixed(bytes >= 10_000_000_000 ? 0 : 2)} GB`;
+    if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`;
+    if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+    return `${Math.round(bytes)} B`;
+  }
+
   function renderMediaReadiness() {
     if (!elements.mediaReadiness || !state.dashboard) return;
     const heading = $('strong', elements.mediaReadiness);
     const detail = $('p', elements.mediaReadiness);
-    const ready = Boolean(state.dashboard.capabilities?.mediaStorage);
-    elements.mediaReadiness.dataset.state = ready ? 'ready' : 'missing';
-    if (heading) heading.textContent = ready ? 'Private media storage ready' : 'Private media storage not connected';
-    if (detail) detail.textContent = ready
-      ? 'Private and expiring Whop pictures, video, audio, PDFs, and files can be copied into SniperPlug-owned storage during import.'
-      : 'Public media imports normally. Private or expiring media stays in draft review until SNIPERPLUG_MEDIA is connected.';
+    const usage = state.dashboard.capabilities?.mediaStorageUsage || {};
+    const ready = Boolean(state.dashboard.capabilities?.mediaStorage && usage.connected !== false);
+    const hardStopped = ready && usage.hardStopped === true;
+    const percent = Math.max(0, Math.min(100, Number(usage.usagePercent || 0)));
+    const objectPercent = Math.min(100, (Number(usage.objectCount || 0) / Math.max(1, Number(usage.maxObjects || 25_000))) * 100);
+    const monthlyCopyPercent = Math.min(100, (Number(usage.copiesThisMonth || 0) / Math.max(1, Number(usage.maxCopiesPerMonth || 50_000))) * 100);
+    const dailyCopyPercent = Math.min(100, (Number(usage.copiesToday || 0) / Math.max(1, Number(usage.maxCopiesPerDay || 2_000))) * 100);
+    const readPercent = Math.min(100, (Number(usage.originReadsToday || 0) / Math.max(1, Number(usage.maxOriginReadsPerDay || 10_000))) * 100);
+    const warning = Math.max(percent, objectPercent, monthlyCopyPercent, dailyCopyPercent, readPercent) >= 80;
+    const stateName = !ready ? 'missing' : hardStopped ? 'stopped' : warning ? 'warning' : 'ready';
+    const stoppedDetails = {
+      'storage-cap': 'The 8 GB application cap is protecting the free tier. New private media stays in draft review until automatic cleanup frees space.',
+      'object-cap': 'The 25,000-file safety cap is protecting free operations. New private media stays in draft review until cleanup removes unused files.',
+      'monthly-copy-cap': 'The 50,000-copy monthly safety cap is protecting free Class A operations. New copies resume after the UTC monthly window resets.',
+      'daily-copy-cap': 'The 2,000-copy daily safety cap is protecting the D1 Free-plan write allowance used for strict quota accounting. New copies resume after the UTC daily reset.',
+      'daily-origin-read-cap': 'The 10,000 uncached-read daily safety cap is protecting free Class B and D1 usage. Cached media still works; uncached reads resume after the UTC daily reset.',
+      'accounting-unavailable': 'The media budget ledger is temporarily unavailable, so new copies are fail-closed in private draft review instead of risking billable usage.',
+    };
+    elements.mediaReadiness.dataset.state = stateName;
+    if (heading) heading.textContent = !ready
+      ? 'Private media storage not connected'
+      : hardStopped
+        ? 'R2 free-tier guard active'
+        : 'Private media hard-free mode ready';
+    if (detail) detail.textContent = !ready
+      ? 'Public media imports normally. Private or expiring media stays in draft review until SNIPERPLUG_MEDIA is connected.'
+      : hardStopped
+        ? stoppedDetails[usage.stopReason] || 'A hard-free safety limit is active. New private media stays in draft review instead of creating billable usage.'
+        : 'Copies stop at 50 MB per file, 8 GB total, 25,000 files, 2,000 daily or 50,000 monthly copy attempts, and 10,000 uncached reads per day. Unused files receive a 7-day safety window before deletion.';
+    if (elements.mediaUsage) elements.mediaUsage.hidden = !ready;
+    if (elements.mediaUsageLabel) {
+      elements.mediaUsageLabel.textContent = `${formatStorageBytes(usage.totalCommittedBytes || usage.usedBytes)} of ${formatStorageBytes(usage.limitBytes || 8_000_000_000)} used · ${formatStorageBytes(usage.remainingBytes)} free`;
+    }
+    if (elements.mediaUsageObjects) {
+      const count = Math.max(0, Number(usage.objectCount || 0));
+      elements.mediaUsageObjects.textContent = `${count.toLocaleString('en-US')} / ${Number(usage.maxObjects || 25_000).toLocaleString('en-US')} stored files`;
+    }
+    if (elements.mediaUsageOperations) {
+      const reads = Math.max(0, Number(usage.originReadsToday || 0));
+      const maxReads = Math.max(1, Number(usage.maxOriginReadsPerDay || 10_000));
+      const copiesToday = Math.max(0, Number(usage.copiesToday || 0));
+      const maxCopiesToday = Math.max(1, Number(usage.maxCopiesPerDay || 2_000));
+      const copiesThisMonth = Math.max(0, Number(usage.copiesThisMonth || 0));
+      const maxCopiesThisMonth = Math.max(1, Number(usage.maxCopiesPerMonth || 50_000));
+      elements.mediaUsageOperations.textContent = `${reads.toLocaleString('en-US')} / ${maxReads.toLocaleString('en-US')} uncached reads today · ${copiesToday.toLocaleString('en-US')} / ${maxCopiesToday.toLocaleString('en-US')} copy attempts today · ${copiesThisMonth.toLocaleString('en-US')} / ${maxCopiesThisMonth.toLocaleString('en-US')} this month`;
+    }
+    if (elements.mediaUsageProgress) {
+      elements.mediaUsageProgress.value = percent;
+      elements.mediaUsageProgress.textContent = `${percent}%`;
+      elements.mediaUsageProgress.setAttribute('aria-label', `SniperPlug media storage is ${percent}% full`);
+    }
   }
 
   function renderWhop() {

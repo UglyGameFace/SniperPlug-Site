@@ -16,7 +16,7 @@ Whop custom apps such as Telegram, Discord, Wheels, or third-party embedded apps
 
 ## Cloudflare storage
 
-Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply `migrations/0001_whop_guides.sql`.
+Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, and `migrations/0003_media_hard_free.sql` in order.
 
 D1 privately stores OAuth sessions, approved and disapproved source IDs, content decisions, exact previews, categories, drafts, and published guides. Imported source bodies are never committed to this public repository.
 
@@ -26,9 +26,24 @@ For complete picture, video, audio, PDF, and file carryover, create a Cloudflare
 SNIPERPLUG_MEDIA
 ```
 
-A suggested bucket name is `sniperplug-media`. The binding name must be exactly `SNIPERPLUG_MEDIA` in both Preview and Production. The bucket name itself may differ.
+A suggested bucket name is `sniperplug-media`. The binding name must be exactly `SNIPERPLUG_MEDIA` in both Preview and Production. The bucket name itself may differ. Keep the bucket on **Standard** storage; SniperPlug also writes every copied object explicitly as Standard so the R2 free allowance applies.
 
 R2 is optional for text-only and already-public media imports. It is required to permanently copy private, signed, or expiring Whop media into SniperPlug-owned storage. The Control Center shows the real storage readiness instead of pretending private media can be preserved when the binding is missing.
+
+### Hard-free media mode
+
+SniperPlug does not rely on a warning email to control its own bucket usage. The application refuses new origin work before these conservative ceilings:
+
+- 50,000,000 bytes per copied file.
+- 8,000,000,000 total stored or reserved bytes.
+- 25,000 stored objects.
+- 2,000 copy attempts in one UTC day.
+- 50,000 copy attempts in one UTC month.
+- 10,000 uncached R2 `HEAD`/`GET` operations in one UTC day.
+
+The daily copy ceiling keeps the D1 Free-plan write counter used for strict quota enforcement well below its own daily allowance. The media ledger is stored in D1. A daily inventory includes objects that were uploaded manually or existed before the ledger, so they cannot bypass the storage ceiling, but unchanged objects are not rewritten every day. Cleanup mutates no more than 5,000 ledger rows per run. Full media responses use canonical edge caching; cache-busting query strings redirect before R2, and cached full objects can satisfy byte-range playback without another R2 read. Detached media and media belonging only to rejected/quarantined guides are marked unused and deleted after a 7-day safety window.
+
+When a ceiling is reached, SniperPlug keeps the new attachment in private draft review rather than copying it. At either daily operation ceiling, new copying pauses until the UTC reset; at the origin-read ceiling, already-cached media can continue to work while uncached media returns a retry response. These controls cover this application’s `SNIPERPLUG_MEDIA` binding; they cannot limit unrelated R2 buckets or other Cloudflare services in the same account.
 
 ## Complete Cloudflare configuration
 
@@ -92,8 +107,8 @@ Media is re-checked through Whop during import:
 - Public permanent pictures are embedded inline.
 - Public permanent video and audio render with responsive native playback controls.
 - Public PDFs and ordinary files remain clickable and downloadable.
-- Private, signed, or expiring Whop media is copied into the `SNIPERPLUG_MEDIA` R2 bucket when that binding is available.
-- Copied media is served from SniperPlug with immutable caching, safe content types, and byte-range responses so video seeking works in Chrome and Samsung Browser.
+- Private, signed, or expiring Whop media is copied into the `SNIPERPLUG_MEDIA` R2 bucket only while every hard-free storage and operation guard allows it.
+- Copied media is served from SniperPlug with canonical immutable edge caching, safe content types, and byte-range responses so video seeking works in Chrome and Samsung Browser without repeated full-object R2 reads.
 - Course thumbnails are preserved.
 - Whop-hosted course video checks for an authorized downloadable MP4 or M4A rendition. When one exists, SniperPlug copies it into R2. When Whop exposes streaming only, the draft is held for a permanent replacement instead of publishing a temporary or broken player.
 - Unready, missing, oversized, unsafe, or unverifiable media is clearly flagged and blocks publishing.

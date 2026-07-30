@@ -16,6 +16,7 @@ import { saveGuideDraft as saveGuideDraftBase } from './guides.js';
 import { requireDatabase } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
+import { pruneDetachedGuideMedia } from './media-storage.js';
 import { whopApi } from './whop.js';
 
 function safeJson(value, fallback) {
@@ -27,6 +28,7 @@ export async function saveGuideDraft(env, id, input) {
   const before = await db.prepare('SELECT integrity_json FROM guides WHERE id = ?').bind(id).first();
   const previousIntegrity = safeJson(before?.integrity_json, {});
   const saved = await saveGuideDraftBase(env, id, input);
+  const pruned = await pruneDetachedGuideMedia(env, id, saved.body);
   const nextIntegrity = {
     ...previousIntegrity,
     ...(saved.integrity || {}),
@@ -39,7 +41,7 @@ export async function saveGuideDraft(env, id, input) {
   };
   await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
     .bind(JSON.stringify(nextIntegrity), id).run();
-  return { ...saved, integrity: nextIntegrity };
+  return { ...saved, attachments: pruned.attachments, integrity: nextIntegrity };
 }
 
 function withoutGeneratedMediaSection(body) {

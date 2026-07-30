@@ -1,71 +1,77 @@
 # Active Task
 
 ## Task
-Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls feel responsive, the review queue does not freeze the browser, stale client code cannot survive deployment, permanent private Whop media can be copied safely, and the existing guide-quality/publishing safeguards remain intact.
+Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls remain responsive, large imports do not freeze the browser, stale client code cannot survive deployment, private Whop media is preserved without letting SniperPlug’s R2 usage cross its application-enforced free-tier budget, and the existing guide-quality and publishing safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`. The interaction/performance implementation is committed at `bd4cf821ffd284d9677ad89acb0129c9f3308ea3`; the permanent verification workflow was restored at `c82c27572cfc09e49549df9e4b1c5a9af9685f1c`; the `SNIPERPLUG_MEDIA` R2 binding was added at `cacdc4397d2438f08650ef5ed55e004893fbb8c9`. The full Node 22 regression suite passed and Cloudflare Pages deployed the R2-enabled branch successfully. PR #2 remains draft. Authenticated acceptance against the connected Whop account/private D1 is the remaining completion gate.
+Active on `agent/whop-guide-importer`. The interaction/performance and R2 binding work is deployed on the draft PR branch. The hard-free media implementation, targeted tests, full local regression suite, syntax validation, and cleanup inspection pass locally. Final GitHub Actions, Cloudflare deployment, conflict inspection, and authenticated live acceptance remain before merge or completion.
 
 ## Scope
 - Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, content quality checks, media preservation, safe publishing, and 48-hour undo.
-- Make **Select group**, **Clear group**, source decisions, guide selection, search, filtering, publishing, and navigation acknowledge input immediately.
-- Keep source selection local and obvious on the exact group card that was tapped.
-- Prevent hundreds of full guide bodies and hundreds of DOM cards from loading during the initial dashboard request.
+- Keep **Select group**, **Clear group**, source decisions, guide selection, search, filtering, publishing, and navigation immediately responsive.
+- Prevent hundreds of full guide bodies and DOM cards from loading during the initial dashboard request.
 - Keep exact guide content private and fetch it only when that guide is opened.
-- Prevent expensive imported-guide reconciliation from rerunning on every Cloudflare Worker cold start.
-- Eliminate stale Control Center JavaScript/CSS after deployments.
-- Keep private and expiring Whop media durable through a private Cloudflare R2 binding named `SNIPERPLUG_MEDIA`.
-- Remove obsolete scripts and observers rather than stacking another performance patch over them.
+- Keep private and expiring Whop media durable through the private `SNIPERPLUG_MEDIA` R2 binding.
+- Enforce hard application ceilings for R2 storage, object size/count, copy attempts, and uncached origin reads.
+- Account for existing/manual bucket objects before accepting new copies.
+- Clean up detached and rejected-guide media only after a reversible safety window.
+- Preserve ranged playback and edge caching without allowing cache-busting reads.
 - Validate phone, tablet, desktop, syntax, media, discovery, publishing, recovery, responsive flow, and public-page filtering.
 
 ## Findings
-- The active runtime queried the post-preview modal through the Control Center root even though the modal is outside that root. `elements.preview` was therefore `null`, causing a JavaScript exception before `initialize()` ran. A cached older script could make the page appear partly usable while current controls silently had no working runtime.
-- **Select group** changed only an off-screen global count. The tapped group card and button did not show local selected/total feedback, so a successful synchronous action looked dead.
-- The dashboard returned `body_markdown`, author data, and full metadata for every guide, then synchronously created every guide card. Hundreds of imported records blocked the main thread and delayed taps.
-- Guide filtering repeatedly walked every rendered card. The normal queue had no client-side page boundary.
-- Imported-guide reconciliation was throttled only in one Worker process for 30 seconds. Cold starts could repeatedly scan up to 4,000 full guide bodies before the dashboard responded.
-- Control Center assets were unversioned and did not receive an explicit stale-asset policy, allowing Samsung Browser/Chrome to retain an obsolete runtime after deployment.
-- Draft safety used multiple `MutationObserver` instances and a click-timing recovery path even though the runtime already knows exactly when a guide loads or changes status.
-- Six obsolete Control Center runtimes remained in the repository after consolidation, and one regression audit still tested those dead files instead of the active runtime.
-- Public deal search recomputed every card’s complete text on each keystroke.
-- Cloudflare Preview bindings were locked in the dashboard because this Pages project treats `wrangler.toml` as the configuration source of truth. The file contained D1 but no `SNIPERPLUG_MEDIA` R2 binding, so preview could not receive permanent private-media storage from the UI.
+- The active runtime previously crashed before initialization because the preview modal was queried from the wrong DOM root.
+- Group selection updated only a distant total and gave no local confirmation.
+- The dashboard previously transferred complete guide bodies and rendered the entire queue synchronously.
+- Imported-guide reconciliation could repeat across Worker cold starts.
+- Control Center assets were unversioned and six obsolete runtimes remained.
+- The R2 binding existed, but automatic copying allowed 500 MB per file and had no aggregate storage or operation ceiling.
+- Existing or manually uploaded R2 objects were not included in application quota decisions.
+- Repeated query-string requests could bypass canonical caching, and a naïve full-response cache could incorrectly satisfy byte-range requests.
+- Rejected/quarantined guides remained permanent media references even though they are outside the active review/public workflow.
+- R2’s free allowances are monthly, while D1’s Free-plan write allowance resets daily, so the media guard must protect both the R2 origin operations and the D1 counter used to enforce them.
 
 ## Changes
-- Corrected all post-preview modal lookups to query `document`, preventing the runtime-ending null exception and allowing `initialize()` to execute reliably.
-- Added immediate pointer/touch acknowledgment and per-group `selected/total` state. **Select group** now changes locally to **Group selected**, highlights the group, updates its count, enables **Clear group**, and updates the global selection count in the same synchronous action.
-- Replaced dashboard full-guide loading with lightweight guide summaries. Added an authenticated `guide-detail` read that fetches the exact body only when one guide is opened.
-- Limited the normal review queue to 60 cards at a time with explicit **Load more** paging, in-memory filtering, lazy detail caching, and stale-request protection when users switch guides quickly.
-- Added durable D1-backed reconciliation maintenance state with a 15-minute cross-cold-start throttle while preserving force-run and failure-safe behavior.
-- Removed broad lifecycle observers and replaced them with explicit `sniperplug:guide-loaded` events while retaining unsaved-change warnings and local recovery copies.
-- Versioned every Control Center JavaScript/CSS request and added immutable caching only for versioned assets; unversioned control assets must revalidate.
-- Indexed public deal-card search text once and coalesced filtering into animation frames.
-- Deleted obsolete `control-center.js`, `control-center-hardening.js`, `control-center-performance.js`, `control-center-density.js`, `bulk-publish.js`, and `media-readiness.js` runtimes.
-- Added `[[r2_buckets]]` to `wrangler.toml` with `binding = "SNIPERPLUG_MEDIA"` and `bucket_name = "sniperplug-media"`, making the private bucket available through the repository-managed Pages configuration.
-- Updated regression audits to inspect the active runtime, local group feedback, lazy guide detail, bounded review rendering, persistent maintenance throttling, modal query scope, versioned assets, observer removal, and optimized public filtering.
+- Consolidated the Control Center interaction runtime, corrected modal lookup scope, added immediate touch feedback, lightweight guide summaries, lazy exact-detail loading, and a 60-card review boundary.
+- Added durable D1-backed reconciliation throttling and versioned Control Center assets.
+- Added repository-managed `SNIPERPLUG_MEDIA` R2 binding configuration.
+- Added a D1 media ledger and atomic reservation path that counts ready objects, in-flight reservations, existing bucket objects, and conservative copy attempts.
+- Enforced these SniperPlug-owned media limits:
+  - 50,000,000 bytes per copied object.
+  - 8,000,000,000 total committed/reserved bytes.
+  - 25,000 stored objects.
+  - 2,000 copy attempts per UTC day.
+  - 50,000 copy attempts per UTC month.
+  - 10,000 uncached R2 origin reads per UTC day.
+- New copies are held in private draft review when any limit is reached; existing cached media remains available when the daily origin-read limit is active.
+- Canonical full responses are cached at the edge, query-string cache busting redirects before R2, and cached full objects can satisfy Range playback without another R2 read.
+- Added daily inventory reconciliation that skips unchanged rows, a 5,000-mutation cleanup ceiling, 7-day delayed cleanup, detached-attachment pruning, and cleanup eligibility for rejected/quarantined guides.
+- Added a Control Center storage/operation meter with the exact active stop reason.
+- Added migration `0003_media_hard_free.sql`, permanent hard-free regression tests, and expanded media/performance audits.
 
 ## Validation
-- Passed: full `npm run build` under Node 22 locally and in the permanent **Verify SniperPlug** GitHub Actions workflow.
+- Passed locally: complete `npm test` / `npm run build` audit suite under Node 22.
 - Passed: JavaScript syntax validation across Functions, browser scripts, and audit scripts.
-- Passed: official Whop content paths, authoritative re-fetching, quality classification, categories, formatting, safe links, media preservation, auth, active membership discovery, bulk publishing, recovery, undo, public-guide isolation, and responsive normal-flow audits.
-- Passed: targeted headless Chromium interaction test with 500 guide summaries on a 412×915 mobile viewport. Only 60 guide cards rendered initially; **Select group** updated `0/19` to `19/19`, changed the button to **Group selected**, updated the global total, and loaded exact guide content on demand without a page error.
-- Passed: three repeated Chromium interaction runs; measured click completion was approximately 111–170 ms in the headless test harness, including Playwright actionability overhead.
-- Passed: dead-runtime reference scan; active HTML loads only `control-center-v2.js` and `control-center-lifecycle.js`.
-- Passed: the permanent verification workflow completed successfully on R2 binding commit `cacdc4397d2438f08650ef5ed55e004893fbb8c9`.
-- Passed: Cloudflare Pages deployed the exact R2 binding commit successfully to the branch preview.
-- Pending: authenticated live check that the Control Center reports private media storage ready and successfully mirrors a known private or expiring Whop attachment.
-- Pending: authenticated interaction and publishing acceptance with the user’s connected Whop account and private D1 data.
+- Passed: exact 50 MB, 8 GB, object-count, daily-copy, monthly-copy, and daily-origin-read policy tests.
+- Passed: canonical cache test proving a second full request and cached HEAD do not touch R2.
+- Passed: Range test proving a cached full response returns HTTP 206 without another R2 read.
+- Passed: cache-busting test proving query strings redirect before an R2 operation.
+- Passed: daily hard-stop test proving a cache miss returns HTTP 429 before another R2 read.
+- Passed: existing importer quality, category, media, auth, discovery, bulk recovery, undo, public isolation, and responsive-layout regressions.
+- Pending: permanent GitHub Actions validation on the final branch head.
+- Pending: Cloudflare Pages deployment of that exact head.
+- Pending: PR mergeability/conflict recheck.
+- Pending: authenticated live check with the connected Whop account, private D1, and one real private attachment.
 
 ## Cleanup
 - One active Control Center interaction runtime remains.
-- Draft safety remains separate but event-driven and observer-free.
-- Temporary source-artifact and one-shot repair workflow steps were removed; the permanent read-only verification workflow is restored.
-- The incidental empty generated `package-lock.json` was removed.
-- No mock data, browser test fixture, imported content, token, or secret was committed.
-- The R2 bucket remains private; media is served through the application route rather than a public bucket URL.
-- Quarantined guide content remains private and reversible rather than being deleted.
+- Draft safety is event-driven and observer-free.
+- No token, imported content, fake production row, or private attachment is committed.
+- The R2 bucket remains private and media is served through `/media/<key>`.
+- Temporary source-artifact workflow changes must be removed after the implementation commit lands.
+- Quarantined source records remain reversible; their no-longer-active media receives a 7-day cleanup window rather than immediate deletion.
 
 ## Blockers
-- GitHub-only validation cannot press controls inside the user’s authenticated Cloudflare Control Center, inspect private D1 rows, or fetch a private Whop attachment. Live acceptance must confirm media readiness, one real private-media copy, group feedback, responsiveness, source decisions, bounded review paging, guide detail loading, publishing progress, and public output with the real connected account.
+- GitHub-only validation cannot exercise the user’s authenticated Cloudflare Control Center, inspect private production D1 rows, or fetch a private Whop attachment. Live acceptance must confirm the meter, one real copy, hard-stop messaging, group feedback, responsiveness, publishing progress, and public output.
 
 ## Backlog
-- None. Do not switch tasks until authenticated acceptance and final cleanup inspection pass.
+- None. Do not switch tasks until final CI, deployment, conflict inspection, authenticated acceptance, and workflow cleanup pass.

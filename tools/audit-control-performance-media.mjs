@@ -19,11 +19,13 @@ const hardeningCss = read('assets/css/control-center-hardening.css');
 const historyCss = read('assets/css/bulk-history.css');
 const mediaCss = read('assets/css/guide-media.css');
 const media = read('functions/_lib/media.js');
+const mediaStorage = read('functions/_lib/media-storage.js');
 const guideMedia = read('functions/_lib/guides-media.js');
 const sourcePolicy = read('functions/_lib/source-policy.js');
 const controlApi = read('functions/api/control.js');
 const bulkJobs = read('functions/_lib/bulk-jobs.js');
 const mediaRoute = read('functions/media/[key].js');
+const mediaMigration = read('migrations/0003_media_hard_free.sql');
 const middleware = read('functions/_middleware.js');
 const templates = read('functions/_lib/templates.js');
 
@@ -47,7 +49,7 @@ assert.ok(reconciliation.includes('importer_maintenance') && reconciliation.incl
 assert.ok(runtime.includes('updateGroupSelectionCards') && runtime.includes('groupSelectionCount'), 'Group selection does not update locally on the tapped card.');
 assert.ok(runtime.includes("root.addEventListener('pointerdown'") && runtime.includes("dataset.pressed = 'true'"), 'Controls do not acknowledge touch immediately.');
 assert.ok(runtime.includes("preview: $('[data-post-preview]', document)"), 'The modal lives outside the Control Center root and can crash the entire runtime if queried from the wrong scope.');
-assert.ok(page.includes('?v=20260729.5') && middleware.includes("url.searchParams.has('v')"), 'Control Center assets can remain stale after deployment.');
+assert.ok(page.includes('?v=20260730.2') && middleware.includes("url.searchParams.has('v')"), 'Control Center assets can remain stale after deployment.');
 assert.ok(!/listAdminGuideSummaries[\s\S]*body_markdown/.test(guides.slice(guides.indexOf('export async function listAdminGuideSummaries'), guides.indexOf('export async function adminGuide'))), 'Dashboard guide summaries still include every full guide body.');
 assert.ok(siteClient.includes('const indexed = cards.map') && siteClient.includes('requestAnimationFrame(apply)'), 'Public deal filtering still repeatedly scans live card text on every keystroke.');
 assert.ok(controlApi.includes('saveSourceDecisions') && controlApi.includes('requestedSourceValues'), 'The server does not accept validated multi-source decisions.');
@@ -58,6 +60,9 @@ assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls d
 
 assert.ok(!page.includes('source-capability-note'), 'Large explanation cards were reinserted into the primary workflow.');
 assert.ok(page.includes('media-readiness-inline') && page.includes('data-media-readiness'), 'Media readiness is not presented as a compact status.');
+assert.ok(page.includes('data-media-usage-progress') && runtime.includes('mediaStorageUsage'), 'The Control Center does not show the real hard-free storage meter.');
+assert.ok(runtime.includes('50 MB per file') && runtime.includes('8 GB total') && runtime.includes('25,000 files') && runtime.includes('2,000 daily') && runtime.includes('50,000 monthly copy attempts') && runtime.includes('10,000 uncached reads per day') && runtime.includes('7-day safety window'), 'The owner-facing media policy does not explain the enforced free-tier safeguards.');
+assert.ok(!lifecycle.includes('softenMediaNotice'), 'The lifecycle helper can overwrite the authoritative storage state.');
 assert.ok(page.includes('panel-action') && hardeningCss.includes('.panel-head>.panel-action'), 'Panel actions can still stretch into oversized mobile bars.');
 assert.ok(!hardeningCss.includes('.button-row,.decision-row,.editor-actions{\n    display:grid;\n    grid-template-columns:1fr;'), 'A global mobile rule can still stack every button into one column.');
 assert.ok(page.includes('<option value="external">External app modules</option>'), 'External app filter is missing.');
@@ -67,6 +72,7 @@ assert.ok(!page.toLowerCase().includes('unsupported'), 'Owner-facing Control Cen
 assert.ok(runtime.includes('state.dashboard.capabilities?.mediaStorage'), 'The browser does not read the real R2 capability.');
 assert.ok(runtime.includes('SNIPERPLUG_MEDIA'), 'Missing media storage does not identify the exact Cloudflare binding.');
 assert.ok(controlApi.includes('mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA)'), 'The server does not report real media-storage readiness.');
+assert.ok(controlApi.includes('mediaStorageUsage') && controlApi.includes('runMediaStorageMaintenance'), 'The dashboard does not return usage or schedule bounded maintenance.');
 
 const image = mediaMarkdown({ filename: 'proof.png', contentType: 'image/png', url: '/media/whop-0123456789abcdef0123456789abcdef-proof.png' });
 const video = mediaMarkdown({ filename: 'walkthrough.mp4', contentType: 'video/mp4', url: '/media/whop-0123456789abcdef0123456789abcdef-walkthrough.mp4' });
@@ -79,8 +85,17 @@ assert.match(renderMarkdown(audio), /<audio controls preload="metadata"/);
 assert.match(renderMarkdown(image), /<img src="\/media\//);
 assert.ok(!renderMarkdown('`![video: fake](/media/fake.mp4)`').includes('<video'), 'Media syntax inside code is being executed.');
 
-assert.ok(media.includes('SNIPERPLUG_MEDIA') && media.includes('.put(key, boundedStream'), 'Private media is not copied to SniperPlug R2 storage.');
-assert.ok(media.includes('MAX_MEDIA_BYTES') && media.includes('500 MB'), 'Automatic media copying has no bounded size.');
+assert.ok(media.includes('SNIPERPLUG_MEDIA') && media.includes('.put(key, bounded.stream'), 'Private media is not copied to SniperPlug R2 storage.');
+assert.ok(media.includes('MAX_MEDIA_OBJECT_BYTES') && media.includes('50 MB automatic-copy limit'), 'Automatic media copying is not capped at 50 MB.');
+assert.ok(media.includes("storageClass: 'Standard'"), 'SniperPlug media copies can fall outside the R2 Standard free tier.');
+assert.ok(mediaStorage.includes('MEDIA_STORAGE_LIMIT_BYTES = 8_000_000_000'), 'The R2 bucket has no application-enforced 8 GB ceiling.');
+assert.ok(mediaStorage.includes('MAX_MEDIA_OBJECTS = 25_000') && mediaStorage.includes('MAX_MEDIA_COPIES_PER_DAY = 2_000') && mediaStorage.includes('MAX_MEDIA_COPIES_PER_MONTH = 50_000') && mediaStorage.includes('MAX_MEDIA_ORIGIN_READS_PER_DAY = 10_000'), 'R2/D1 operation and object-count free-tier guardrails are missing.');
+assert.ok(mediaStorage.includes('used_bytes + reserved_bytes + ? <= ?') && mediaStorage.includes("status = 'copying'"), 'Concurrent copies can bypass the storage ceiling.');
+assert.ok(mediaStorage.includes('cleanupUnreferencedMedia') && mediaStorage.includes('MEDIA_DELETE_GRACE_MS') && mediaStorage.includes('MAX_MEDIA_CLEANUP_MUTATIONS = 5_000'), 'Unreferenced media has no safe delayed, write-bounded cleanup.');
+assert.ok(mediaStorage.includes("saved && saved.status === 'ready'") && mediaStorage.includes("Number(saved.size_bytes || 0) === size"), 'Daily inventory still rewrites every unchanged media row and can waste the D1 free write allowance.');
+assert.ok(mediaMigration.includes('copy_day TEXT') && mediaMigration.includes('copies_today INTEGER'), 'The permanent D1 migration is missing the daily copy counter.');
+assert.ok(mediaStorage.includes('managed INTEGER') && mediaStorage.includes('listBucketObjects'), 'Existing or manually uploaded bucket objects are excluded from quota accounting.');
+assert.ok(guideMedia.includes('pruneDetachedGuideMedia'), 'Owner replacements leave obsolete media permanently referenced.');
 assert.ok(media.includes('blockedHostname') && media.includes('metadata.google.internal'), 'Remote media copying lacks SSRF destination guards.');
 assert.ok(guideMedia.includes('courseSupplementFiles') && guideMedia.includes('course-thumbnail'), 'Course pictures are not carried into guides.');
 assert.ok(guideMedia.includes('muxDownloadableFile') && guideMedia.includes('highest.mp4'), 'Downloadable hosted course video is not detected.');
@@ -88,6 +103,9 @@ assert.ok(guideMedia.includes('mirrorWhopMedia') && guideMedia.includes('Media a
 assert.ok(controlApi.includes("from '../_lib/guides-media.js'"), 'Manual imports bypass media preservation.');
 assert.ok(bulkJobs.includes("from './guides-media.js'"), 'Bulk imports bypass media preservation.');
 assert.ok(mediaRoute.includes('accept-ranges') && mediaRoute.includes('content-range'), 'Mirrored video does not support ranged playback.');
+assert.ok(mediaRoute.includes('globalThis.caches?.default') && mediaRoute.includes('edgeCache.put'), 'Full media responses are not cached at the edge.');
+assert.ok(mediaRoute.includes('reserveMediaOriginRead') && mediaRoute.includes('status: 429'), 'Uncached R2 reads do not stop at the daily hard-free ceiling.');
+assert.ok(mediaRoute.includes('if (requestedUrl.search)') && mediaRoute.includes('Response.redirect'), 'Cache-busting query strings can trigger extra R2 reads.');
 assert.ok(mediaRoute.includes('SNIPERPLUG_MEDIA'), 'Public media route is not connected to R2.');
 assert.ok(middleware.includes("media-src 'self' https:"), 'Content security policy blocks guide media playback.');
 assert.ok(templates.includes('/assets/css/guide-media.css'), 'Public guides do not load responsive media styles.');
@@ -99,6 +117,7 @@ for (const file of [
   'assets/js/control-center-lifecycle.js',
   'functions/_lib/source-policy.js',
   'functions/_lib/media.js',
+  'functions/_lib/media-storage.js',
   'functions/_lib/guides-media.js',
   'functions/_lib/markdown.js',
   'functions/_lib/bulk-jobs.js',
@@ -121,7 +140,8 @@ console.log('✓ Searches are frame-coalesced and use cached guide metadata.');
 console.log('✓ Primary workflow stays compact without explanatory card clutter.');
 console.log('✓ Mobile controls preserve intentional paired actions instead of stacking every button.');
 console.log('✓ External app modules remain explained inside their relevant group.');
-console.log('✓ The Control Center reports real SniperPlug media-storage readiness compactly.');
+console.log('✓ The Control Center reports real SniperPlug media usage and hard-stop state compactly.');
 console.log('✓ Forum, course, and chat pictures, video, audio, PDFs, and files remain in the import path.');
 console.log('✓ Images render inline and video/audio render as responsive playable controls.');
 console.log('✓ Ranged media responses support Chrome and Samsung Browser seeking.');
+console.log('✓ Edge caching, storage/object/daily-operation ceilings, write-bounded inventory, and delayed orphan cleanup protect the R2 and D1 free tiers.');
