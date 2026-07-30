@@ -31,11 +31,52 @@ function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
 }
 
+function nextVersion(previous = '') {
+  const now = new Date();
+  const prior = Date.parse(String(previous || ''));
+  if (Number.isFinite(prior) && now.getTime() <= prior) now.setTime(prior + 1);
+  return now.toISOString();
+}
+
+async function reserveGuideVersion(db, id, expectedUpdatedAt) {
+  const expected = String(expectedUpdatedAt || '').trim();
+  if (!expected) {
+    throw new HttpError(409, 'Refresh this guide before saving so SniperPlug can confirm you are editing the newest version.', {
+      code: 'guide_version_required',
+      guideId: Number(id),
+    });
+  }
+  const reservation = nextVersion(expected);
+  const result = await db.prepare('UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?')
+    .bind(reservation, id, expected).run();
+  if (Number(result.meta?.changes || 0) !== 1) {
+    const current = await db.prepare('SELECT updated_at, status FROM guides WHERE id = ?').bind(id).first();
+    throw new HttpError(409, 'This guide changed in another tab or workflow. Your older copy was not saved; refresh to load the newest version.', {
+      code: 'guide_version_stale',
+      guideId: Number(id),
+      expectedUpdatedAt: expected,
+      currentUpdatedAt: current?.updated_at || null,
+      currentStatus: current?.status || null,
+    });
+  }
+  return reservation;
+}
+
 export async function saveGuideDraft(env, id, input) {
   const db = requireDatabase(env);
-  const before = await db.prepare('SELECT integrity_json FROM guides WHERE id = ?').bind(id).first();
-  const previousIntegrity = safeJson(before?.integrity_json, {});
-  const saved = await saveGuideDraftBase(env, id, input);
+  const before = await db.prepare('SELECT integrity_json, updated_at FROM guides WHERE id = ?').bind(id).first();
+  if (!before) throw new HttpError(404, 'Guide draft not found.');
+  const previousIntegrity = safeJson(before.integrity_json, {});
+  const expectedUpdatedAt = String(input?.expectedUpdatedAt || '').trim();
+  const reservation = await reserveGuideVersion(db, id, expectedUpdatedAt);
+  let saved;
+  try {
+    saved = await saveGuideDraftBase(env, id, input);
+  } catch (error) {
+    await db.prepare('UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?')
+      .bind(expectedUpdatedAt, id, reservation).run().catch(() => null);
+    throw error;
+  }
   const pruned = await pruneDetachedGuideMedia(env, id, saved.body);
   const attachments = await pruneDetachedCourseVideos(env, id, saved.body, pruned.attachments);
   const nextIntegrity = {
@@ -48,9 +89,16 @@ export async function saveGuideDraft(env, id, input) {
     publishHoldReason: null,
     editedByOwnerAt: new Date().toISOString(),
   };
-  await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
-    .bind(JSON.stringify(nextIntegrity), id).run();
-  return { ...saved, attachments, integrity: nextIntegrity };
+  const finalizedAt = nextVersion(saved.updatedAt);
+  const finalized = await db.prepare('UPDATE guides SET integrity_json = ?, updated_at = ? WHERE id = ? AND updated_at = ?')
+    .bind(JSON.stringify(nextIntegrity), finalizedAt, id, saved.updatedAt).run();
+  if (Number(finalized.meta?.changes || 0) !== 1) {
+    throw new HttpError(409, 'The guide changed while SniperPlug was finishing its save. The newer version was preserved; refresh before editing again.', {
+      code: 'guide_save_finalize_stale',
+      guideId: Number(id),
+    });
+  }
+  return { ...saved, updatedAt: finalizedAt, attachments, integrity: nextIntegrity };
 }
 
 function withoutGeneratedMediaSection(body) {
