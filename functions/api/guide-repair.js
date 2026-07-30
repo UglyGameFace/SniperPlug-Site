@@ -89,15 +89,23 @@ async function discardRemoved(request, env) {
   if (!selected.length) return json({ cleared: 0, ...(await rejectedImports(env, 0)) });
 
   const now = new Date().toISOString();
-  await db.batch(selected.map((id) => db.prepare(`
+  const updates = selected.map((id) => db.prepare(`
     UPDATE guides
     SET source_key = NULL,
         source_experience_id = NULL,
         source_post_id = NULL,
         updated_at = ?,
-        integrity_json = json_set(COALESCE(integrity_json, '{}'), '$.recoveryCleared', 1, '$.recoveryClearedAt', ?)
+        integrity_json = CASE
+          WHEN integrity_json IS NOT NULL AND json_valid(integrity_json)
+            THEN json_set(integrity_json, '$.recoveryCleared', 1, '$.recoveryClearedAt', ?)
+          ELSE json_object('recoveryCleared', 1, 'recoveryClearedAt', ?)
+        END
     WHERE id = ? AND status = 'rejected'
-  `).bind(now, now, id)));
+  `).bind(now, now, now, id));
+
+  for (let index = 0; index < updates.length; index += 50) {
+    await db.batch(updates.slice(index, index + 50));
+  }
   return json({ cleared: selected.length, ...(await rejectedImports(env, 0)) });
 }
 
