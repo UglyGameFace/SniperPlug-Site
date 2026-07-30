@@ -1,4 +1,5 @@
 import { HttpError, requireDatabase } from './http.js';
+import { assertGuideNotRecovering } from './recovery-leases.js';
 
 function nextVersion(previous = '') {
   const now = new Date();
@@ -8,6 +9,7 @@ function nextVersion(previous = '') {
 }
 
 export async function reserveGuideVersion(env, id, expectedUpdatedAt, operation = 'change') {
+  await assertGuideNotRecovering(env, id);
   const db = requireDatabase(env);
   const expected = String(expectedUpdatedAt || '').trim();
   if (!expected) {
