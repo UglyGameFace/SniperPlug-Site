@@ -38,8 +38,11 @@ jobs:
           path = Path('tools/audit-control-performance-media.mjs')
           text = path.read_text()
           text = text.replace("runtime.includes('requestIdleCallback') && runtime.includes('appendChunk')", "runtime.includes('requestIdleCallback') && runtime.includes('appendRemaining') && runtime.includes('appendCount(Math.min(12')")
-          text = text.replace("runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize')", "runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize') && !/function createPostCard[\\s\\S]*?contentVisibility/.test(runtime)")
-          path.write_text(text)
+          old = "assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen cards are still fully laid out and painted.');"
+          new = "assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen source and group cards lost their layout optimization.');\nassert.ok(!runtime.includes(\"card.dataset.type = post.contentType || 'forum';\\n    card.style.contentVisibility\"), 'Post review cards still use unstable mobile content-visibility.');"
+          if old not in text:
+              raise SystemExit('Expected performance assertion was not found.')
+          path.write_text(text.replace(old, new))
           PY
       - name: Set up Node.js
         uses: actions/setup-node@v4
