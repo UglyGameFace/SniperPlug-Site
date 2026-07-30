@@ -28,11 +28,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          curl -fsSL \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/git/blobs/ce69ae6803927d8710da2c15ac3d350f96556301" \
-            | jq -r .content | base64 -d > /tmp/sniperplug-connection-fix.patch.b64
+          : > /tmp/sniperplug-connection-fix.patch.b64
+          for sha in \
+            36e7a4952f3b04bdc6d838d6bc14766405a42a6c \
+            aec4c1c353dc69af67874cb2b0da3ddf2b622622 \
+            2ec095add04ba68c6e1ccac9e509029ef6e9acfe \
+            202ad4353a0d58e5a9afc97661538d8a363cd0d0
+          do
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/git/blobs/$sha" \
+              | jq -r .content | base64 -d >> /tmp/sniperplug-connection-fix.patch.b64
+          done
           base64 -d /tmp/sniperplug-connection-fix.patch.b64 | bunzip2 > /tmp/sniperplug-connection-fix.patch
           patch -p1 --dry-run < /tmp/sniperplug-connection-fix.patch
           patch -p1 < /tmp/sniperplug-connection-fix.patch
