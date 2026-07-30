@@ -63,7 +63,7 @@ assert.ok(jobsEndpoint.includes("action === 'start'") && jobsEndpoint.includes("
 assert.ok(recent.includes('HISTORY_HOURS = 48') && recent.includes("status IN ('published', 'rejected')"), 'The 48-hour reversible action window is incomplete.');
 assert.ok(recent.includes('db.batch') && recent.includes("decision = 'pending'"), 'Undo does not restore guides and source decisions atomically enough.');
 assert.ok(recentEndpoint.includes('undoRecentActions'), 'Recent-action endpoint cannot perform undo.');
-assert.ok(publishEndpoint.includes('allImported'), 'Publish-all endpoint cannot target the imported review queue.');
+assert.ok(client.includes('allImported: true') && publishEndpoint.includes('publishReadyGuides'), 'Publish-all endpoint cannot target the imported review queue.');
 assert.ok(publish.includes('auditGuideLinks') && publish.includes('verifyGuideMedia'), 'Publish-all still skips link or media integrity checks.');
 assert.ok(publish.includes('import_freshness_failed') && publish.includes('content_integrity_failed'), 'Publish-all does not fail closed on freshness and content integrity.');
 assert.ok(styles.includes('.bulk-publish-box') && styles.includes('.bulk-selection-bar'), 'Bulk source workflow is not styled.');
