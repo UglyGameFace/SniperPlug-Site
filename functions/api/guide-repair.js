@@ -1,4 +1,5 @@
 import { requireAdmin } from '../_lib/auth.js';
+import { restoreCourseVideos, snapshotCourseVideos } from '../_lib/course-video.js';
 import { adminGuide, importApprovedPosts } from '../_lib/guides-media.js';
 import { handleError, HttpError, json, methodNotAllowed, readJson, requireDatabase, requireSameOrigin } from '../_lib/http.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
@@ -65,6 +66,7 @@ async function repairGuide(request, env, admin) {
 
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, row.source_experience_id);
+  const videoSnapshot = await snapshotCourseVideos(env, id);
 
   try {
     const output = await importApprovedPosts(env, whop, {
@@ -99,8 +101,9 @@ async function repairGuide(request, env, admin) {
   } catch (error) {
     try {
       await restoreGuideSnapshot(db, row);
+      await restoreCourseVideos(env, id, videoSnapshot);
     } catch (rollbackError) {
-      throw new HttpError(500, 'Recovery failed and SniperPlug could not restore the original rejected guide row.', {
+      throw new HttpError(500, 'Recovery failed and SniperPlug could not restore the original rejected guide and video state.', {
         recoveryError: String(error?.message || error),
         rollbackError: String(rollbackError?.message || rollbackError),
       });
