@@ -2,7 +2,7 @@ import { sha256 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
 
 const VIDEO_KEY_PATTERN = /^wcv-[a-f0-9]{40}$/;
-const STATIC_PROBE_TIMEOUT_MS = 12_000;
+const STATIC_PROBE_TIMEOUT_MS = 8_000;
 const STATIC_RENDITIONS = Object.freeze([
   'highest.mp4',
   'capped-2160p.mp4',
@@ -61,42 +61,49 @@ function totalBytes(response) {
   return response.status === 200 && length > 0 ? length : null;
 }
 
+async function probeMuxStaticRendition(playback, filename, timeoutMs) {
+  const url = muxResourceUrl(playback, filename);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        accept: playback.audioOnly ? 'audio/mp4,*/*;q=0.8' : 'video/mp4,*/*;q=0.8',
+        range: 'bytes=0-0',
+      },
+    });
+    const usable = response.status === 200 || response.status === 206;
+    const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    const size = totalBytes(response);
+    await response.body?.cancel().catch(() => null);
+    if (!usable || (!contentType.startsWith('video/') && !contentType.startsWith('audio/') && contentType !== 'application/octet-stream')) {
+      return null;
+    }
+    return {
+      playback,
+      filename,
+      url: url.toString(),
+      contentType: contentType || (playback.audioOnly ? 'audio/mp4' : 'video/mp4'),
+      size,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function findMuxStaticRendition(asset, { timeoutMs = STATIC_PROBE_TIMEOUT_MS } = {}) {
   const playback = muxPlayback(asset);
   if (!playback) return null;
   const candidates = playback.audioOnly ? ['audio.m4a'] : STATIC_RENDITIONS;
-  for (const filename of candidates) {
-    const url = muxResourceUrl(playback, filename);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        redirect: 'follow',
-        signal: controller.signal,
-        headers: {
-          accept: playback.audioOnly ? 'audio/mp4,*/*;q=0.8' : 'video/mp4,*/*;q=0.8',
-          range: 'bytes=0-0',
-        },
-      });
-      const usable = response.status === 200 || response.status === 206;
-      const contentType = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-      await response.body?.cancel().catch(() => null);
-      if (!usable || (!contentType.startsWith('video/') && !contentType.startsWith('audio/') && contentType !== 'application/octet-stream')) continue;
-      return {
-        playback,
-        filename,
-        url: url.toString(),
-        contentType: contentType || (playback.audioOnly ? 'audio/mp4' : 'video/mp4'),
-        size: totalBytes(response),
-      };
-    } catch {
-      // A missing static rendition is normal; adaptive HLS playback remains available.
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  return null;
+  const results = await Promise.all(
+    candidates.map((filename) => probeMuxStaticRendition(playback, filename, timeoutMs)),
+  );
+  return results.find(Boolean) || null;
 }
 
 async function ensureSchema(env) {
