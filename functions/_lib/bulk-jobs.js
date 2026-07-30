@@ -9,7 +9,7 @@ import { requiredScopeForType, resolveWhopExperienceType, retrieveExperience } f
 const MAX_SOURCES = 100;
 const LEASE_MS = 90_000;
 const OWNER_KEY = 'sniperplug-owner';
-const JOB_VERSION = 3;
+const JOB_VERSION = 4;
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
@@ -50,6 +50,15 @@ function partialProgress(summary) {
   return total ? Math.min(1, Number(current.cursor || 0) / total) : 0;
 }
 
+function issueCount(summary, failures) {
+  return Number(failures?.length || 0)
+    + Number(summary?.itemFailures || 0)
+    + Number(summary?.heldFiles || 0)
+    + Number(summary?.heldIntegrity || 0)
+    + Number(summary?.heldLinks || 0)
+    + Number(summary?.heldPermissions || 0);
+}
+
 function normalize(row) {
   if (!row) return null;
   const ids = safeJson(row.source_ids_json, []);
@@ -58,9 +67,12 @@ function normalize(row) {
   const summary = safeJson(row.summary_json, {});
   const completedSources = Math.min(Number(row.source_index || 0), ids.length);
   const progress = ids.length ? ((completedSources + partialProgress(summary)) / ids.length) * 100 : 0;
+  const issues = issueCount(summary, failures);
   return {
     id: row.id,
     status: row.status,
+    outcome: row.status === 'completed' ? (issues ? 'completed-with-issues' : 'completed-successfully') : row.status,
+    issueCount: issues,
     sourceIds: ids,
     sourceIndex: Number(row.source_index || 0),
     totalSources: ids.length,
@@ -98,7 +110,7 @@ async function cancelLegacyRow(db, row) {
   `).bind(now, now, JSON.stringify({
     ...summary,
     legacyCanceled: true,
-    legacyCancelReason: 'Canceled automatically because the old source-wide worker could exceed Cloudflare subrequest limits and publish weak content.',
+    legacyCancelReason: 'Canceled automatically because the previous worker did not guarantee exclusive lease ownership through its final save.',
     canceledAt: now,
   }), row.id, OWNER_KEY).run();
   return rowForOwner(db, row.id);
@@ -150,6 +162,8 @@ function addSummary(summary, result) {
   next.expired = Number(next.expired || 0) + Number(result.expired || 0);
   next.mediaMirrored = Number(next.mediaMirrored || 0) + Number(result.mediaMirrored || 0);
   next.published = Number(next.published || 0) + Number(result.published?.published || 0);
+  next.itemFailures = Number(next.itemFailures || 0) + Number(result.itemFailures?.length || 0);
+  next.failedSources = Number(next.failedSources || 0) + Number(result.itemFailures?.length ? 1 : 0);
   next.heldFiles = Number(next.heldFiles || 0) + Number(result.published?.skippedFiles?.length || 0);
   next.heldIntegrity = Number(next.heldIntegrity || 0) + Number(result.published?.skippedIntegrity?.length || 0) + Number(result.heldPolicy || 0);
   next.heldLinks = Number(next.heldLinks || 0) + Number(result.published?.skippedLinks?.length || 0);
@@ -182,13 +196,13 @@ async function prepareSource(env, whopSession, experienceId) {
     experience = await retrieveExperience(whopSession, experienceId);
   } catch (error) {
     const required = permissionMessage(error);
-    if (required) return { held: true, result: { experienceId, title: experienceId, sourceType: 'unknown', category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: required, published: emptyPublished() } };
+    if (required) return { held: true, result: { experienceId, title: experienceId, sourceType: 'unknown', category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], itemFailures: [], permissionRequired: required, published: emptyPublished() } };
     throw error;
   }
   const sourceType = await resolveWhopExperienceType(whopSession, experience);
   const required = requiredScopeForType(sourceType);
   if (required && !scopeSet(whopSession).has(required)) {
-    return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: required, published: emptyPublished() } };
+    return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], itemFailures: [], permissionRequired: required, published: emptyPublished() } };
   }
   await saveSourceDecision(env, experience, experience.id, 'approved');
   let posts;
@@ -196,7 +210,7 @@ async function prepareSource(env, whopSession, experienceId) {
     posts = await scanApprovedSource(env, whopSession, experience);
   } catch (error) {
     const missing = permissionMessage(error);
-    if (missing) return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], permissionRequired: missing, published: emptyPublished() } };
+    if (missing) return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], itemFailures: [], permissionRequired: missing, published: emptyPublished() } };
     throw error;
   }
   const guideReady = posts.filter((item) => item.decision !== 'blocked' && item.integrity?.autoPublishEligible === true);
@@ -236,6 +250,7 @@ function mergePublished(target, value) {
 
 async function processCurrentItem(env, whopSession, current) {
   const sourceKey = current.readyKeys[current.cursor];
+  if (!sourceKey) throw new HttpError(409, 'Bulk job item cursor no longer matches its saved source list.');
   try {
     const output = await importApprovedPosts(env, whopSession, {
       experienceId: current.experienceId,
@@ -268,13 +283,13 @@ function resultFromCurrent(current) {
   return { ...result, category: 'per-item', itemFailures };
 }
 
-async function persistStep(db, row, { sourceIndex, results, failures, summary, completed }) {
+async function persistStep(db, row, leaseToken, { sourceIndex, results, failures, summary, completed }) {
   const updatedAt = new Date().toISOString();
-  await db.prepare(`
+  const saved = await db.prepare(`
     UPDATE bulk_jobs
     SET source_index = ?, results_json = ?, failures_json = ?, summary_json = ?,
         status = ?, lease_until = NULL, updated_at = ?, completed_at = ?
-    WHERE id = ? AND admin_session_id = ?
+    WHERE id = ? AND admin_session_id = ? AND status = 'active' AND lease_until = ?
   `).bind(
     sourceIndex,
     JSON.stringify(results),
@@ -285,7 +300,11 @@ async function persistStep(db, row, { sourceIndex, results, failures, summary, c
     completed ? updatedAt : null,
     row.id,
     OWNER_KEY,
+    leaseToken,
   ).run();
+  if (Number(saved.meta?.changes || 0) !== 1) {
+    throw new HttpError(409, 'This bulk step lost its server lease, so stale progress was not saved. Refresh the job before continuing.');
+  }
 }
 
 export async function stepBulkJob(env, admin, whopSession, id) {
@@ -349,7 +368,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
   }
 
   const completed = index >= ids.length && !summary.current;
-  await persistStep(db, row, { sourceIndex: index, results, failures, summary, completed });
+  await persistStep(db, row, nextLease, { sourceIndex: index, results, failures, summary, completed });
   return normalize(await rowForOwner(db, id));
 }
 
