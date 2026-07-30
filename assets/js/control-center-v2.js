@@ -934,8 +934,6 @@
     card.dataset.sourceKey = post.sourceKey;
     card.dataset.state = post.decision;
     card.dataset.type = post.contentType || 'forum';
-    card.style.contentVisibility = 'auto';
-    card.style.containIntrinsicSize = '1px 260px';
 
     const header = document.createElement('header');
     const copy = document.createElement('div');
@@ -955,6 +953,33 @@
     const diagnostics = document.createElement('div');
     diagnostics.className = 'post-diagnostics';
     diagnostics.textContent = policyText(post);
+    const mediaFiles = (post.attachments || []).filter((file) => ['course-thumbnail', 'hosted-video'].includes(file.role));
+    const media = document.createElement('div');
+    media.className = 'post-media-summary';
+    media.hidden = mediaFiles.length === 0;
+    const thumbnail = mediaFiles.find((file) => file.role === 'course-thumbnail' && file.url);
+    if (thumbnail) {
+      const image = document.createElement('img');
+      image.src = thumbnail.url;
+      image.alt = '';
+      image.loading = 'lazy';
+      image.decoding = 'async';
+      media.append(image);
+    }
+    const hostedVideo = mediaFiles.find((file) => file.role === 'hosted-video');
+    if (hostedVideo) {
+      const copy = document.createElement('div');
+      const heading = document.createElement('strong');
+      const seconds = Number(hostedVideo.durationSeconds || 0);
+      const minutes = seconds > 0 ? Math.max(1, Math.round(seconds / 60)) : 0;
+      heading.textContent = minutes ? `Video detected · ${minutes} min` : 'Video detected';
+      const detail = document.createElement('span');
+      detail.textContent = hostedVideo.uploadStatus && hostedVideo.uploadStatus !== 'ready'
+        ? `Whop status: ${hostedVideo.uploadStatus}`
+        : 'Source-quality playback will be attached during import.';
+      copy.append(heading, detail);
+      media.append(copy);
+    }
     const actions = document.createElement('div');
     actions.className = 'post-actions';
     for (const [action, label, className] of [
@@ -970,7 +995,7 @@
       button.textContent = label;
       actions.append(button);
     }
-    card.append(header, excerpt, diagnostics, actions);
+    card.append(header, excerpt, media, diagnostics, actions);
     updatePostCard(card, post);
     return card;
   }
@@ -995,21 +1020,31 @@
     const token = ++state.postRenderToken;
     elements.postList.replaceChildren();
     let index = 0;
-    const appendChunk = (deadline) => {
+    const appendCount = (limit) => {
       if (token !== state.postRenderToken) return;
       const fragment = document.createDocumentFragment();
       let count = 0;
-      while (index < state.postOrder.length && (count < 20 || deadline.timeRemaining() > 2)) {
+      while (index < state.postOrder.length && count < limit) {
         const post = state.posts.get(state.postOrder[index]);
         index += 1;
         count += 1;
         if (post) fragment.append(createPostCard(post));
       }
       elements.postList.append(fragment);
-      if (index < state.postOrder.length) idle(appendChunk);
     };
-    idle(appendChunk);
+    appendCount(Math.min(12, state.postOrder.length));
+    const appendRemaining = (deadline) => {
+      if (token !== state.postRenderToken) return;
+      const budget = Math.max(8, Math.min(30, Math.floor(deadline.timeRemaining() * 3) || 8));
+      appendCount(budget);
+      if (index < state.postOrder.length) idle(appendRemaining);
+    };
+    if (index < state.postOrder.length) idle(appendRemaining);
     syncPostControls();
+  }
+
+  function afterLayoutPaint() {
+    return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   }
 
   async function decidePosts(keys, decision, button = null) {
@@ -1047,6 +1082,7 @@
       const manual = (output.posts || []).filter((post) => post.decision !== 'blocked' && post.integrity?.autoPublishEligible !== true).length;
       elements.postSummary.textContent = `${output.counts.total} top-level item${output.counts.total === 1 ? '' : 's'} · ${ready} automatic-ready · ${manual} manual review · replies, junk, and expired picks are blocked.`;
       renderPosts();
+      await afterLayoutPaint();
       elements.postPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }).catch((error) => showStatus(error.message, 'error'));
   }

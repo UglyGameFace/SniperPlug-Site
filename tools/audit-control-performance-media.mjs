@@ -36,8 +36,9 @@ assert.ok(page.includes('/assets/js/control-center-v2.js'), 'Consolidated fast i
 assert.ok(!page.includes('/assets/js/control-center.js') && !page.includes('/assets/js/control-center-performance.js') && !page.includes('/assets/js/control-center-density.js') && !page.includes('/assets/js/control-center-hardening.js') && !page.includes('/assets/js/bulk-publish.js'), 'Legacy runtimes can still attach duplicate handlers and observers.');
 assert.equal((runtime.match(/root\.addEventListener\('click'/g) || []).length, 1, 'Controls do not share one delegated click path.');
 assert.equal((runtime.match(/root\.addEventListener\('change'/g) || []).length, 1, 'Controls do not share one delegated change path.');
-assert.ok(runtime.includes('requestIdleCallback') && runtime.includes('appendChunk'), 'Large content scans do not yield between render chunks.');
-assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen cards are still fully laid out and painted.');
+assert.ok(runtime.includes('requestIdleCallback') && runtime.includes('appendRemaining') && runtime.includes('appendCount(Math.min(12'), 'Large content scans do not yield between render chunks.');
+assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen source and group cards lost their layout optimization.');
+assert.ok(!runtime.includes("card.dataset.type = post.contentType || 'forum';\n    card.style.contentVisibility"), 'Post review cards still use unstable mobile content-visibility.');
 assert.ok(runtime.includes('state.sourceCards') && runtime.includes('updateSourceDecision'), 'Source decisions still require full source-tree rerenders.');
 assert.ok(runtime.includes('updatePostCard') && runtime.includes('updateGuideListItem'), 'Post or guide actions still rebuild complete lists.');
 assert.ok(runtime.includes('state.selectedSources') && runtime.includes('setSelected'), 'Selection is not maintained in memory as one batched state change.');

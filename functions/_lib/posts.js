@@ -33,6 +33,7 @@ function normalizeAttachments(value) {
     visibility: String(attachment?.visibility || '').slice(0, 40) || null,
     uploadStatus: String(attachment?.upload_status || attachment?.uploadStatus || '').slice(0, 40) || null,
     role: String(attachment?.role || 'attachment').slice(0, 80),
+    durationSeconds: Number(attachment?.duration_seconds || attachment?.durationSeconds || 0) || null,
     reviewReason: String(attachment?.reviewReason || '').slice(0, 400) || null,
   })).filter((attachment) => attachment.id || attachment.url || attachment.reviewReason);
 }

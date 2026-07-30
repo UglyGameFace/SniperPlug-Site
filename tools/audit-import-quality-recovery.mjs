@@ -129,7 +129,7 @@ assert.ok(!bulk.includes('IMPORT_CHUNK = 50'), 'The old source-wide import batch
 assert.ok(posts.includes("from './whop-items.js'"), 'Source scans still use the detail-heavy legacy listing path.');
 assert.ok(posts.includes('listExperienceItemsLite'), 'Lightweight scan discovery is not active.');
 assert.ok(items.includes('retrieveExperienceItem'), 'Exact item re-fetch is missing.');
-assert.ok(!items.includes('mapConcurrent'), 'Course scanning still fans out detail requests.');
+assert.ok(items.includes('COURSE_DETAIL_CONCURRENCY = 4') && items.includes('mapConcurrent'), 'Course media detail reads are not strictly bounded.');
 assert.ok(items.includes("return parts.join('\\n\\n')"), 'Mixed course text/video/quiz blocks can be dropped.');
 
 assert.ok(imports.includes('retrieveExperienceItem'), 'Import still re-lists an entire Whop source.');

@@ -5,6 +5,7 @@ import { resolveWhopExperienceType, sourceKeyForWhopItem, whopApi } from './whop
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_ITEMS = 2000;
+const COURSE_DETAIL_CONCURRENCY = 4;
 
 function cleanTitle(value, fallback = 'Untitled Whop content') {
   return String(value || fallback).normalize('NFKC').trim().replace(/\s+/g, ' ').slice(0, 140) || fallback;
@@ -51,6 +52,38 @@ async function allPages(session, path, query = {}, maxItems = MAX_ITEMS) {
     after = next;
   }
   throw new HttpError(502, 'Whop pagination exceeded the safe page limit.');
+}
+
+async function mapConcurrent(values, mapper, concurrency = COURSE_DETAIL_CONCURRENCY) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  async function worker() {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await mapper(values[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, values.length)) }, () => worker()));
+  return output;
+}
+
+function courseLessonNeedsDetail(lesson) {
+  const type = String(lesson?.lesson_type || lesson?.type || '').toLowerCase();
+  if (/(?:video|audio|media)/.test(type)) return true;
+  if (lesson?.video_asset || lesson?.video_asset_id || lesson?.thumbnail) return true;
+  const hasBody = Boolean(whopContentToMarkdown(lesson?.content || '').trim());
+  const hasFiles = Boolean(lesson?.main_pdf || (Array.isArray(lesson?.attachments) && lesson.attachments.length));
+  return !hasBody && !hasFiles;
+}
+
+async function detailedCourseLesson(session, lesson) {
+  if (!courseLessonNeedsDetail(lesson) || !lesson?.id) return { lesson, detailDeferred: true };
+  try {
+    return { lesson: await whopApi(session, `course_lessons/${encodeURIComponent(lesson.id)}`), detailDeferred: false };
+  } catch {
+    return { lesson, detailDeferred: true };
+  }
 }
 
 function sourceContext(experience) {
@@ -104,6 +137,8 @@ function courseLessonContent(lesson, course) {
 
 function courseAttachments(lesson) {
   const values = [];
+  const thumbnail = fileInput(lesson?.thumbnail, 'course-thumbnail');
+  if (thumbnail) values.push(thumbnail);
   const mainPdf = fileInput(lesson?.main_pdf, 'main-pdf');
   if (mainPdf) values.push(mainPdf);
   for (const attachment of Array.isArray(lesson?.attachments) ? lesson.attachments : []) {
@@ -119,7 +154,8 @@ function courseAttachments(lesson) {
       visibility: 'private',
       upload_status: String(lesson.video_asset.status || 'unknown'),
       role: 'hosted-video',
-      reviewReason: 'Whop-hosted course video requires permanent SniperPlug media storage before publication.',
+      duration_seconds: Number(lesson.video_asset.duration_seconds || lesson.video_asset.duration || 0) || null,
+      reviewReason: 'Whop-hosted video detected. SniperPlug attaches authorized source-quality playback when this lesson is imported.',
     });
   }
   return values;
@@ -196,7 +232,10 @@ export async function listExperienceItemsLite(session, experience) {
     const output = [];
     for (const course of courses) {
       const lessons = await allPages(session, 'course_lessons', { course_id: course.id });
-      for (const lesson of lessons) output.push(courseItem(lesson, course, experience, { detailDeferred: true }));
+      const detailed = await mapConcurrent(lessons, (lesson) => detailedCourseLesson(session, lesson));
+      for (const entry of detailed) {
+        output.push(courseItem(entry.lesson, entry.lesson?.course || course, experience, { detailDeferred: entry.detailDeferred }));
+      }
     }
     return output.filter((item) => item.id);
   }
