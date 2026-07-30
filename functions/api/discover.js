@@ -1,4 +1,5 @@
 import { requireAdmin } from '../_lib/auth.js';
+import { enforceLiveWhopAccess } from '../_lib/access-truth.js';
 import { discoverWhopSources, isTransientDiscoveryError } from '../_lib/discovery.js';
 import { HttpError, json, methodNotAllowed } from '../_lib/http.js';
 import { requireWhopSession } from '../_lib/whop.js';
@@ -25,7 +26,8 @@ export async function onRequest(context) {
     if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
     const admin = await requireAdmin(context.request, context.env);
     const session = await requireWhopSession(context.request, context.env, admin);
-    return json(await discoverWhopSources(session, context.env));
+    const discovered = await discoverWhopSources(session, context.env);
+    return json(await enforceLiveWhopAccess(session, discovered));
   } catch (error) {
     return discoveryError(error);
   }
