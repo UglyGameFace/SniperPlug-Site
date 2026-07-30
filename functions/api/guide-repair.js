@@ -4,6 +4,12 @@ import { handleError, HttpError, json, methodNotAllowed, readJson, requireDataba
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 const MAX_RECOVERY_ROWS = 250;
+const GUIDE_RESTORE_COLUMNS = [
+  'slug', 'title', 'description', 'category_slug', 'body_markdown', 'status', 'featured', 'sort_order',
+  'source_key', 'source_group', 'source_experience_id', 'source_post_id', 'source_fingerprint',
+  'attachment_json', 'integrity_json', 'author_json', 'source_created_at', 'source_updated_at',
+  'imported_at', 'updated_at', 'published_at',
+];
 
 function numericId(value) {
   const id = Number.parseInt(value, 10);
@@ -34,6 +40,13 @@ async function rejectedImports(env) {
   }));
 }
 
+async function restoreGuideSnapshot(db, row) {
+  const assignments = GUIDE_RESTORE_COLUMNS.map((column) => `${column} = ?`).join(', ');
+  await db.prepare(`UPDATE guides SET ${assignments} WHERE id = ?`)
+    .bind(...GUIDE_RESTORE_COLUMNS.map((column) => row[column] ?? null), row.id)
+    .run();
+}
+
 async function repairGuide(request, env, admin) {
   requireSameOrigin(request);
   const input = await readJson(request, { maxBytes: 20_000 });
@@ -52,35 +65,48 @@ async function repairGuide(request, env, admin) {
 
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, row.source_experience_id);
-  const output = await importApprovedPosts(env, whop, {
-    experienceId: experience.id,
-    sourceKeys: [row.source_key],
-    recoveryGuideId: id,
-    category: row.category_slug || undefined,
-    autoCategorize: !row.category_slug,
-    automaticWorkflow: false,
-    rightsConfirmed: true,
-  });
 
-  const result = (output.results || []).find((item) => String(item.sourceKey) === String(row.source_key));
-  if (!result || !['created-draft', 'updated-draft'].includes(result.action)) {
-    throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild the draft.');
+  try {
+    const output = await importApprovedPosts(env, whop, {
+      experienceId: experience.id,
+      sourceKeys: [row.source_key],
+      recoveryGuideId: id,
+      category: row.category_slug || undefined,
+      autoCategorize: !row.category_slug,
+      automaticWorkflow: false,
+      rightsConfirmed: true,
+    });
+
+    const result = (output.results || []).find((item) => String(item.sourceKey) === String(row.source_key));
+    if (!result || !['created-draft', 'updated-draft'].includes(result.action)) {
+      throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild the draft.');
+    }
+
+    const guideId = Number(result.guideId || id);
+    if (guideId !== id) throw new HttpError(409, 'Recovery rebuilt a different guide record and was stopped.');
+    const guide = await adminGuide(env, guideId);
+    if (!guide || guide.status !== 'draft') {
+      throw new HttpError(409, 'The item was fetched but did not return to the private draft queue.');
+    }
+
+    return json({
+      repaired: true,
+      action: result.action,
+      guide,
+      import: output,
+      remaining: await rejectedImports(env),
+    });
+  } catch (error) {
+    try {
+      await restoreGuideSnapshot(db, row);
+    } catch (rollbackError) {
+      throw new HttpError(500, 'Recovery failed and SniperPlug could not restore the original rejected guide row.', {
+        recoveryError: String(error?.message || error),
+        rollbackError: String(rollbackError?.message || rollbackError),
+      });
+    }
+    throw error;
   }
-
-  const guideId = Number(result.guideId || id);
-  if (guideId !== id) throw new HttpError(409, 'Recovery rebuilt a different guide record and was stopped.');
-  const guide = await adminGuide(env, guideId);
-  if (!guide || guide.status !== 'draft') {
-    throw new HttpError(409, 'The item was fetched but did not return to the private draft queue.');
-  }
-
-  return json({
-    repaired: true,
-    action: result.action,
-    guide,
-    import: output,
-    remaining: await rejectedImports(env),
-  });
 }
 
 export async function onRequest(context) {
