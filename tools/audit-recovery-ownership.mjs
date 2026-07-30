@@ -8,6 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const leases = read('functions/_lib/recovery-leases.js');
 const repair = read('functions/api/guide-repair.js');
+const legacyRecovery = read('functions/api/recovery.js');
 const ownerSave = read('functions/_lib/guides-owner-save.js');
 const versioning = read('functions/_lib/guide-versioning.js');
 const snapshots = read('functions/_lib/guide-snapshots.js');
@@ -30,6 +31,7 @@ assert.ok(repair.includes('await restoreCourseVideos(env, id, videoSnapshot)'), 
 assert.ok(repair.indexOf('restoreGuideSnapshot(env, lockedRow') < repair.indexOf('restoreCourseVideos(env, id, videoSnapshot)'), 'Course-video mappings are restored before the guide snapshot is secured.');
 assert.ok(repair.includes("code: 'guide_recovery_rollback_failed'"), 'Unsafe or incomplete recovery rollback is not surfaced clearly.');
 assert.ok(repair.includes('releaseRecoveryLease(env, lease)'), 'Recovery ownership is not released after success or failure.');
+assert.equal(legacyRecovery.trim(), "export { onRequest } from './guide-repair.js';", 'The legacy recovery route has drifted into a second implementation.');
 assert.ok(snapshots.includes('expectedUpdatedAt') && snapshots.includes("code: 'guide_rollback_stale'"), 'Shared snapshot restoration is not optimistic.');
 
 for (const file of [
@@ -38,6 +40,7 @@ for (const file of [
   'functions/_lib/guide-versioning.js',
   'functions/_lib/guide-snapshots.js',
   'functions/api/guide-repair.js',
+  'functions/api/recovery.js',
 ]) {
   const result = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
@@ -47,3 +50,4 @@ console.log('\nSNIPERPLUG RECOVERY OWNERSHIP AUDIT PASSED\n');
 console.log('✓ One durable recovery token owns the guide across rebuild and rollback.');
 console.log('✓ Owner saves and status changes cannot race active recovery.');
 console.log('✓ Failed recovery restores guide and course-video state only when the exact current version is still owned.');
+console.log('✓ The legacy recovery URL is a thin alias, not a second implementation.');
