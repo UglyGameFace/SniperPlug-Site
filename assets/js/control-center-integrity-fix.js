@@ -5,7 +5,7 @@
   function closePreview(event) {
     if (event) {
       event.preventDefault();
-      event.stopPropagation();
+      event.stopImmediatePropagation();
     }
     preview.hidden = true;
     preview.setAttribute('aria-hidden', 'true');
@@ -15,15 +15,10 @@
     document.documentElement.style.removeProperty('overflow');
   }
 
-  // The preview is outside data-control-root, so root-delegated handlers cannot
-  // receive its close-button clicks. Own the modal lifecycle at document level.
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    if (target.closest('[data-close-preview]')) {
-      closePreview(event);
-      return;
-    }
+    if (target.closest('[data-close-preview]')) return closePreview(event);
     if (target === preview) closePreview(event);
   }, true);
 
@@ -51,93 +46,69 @@
 
 (() => {
   const root = document.querySelector('[data-control-root]');
-  const recent = document.querySelector('[data-recent-actions]');
-  const list = document.querySelector('[data-recent-action-list]');
-  const status = document.querySelector('[data-recent-action-status]');
-  if (!(root instanceof HTMLElement) || !(recent instanceof HTMLElement) || !(list instanceof HTMLElement)) return;
-  if (recent.dataset.integrityControls === 'true') return;
-  recent.dataset.integrityControls = 'true';
-  recent.dataset.historyCollapsed = 'true';
+  const editor = document.querySelector('[data-draft-editor]');
+  const button = document.querySelector('[data-return-draft]');
+  const status = document.querySelector('[data-global-status]');
+  if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(button instanceof HTMLButtonElement)) return;
 
-  const controls = document.createElement('div');
-  controls.className = 'recent-history-display-controls button-row';
-  const toggle = document.createElement('button');
-  toggle.type = 'button';
-  toggle.className = 'btn ghost';
-  toggle.textContent = 'Show removed imports';
-  toggle.setAttribute('aria-expanded', 'false');
-  const clear = document.createElement('button');
-  clear.type = 'button';
-  clear.className = 'decision disapprove';
-  clear.textContent = 'Clear removed imports';
-  controls.append(toggle, clear);
-  recent.querySelector('header')?.append(controls);
+  let busy = false;
 
-  const style = document.createElement('style');
-  style.textContent = `
-    [data-recent-actions][data-history-collapsed="true"] [data-recent-action-list],
-    [data-recent-actions][data-history-collapsed="true"] .recent-actions-controls { display:none !important; }
-    [data-recent-action-list] { max-height:min(46vh,560px); overflow:auto; overscroll-behavior:contain; }
-    .recent-history-display-controls { display:flex; flex-wrap:wrap; gap:.6rem; }
-  `;
-  document.head.append(style);
-
-  function rejectedRows() {
-    return [...list.querySelectorAll('.recent-action')].filter((row) =>
-      row.querySelector('.recent-action-status')?.textContent?.trim().startsWith('Rejected')
-    );
+  async function request(url, options = {}) {
+    const response = await fetch(url, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      ...options,
+      headers: {
+        accept: 'application/json',
+        ...(options.body ? { 'content-type': 'application/json' } : {}),
+        ...(options.headers || {}),
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `SniperPlug request failed (${response.status}).`);
+    return data;
   }
 
-  function sync() {
-    const count = rejectedRows().length;
-    const collapsed = recent.dataset.historyCollapsed === 'true';
-    toggle.hidden = list.children.length === 0;
-    toggle.textContent = collapsed ? `Show removed imports${count ? ` (${count})` : ''}` : 'Collapse removed imports';
-    toggle.setAttribute('aria-expanded', String(!collapsed));
-    clear.hidden = count === 0;
-    clear.textContent = count ? `Clear ${count} removed import${count === 1 ? '' : 's'}` : 'Clear removed imports';
+  function show(message, state = 'ok') {
+    if (!(status instanceof HTMLElement)) return;
+    status.hidden = !message;
+    status.textContent = message;
+    status.dataset.type = state;
   }
 
-  toggle.addEventListener('click', (event) => {
+  document.addEventListener('click', async (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-return-draft]') : null;
+    if (target !== button) return;
     event.preventDefault();
-    recent.dataset.historyCollapsed = recent.dataset.historyCollapsed === 'true' ? 'false' : 'true';
-    sync();
-  });
+    event.stopImmediatePropagation();
+    if (busy || button.disabled) return;
 
-  clear.addEventListener('click', async (event) => {
-    event.preventDefault();
-    const count = rejectedRows().length;
-    if (!count) return;
-    if (!window.confirm(`Clear ${count} removed import${count === 1 ? '' : 's'} from this panel? This does not delete the original Whop source content.`)) return;
-    clear.disabled = true;
-    clear.textContent = 'Clearing…';
+    const id = Number(editor.elements.namedItem('id')?.value || 0);
+    if (!Number.isFinite(id) || id <= 0) return show('Open a valid guide before returning it to draft.', 'error');
+
+    busy = true;
+    const idleLabel = button.textContent;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = 'Returning to draft…';
+    show('Confirming the newest saved guide version…', 'ok');
+
     try {
-      const response = await fetch('/api/recent-actions', {
+      const detail = await request(`/api/control?action=guide-detail&id=${encodeURIComponent(id)}`);
+      const expectedUpdatedAt = String(detail?.guide?.updatedAt || '').trim();
+      if (!expectedUpdatedAt) throw new Error('SniperPlug could not confirm the newest guide version. Refresh and try again.');
+      await request('/api/control?action=guide-status', {
         method: 'POST',
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: { accept: 'application/json', 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'dismiss', allRejected: true }),
+        body: JSON.stringify({ id, status: 'draft', expectedUpdatedAt }),
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Removed imports could not be cleared.');
-      for (const row of rejectedRows()) row.remove();
-      recent.dataset.historyCollapsed = 'true';
-      if (status) {
-        status.textContent = `${data.dismissed || count} removed import${(data.dismissed || count) === 1 ? '' : 's'} cleared.`;
-        status.dataset.state = 'ok';
-      }
+      show('Guide returned to draft. Reloading the confirmed server state…', 'ok');
+      window.location.replace(`${window.location.pathname}?guide=${id}&fresh=${Date.now()}`);
     } catch (error) {
-      if (status) {
-        status.textContent = error.message;
-        status.dataset.state = 'error';
-      }
-    } finally {
-      clear.disabled = false;
-      sync();
+      show(error.message, 'error');
+      busy = false;
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = idleLabel;
     }
-  });
-
-  new MutationObserver(sync).observe(list, { childList: true });
-  sync();
+  }, true);
 })();
