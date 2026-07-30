@@ -30,6 +30,8 @@ assert.ok(imports.includes("code: 'guide_import_stale'"), 'A stale base import d
 assert.ok(imports.includes("code: 'guide_import_unconfirmed'"), 'Imported guide fingerprints are not read back and confirmed.');
 assert.ok(imports.includes("saved.status !== 'draft'"), 'The importer can report success without confirming draft status.');
 assert.ok(imports.includes("String(saved.source_fingerprint || '') !== sourceFingerprint"), 'The importer can report success without confirming the exact fingerprint.');
+assert.ok(imports.includes('sourceSuffix') && imports.includes("sha256(String(sourceKey || base))"), 'New imported guide slugs are not deterministic per exact source key.');
+assert.ok(!imports.includes("SELECT 1 FROM guides WHERE slug = ?"), 'Imported slug allocation still uses a non-atomic check-then-insert race.');
 
 for (const file of [
   'functions/_lib/import-leases.js',
@@ -44,3 +46,4 @@ console.log('\nSNIPERPLUG IMPORT CONCURRENCY AUDIT PASSED\n');
 console.log('✓ Exact source keys are serialized across manual import, bulk, and recovery workflows.');
 console.log('✓ Owner edits win over stale base-import and media-enhancement writes.');
 console.log('✓ D1 draft status and source fingerprints are confirmed before success is reported.');
+console.log('✓ Same-title imports receive deterministic source-key slugs without check-then-insert races.');
