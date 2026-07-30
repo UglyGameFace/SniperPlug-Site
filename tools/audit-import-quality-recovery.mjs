@@ -14,6 +14,8 @@ const posts = read('functions/_lib/posts.js');
 const items = read('functions/_lib/whop-items.js');
 const imports = read('functions/_lib/guides-import.js');
 const media = read('functions/_lib/guides-media.js');
+const courseVideo = read('functions/_lib/course-video.js');
+const repair = read('functions/api/guide-repair.js');
 const reconcile = read('functions/_lib/import-reconciliation.js');
 const control = read('functions/api/control.js');
 const bulkApi = read('functions/api/bulk-jobs.js');
@@ -139,6 +141,12 @@ assert.ok(imports.includes("action: 'held-policy'"), 'Exact content that fails r
 assert.ok(imports.includes("action: 'duplicate-held'"), 'Exact duplicate guides are not held.');
 assert.ok(imports.includes('MAX_ATTACHMENTS_PER_AUTOMATIC_ITEM'), 'Attachment-heavy content can still exceed a bounded automatic step.');
 assert.ok(imports.includes("existing.status !== 'rejected'"), 'Rejected imported guides are still mistaken for unchanged and cannot be re-imported.');
+assert.ok(imports.includes('exactRecoveryContext') && imports.includes('recoveryGuideId'), 'Recovery does not validate one exact rejected guide inside the importer.');
+assert.ok(imports.includes("row.status !== 'rejected'") && imports.includes('Recovery context does not match'), 'Recovery can bypass normal approval checks without matching the rejected guide, source key, and Experience.');
+assert.ok(repair.includes('recoveryGuideId: id'), 'The recovery endpoint does not use the exact rejected-guide import context.');
+assert.ok(!repair.includes('saveSourceDecision') && !repair.includes('savePostDecision'), 'Recovery still mutates owner source or item approval decisions.');
+assert.ok(repair.includes('restoreGuideSnapshot') && repair.includes('snapshotCourseVideos') && repair.includes('restoreCourseVideos'), 'Failed recovery does not restore both the guide row and course-video routes.');
+assert.ok(courseVideo.includes('snapshotCourseVideos') && courseVideo.includes('restoreCourseVideos'), 'Course-video rollback helpers are missing.');
 assert.ok(recent.includes("status = 'rejected'") && recent.includes("status IN ('published', 'rejected')"), 'Rejected imported guides are missing from 48-hour restore or cannot return to draft.');
 assert.ok(runtime.includes('Rejected · can restore') && runtime.includes('published or rejected imported guides'), 'The Undo panel still mislabels rejected-guide restoration as publication-only.');
 assert.ok(page.includes('Restore recent imported changes'), 'The Control Center does not explain that rejected imports can be restored.');
@@ -172,10 +180,12 @@ for (const file of [
   'functions/_lib/guides.js',
   'functions/_lib/guides-import.js',
   'functions/_lib/guides-media.js',
+  'functions/_lib/course-video.js',
   'functions/_lib/guides-public.js',
   'functions/_lib/import-reconciliation.js',
   'functions/_lib/bulk-jobs.js',
   'functions/api/control.js',
+  'functions/api/guide-repair.js',
   'functions/api/bulk-jobs.js',
   'functions/_lib/guide-search.js',
 ]) {
@@ -189,6 +199,7 @@ console.log('✓ Category matching no longer mistakes online products or ordinar
 console.log('✓ Course scanning avoids per-lesson detail fanout and exact lessons are re-fetched one at a time.');
 console.log('✓ Every bulk Worker step processes at most one exact content item after a bounded source scan.');
 console.log('✓ Missing Whop scopes are held clearly instead of crashing the job.');
+console.log('✓ Exact rejected-guide recovery does not mutate approval policy and rolls back guide/video state on failure.');
 console.log('✓ Full imported-guide cleanup removes old bad drafts and public junk, not only recent bulk output.');
 console.log('✓ Review and publish keeps visible progress evidence and a bounded one-column queue.');
 console.log('✓ Owner edits complete manual review without erasing source policy history.');
