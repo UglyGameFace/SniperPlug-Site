@@ -4,7 +4,7 @@ import {
   findMuxStaticRendition,
   muxPlayerUrl,
 } from '../_lib/course-video.js';
-import { HttpError } from '../_lib/http.js';
+import { HttpError, requireDatabase } from '../_lib/http.js';
 import { requireOwnerWhopSession, whopApi } from '../_lib/whop.js';
 
 function escapeHtml(value) {
@@ -26,10 +26,26 @@ function noStoreHeaders(extra = {}) {
   };
 }
 
-function errorResponse(error) {
+function errorPage(message, reconnect = false) {
+  const safeMessage = escapeHtml(message);
+  const action = reconnect
+    ? '<p><a href="/control-center/">Open the Control Center and reconnect Whop</a></p>'
+    : '<p><a href="javascript:location.reload()">Try again</a></p>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Course video unavailable</title><style>html,body{height:100%;margin:0;background:#09090b;color:#fff;font-family:system-ui,sans-serif}.error{box-sizing:border-box;display:grid;place-content:center;min-height:100%;padding:1.5rem;text-align:center}.error p{max-width:42rem;line-height:1.55}.error a{color:#8ab4ff}</style></head><body><main class="error"><h1>Course video unavailable</h1><p>${safeMessage}</p>${action}</main></body></html>`;
+}
+
+function errorResponse(error, method = 'GET') {
   const status = error instanceof HttpError ? error.status : 500;
   const message = error instanceof HttpError ? error.message : 'The course video could not be opened.';
-  return new Response(message, { status, headers: noStoreHeaders({ 'content-type': 'text/plain; charset=utf-8' }) });
+  const body = method === 'HEAD' ? null : errorPage(message, status === 401 || status === 403);
+  return new Response(body, {
+    status,
+    headers: noStoreHeaders({
+      'content-type': 'text/html; charset=utf-8',
+      'x-frame-options': 'SAMEORIGIN',
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; navigate-to 'self'",
+    }),
+  });
 }
 
 function playerPage(playerUrl, title) {
@@ -39,6 +55,30 @@ function playerPage(playerUrl, title) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${safeTitle}</title>
 <style>html,body{height:100%;margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}iframe{display:block;width:100%;height:100%;border:0;background:#000}.error{display:grid;place-items:center;height:100%;padding:1rem;text-align:center}</style></head>
 <body><iframe src="${safeUrl}" title="${safeTitle}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`;
+}
+
+async function expireSelectedOwnerSession(env) {
+  const db = requireDatabase(env);
+  await db.prepare(`
+    UPDATE whop_sessions SET expires_at = ?, updated_at = ?
+    WHERE admin_session_id = (
+      SELECT admin_session_id FROM whop_sessions
+      ORDER BY CASE WHEN admin_session_id = 'sniperplug-owner' THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1
+    )
+  `).bind('1970-01-01T00:00:00.000Z', new Date().toISOString()).run();
+}
+
+async function retrieveLessonWithRefresh(request, env, lessonId) {
+  let session = await requireOwnerWhopSession(request, env);
+  try {
+    return await whopApi(session, `course_lessons/${encodeURIComponent(lessonId)}`);
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 401) throw error;
+    await expireSelectedOwnerSession(env);
+    session = await requireOwnerWhopSession(request, env);
+    return whopApi(session, `course_lessons/${encodeURIComponent(lessonId)}`);
+  }
 }
 
 export async function onRequest(context) {
@@ -52,8 +92,7 @@ export async function onRequest(context) {
       if (!admin || source.guide_status !== 'draft') throw new HttpError(404, 'Course video not found.');
     }
 
-    const session = await requireOwnerWhopSession(context.request, context.env);
-    const lesson = await whopApi(session, `course_lessons/${encodeURIComponent(source.lesson_id)}`);
+    const lesson = await retrieveLessonWithRefresh(context.request, context.env, source.lesson_id);
     if (String(source.source_key || '') !== `course-lesson:${String(lesson?.id || '')}`) {
       throw new HttpError(409, 'The saved course video no longer matches its Whop lesson. Re-import this lesson.');
     }
@@ -88,6 +127,6 @@ export async function onRequest(context) {
       }),
     });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, context.request.method);
   }
 }
