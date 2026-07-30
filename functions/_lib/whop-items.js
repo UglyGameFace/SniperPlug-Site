@@ -5,6 +5,7 @@ import { resolveWhopExperienceType, sourceKeyForWhopItem, whopApi } from './whop
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_ITEMS = 2000;
+const MAX_COURSES = 250;
 const COURSE_DETAIL_CONCURRENCY = 4;
 
 function cleanTitle(value, fallback = 'Untitled Whop content') {
@@ -228,10 +229,13 @@ export async function listExperienceItemsLite(session, experience) {
     return posts.filter((post) => !post?.parent_id).map((post) => forumItem(post, experience)).filter((item) => item.id);
   }
   if (type === 'course') {
-    const courses = await allPages(session, 'courses', { experience_id: experience.id }, 250);
+    const courses = await allPages(session, 'courses', { experience_id: experience.id }, MAX_COURSES);
     const output = [];
     for (const course of courses) {
       const lessons = await allPages(session, 'course_lessons', { course_id: course.id });
+      if (output.length + lessons.length > MAX_ITEMS) {
+        throw new HttpError(422, `This Whop Experience contains more than ${MAX_ITEMS} course lessons. Split it into smaller Experiences before scanning so SniperPlug never presents a partial course library.`);
+      }
       const detailed = await mapConcurrent(lessons, (lesson) => detailedCourseLesson(session, lesson));
       for (const entry of detailed) {
         output.push(courseItem(entry.lesson, entry.lesson?.course || course, experience, { detailDeferred: entry.detailDeferred }));
