@@ -82,6 +82,25 @@ function safeJson(value, fallback = {}) {
   try { return JSON.parse(value || '{}'); } catch { return fallback; }
 }
 
+async function exactRecoveryContext(db, input, experienceId, sourceKeys) {
+  const guideId = Number.parseInt(input?.recoveryGuideId, 10);
+  if (!Number.isFinite(guideId) || guideId <= 0) return null;
+  if (sourceKeys.length !== 1) throw new HttpError(422, 'Recovery can rebuild only one exact removed guide at a time.');
+  const row = await db.prepare(`
+    SELECT id, status, source_key, source_group, source_experience_id
+    FROM guides WHERE id = ?
+  `).bind(guideId).first();
+  if (!row || row.status !== 'rejected') throw new HttpError(409, 'The requested recovery guide is no longer removed.');
+  if (String(row.source_key || '') !== sourceKeys[0] || String(row.source_experience_id || '') !== experienceId) {
+    throw new HttpError(403, 'Recovery context does not match the exact removed Whop guide.');
+  }
+  return {
+    guideId: Number(row.id),
+    sourceKey: String(row.source_key),
+    source: { label: String(row.source_group || 'Whop source') },
+  };
+}
+
 export async function importApprovedPosts(env, whopSession, input) {
   if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm that you own this content or have explicit permission to republish it.');
   const experienceId = String(input?.experienceId || '').trim();
@@ -89,8 +108,9 @@ export async function importApprovedPosts(env, whopSession, input) {
   if (!sourceKeys.length) throw new HttpError(422, 'Approve at least one content item before importing.');
   if (sourceKeys.length > MAX_IMPORT) throw new HttpError(422, `Import at most ${MAX_IMPORT} content items at once.`);
   const resolveCategory = await categoryResolver(env, input);
-  const source = await requireApprovedSource(env, experienceId);
   const db = requireDatabase(env);
+  const recovery = await exactRecoveryContext(db, input, experienceId, sourceKeys);
+  const source = recovery?.source || await requireApprovedSource(env, experienceId);
 
   const placeholders = sourceKeys.map(() => '?').join(',');
   const rows = await db.prepare(`
@@ -98,7 +118,9 @@ export async function importApprovedPosts(env, whopSession, input) {
     WHERE experience_id = ? AND source_key IN (${placeholders})
   `).bind(experienceId, ...sourceKeys).all();
   const decisions = new Map((rows.results || []).map((row) => [row.source_key, row]));
-  if (sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
+  if (!recovery && sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) {
+    throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
+  }
 
   const experience = await retrieveExperience(whopSession, experienceId);
   const sourceType = await resolveWhopExperienceType(whopSession, experience);
@@ -106,7 +128,7 @@ export async function importApprovedPosts(env, whopSession, input) {
 
   for (const sourceKey of sourceKeys) {
     const item = await retrieveExperienceItem(whopSession, experience, sourceKey);
-    if (!item) throw new HttpError(409, 'An approved Whop content item is no longer available. Scan the source again.');
+    if (!item) throw new HttpError(409, 'The Whop content item is no longer available. Scan the source again.');
     const renderedOriginal = whopContentToMarkdown(item.content || '');
     const exactPolicy = classifyWhopItem({ ...item, sourceType, content: renderedOriginal });
     if (input?.automaticWorkflow === true && exactPolicy.autoPublishEligible !== true) {
@@ -136,6 +158,9 @@ export async function importApprovedPosts(env, whopSession, input) {
     }));
 
     const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
+    if (recovery && Number(existing?.id || 0) !== recovery.guideId) {
+      throw new HttpError(409, 'The removed guide no longer matches its original Whop source record.');
+    }
     if (existing?.source_fingerprint === sourceFingerprint && existing.status !== 'rejected') {
       results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug, _mediaContext: item._mediaContext || null });
       continue;
