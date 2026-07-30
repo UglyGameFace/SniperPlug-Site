@@ -1,0 +1,107 @@
+name: Apply media and loading feedback
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-media-loading-feedback
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.head_ref == 'agent/whop-guide-importer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/whop-guide-importer
+          fetch-depth: 0
+      - name: Apply exact implementation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one replacement, found {count}')
+              file.write_text(text.replace(old, new))
+
+          replace('functions/_lib/guides-import.js',
+          "async function verifyAttachments(session, attachments) {\n  const values = Array.isArray(attachments) ? attachments : [];\n  const verified = [];\n  for (const attachment of values) verified.push(await retrieveWhopFile(session, attachment));\n",
+          "async function verifyAttachments(session, attachments) {\n  const values = (Array.isArray(attachments) ? attachments : []).filter((attachment) => attachment?.role !== 'hosted-video');\n  const verified = [];\n  for (const attachment of values) verified.push(await retrieveWhopFile(session, attachment));\n")
+
+          replace('functions/_lib/guides-media.js',
+          "  const replacedRoles = new Set(['hosted-video', 'hosted-video-player', 'hosted-video-download', 'hosted-video-archive']);\n  const preservedVideo = supplementResult.preserveExistingVideo\n    ? savedFiles.filter((file) => replacedRoles.has(file.role))\n    : [];\n",
+          "  const replacedRoles = new Set(['hosted-video', 'hosted-video-player', 'hosted-video-download', 'hosted-video-archive']);\n  const preservedVideo = supplementResult.preserveExistingVideo\n    ? savedFiles.filter((file) => ['hosted-video-player', 'hosted-video-download', 'hosted-video-archive'].includes(file.role))\n    : [];\n")
+
+          replace('assets/js/control-center-v2.js',
+          "    previewPostKey: null,\n  };\n",
+          "    previewPostKey: null,\n    activeOperations: 0,\n  };\n\n  const operationBar = document.createElement('div');\n  operationBar.className = 'control-operation-bar';\n  operationBar.hidden = true;\n  operationBar.setAttribute('role', 'status');\n  operationBar.setAttribute('aria-live', 'polite');\n  operationBar.innerHTML = '<div class=\"control-operation-track\"><span></span></div><strong>Working…</strong>';\n  document.body.append(operationBar);\n")
+
+          replace('assets/js/control-center-v2.js',
+          "  async function withButton(button, label, work) {\n    setWorking(button, true, label);\n    try {\n      return await work();\n    } finally {\n      setWorking(button, false);\n      syncButtons();\n    }\n  }\n",
+          "  function setOperationWorking(working, label = 'Working…') {\n    state.activeOperations = Math.max(0, state.activeOperations + (working ? 1 : -1));\n    operationBar.hidden = state.activeOperations === 0;\n    operationBar.dataset.active = state.activeOperations > 0 ? 'true' : 'false';\n    const copy = operationBar.querySelector('strong');\n    if (copy && working) copy.textContent = label || 'Working…';\n    root.setAttribute('aria-busy', state.activeOperations > 0 ? 'true' : 'false');\n  }\n\n  async function withButton(button, label, work) {\n    if (button instanceof HTMLButtonElement && button.getAttribute('aria-busy') === 'true') return;\n    setWorking(button, true, label);\n    setOperationWorking(true, label);\n    try {\n      return await work();\n    } finally {\n      setWorking(button, false);\n      setOperationWorking(false);\n      syncButtons();\n    }\n  }\n")
+
+          replace('assets/js/control-center-v2.js',
+          "    if (button === elements.logout) {\n      await api('session', { method: 'DELETE', body: '{}' }).catch(() => null);\n      lock();\n      return;\n    }\n",
+          "    if (button === elements.logout) {\n      await withButton(button, 'Signing out…', async () => {\n        await api('session', { method: 'DELETE', body: '{}' }).catch(() => null);\n        lock();\n      });\n      return;\n    }\n")
+
+          css = Path('assets/css/control-center-hardening.css')
+          css.write_text(css.read_text() + """
+
+          .control-operation-bar{position:fixed;z-index:10000;left:50%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%);width:min(92vw,520px);display:grid;grid-template-columns:1fr auto;align-items:center;gap:.75rem;padding:.7rem .85rem;border:1px solid rgba(96,239,134,.38);border-radius:999px;background:rgba(5,12,22,.96);box-shadow:0 14px 42px rgba(0,0,0,.42);backdrop-filter:blur(12px)}
+          .control-operation-bar[hidden]{display:none}
+          .control-operation-bar strong{font-size:.86rem;white-space:nowrap}
+          .control-operation-track{height:7px;overflow:hidden;border-radius:999px;background:rgba(255,255,255,.1)}
+          .control-operation-track span{display:block;width:42%;height:100%;border-radius:inherit;background:linear-gradient(90deg,#39d98a,#35c2ff);animation:control-operation-slide 1s ease-in-out infinite}
+          @keyframes control-operation-slide{0%{transform:translateX(-110%)}100%{transform:translateX(340%)}}
+          button[aria-busy=true],.btn[aria-busy=true]{position:relative;cursor:wait;opacity:.82;pointer-events:none}
+          button[aria-busy=true]::after,.btn[aria-busy=true]::after{content:'';display:inline-block;width:.82em;height:.82em;margin-left:.55em;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-.1em;animation:control-spin .65s linear infinite}
+          @keyframes control-spin{to{transform:rotate(360deg)}}
+          """)
+
+          html = Path('control-center/index.html')
+          text = html.read_text()
+          import re
+          versions = re.findall(r'20260730\.\d+', text)
+          current = max((int(v.rsplit('.', 1)[1]) for v in versions), default=3)
+          text = re.sub(r'20260730\.\d+', f'20260730.{current + 1}', text)
+          html.write_text(text)
+
+          test = Path('tools/test-course-video-import.mjs')
+          text = test.read_text()
+          marker = "assert.ok(guideMedia.includes(\"['created-draft', 'updated-draft', 'unchanged']\"), 'Existing unchanged course drafts would not be repaired after rescanning.');\n"
+          addition = marker + "assert.ok(guideImport.includes(\"attachment?.role !== 'hosted-video'\"), 'Hosted course videos must bypass generic R2 attachment copying.');\nassert.ok(guideMedia.includes(\"['hosted-video-player', 'hosted-video-download', 'hosted-video-archive']\"), 'Transient refreshes must not preserve obsolete raw hosted-video R2 warnings.');\n"
+          if marker not in text: raise SystemExit('course video test marker missing')
+          test.write_text(text.replace(marker, addition))
+
+          perf = Path('tools/audit-control-performance-media.mjs')
+          text = perf.read_text()
+          marker = "assert.ok(hardeningCss.includes('touch-action:manipulation'), 'Mobile controls do not use a low-latency touch path.');\n"
+          addition = marker + "assert.ok(runtime.includes('control-operation-bar') && runtime.includes('activeOperations'), 'Slow actions do not expose a global progress indicator.');\nassert.ok(hardeningCss.includes('button[aria-busy=true]') && hardeningCss.includes('control-operation-track'), 'Busy buttons do not show immediate spinner and progress feedback.');\n"
+          if marker not in text: raise SystemExit('performance test marker missing')
+          perf.write_text(text.replace(marker, addition))
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - name: Run full build and regression suite
+        run: npm run build
+      - name: Commit validated implementation
+        run: |
+          rm -f package-lock.json
+          git add -A
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Fix hosted video fallback and action feedback"
+          git push origin HEAD:agent/whop-guide-importer
