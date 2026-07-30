@@ -123,8 +123,10 @@ assert.notEqual(suggestedCategoryForText('Line of credit guide'), 'sports-bettin
 assert.equal(suggestedCategoryForText('Stock trading technical analysis guide'), 'crypto-trading');
 assert.equal(suggestedCategoryForText('Walmart marketplace selling guide'), 'reselling');
 
-assert.ok(bulk.includes('const JOB_VERSION = 3'), 'Bulk jobs are not versioned for safe recovery.');
+assert.ok(bulk.includes('const JOB_VERSION = 4'), 'Bulk jobs are not versioned for safe recovery.');
 assert.ok(bulk.includes('cancelLegacyRow'), 'Unsafe active legacy jobs are not canceled automatically.');
+assert.ok(bulk.includes("AND lease_until = ?"), 'A stale bulk worker can overwrite a newer worker after losing its lease.');
+assert.ok(bulk.includes('completed-with-issues') && bulk.includes('completed-successfully'), 'Bulk completion does not distinguish clean success from held or failed items.');
 assert.ok(bulk.includes('sourceKeys: [sourceKey]'), 'Bulk steps are not limited to one exact content item.');
 assert.ok(bulk.includes('automaticWorkflow: true'), 'Bulk imports do not enforce automatic guide-quality policy.');
 assert.ok(bulk.includes('permissionRequired'), 'Missing Whop scopes are still treated as generic job crashes.');
@@ -197,8 +199,8 @@ console.log('\nSNIPERPLUG IMPORT QUALITY AND RECOVERY AUDIT PASSED\n');
 console.log('✓ Replies, Chat, chatter, raw references, unstructured product listings, duplicates, and expired picks cannot flood publishing.');
 console.log('✓ Category matching no longer mistakes online products or ordinary uses of line for Sports Betting.');
 console.log('✓ Course scanning avoids per-lesson detail fanout and exact lessons are re-fetched one at a time.');
-console.log('✓ Every bulk Worker step processes at most one exact content item after a bounded source scan.');
-console.log('✓ Missing Whop scopes are held clearly instead of crashing the job.');
+console.log('✓ Every bulk Worker step processes at most one exact content item and stale workers cannot overwrite newer progress.');
+console.log('✓ Missing Whop scopes and item failures remain visible as completed-with-issues instead of false success.');
 console.log('✓ Exact rejected-guide recovery does not mutate approval policy and rolls back guide/video state on failure.');
 console.log('✓ Full imported-guide cleanup removes old bad drafts and public junk, not only recent bulk output.');
 console.log('✓ Review and publish keeps visible progress evidence and a bounded one-column queue.');
