@@ -181,6 +181,44 @@ export async function courseVideoSource(env, key) {
   return row;
 }
 
+export async function snapshotCourseVideos(env, guideId) {
+  const numericGuideId = Number.parseInt(guideId, 10);
+  if (!Number.isFinite(numericGuideId) || numericGuideId <= 0) return [];
+  const db = await ensureSchema(env);
+  const rows = await db.prepare(`
+    SELECT video_key, guide_id, lesson_id, source_key, title, audio_only,
+           duration_seconds, created_at, updated_at
+    FROM course_video_sources WHERE guide_id = ? ORDER BY video_key
+  `).bind(numericGuideId).all();
+  return rows.results || [];
+}
+
+export async function restoreCourseVideos(env, guideId, rows) {
+  const numericGuideId = Number.parseInt(guideId, 10);
+  if (!Number.isFinite(numericGuideId) || numericGuideId <= 0) return;
+  const db = await ensureSchema(env);
+  const statements = [db.prepare('DELETE FROM course_video_sources WHERE guide_id = ?').bind(numericGuideId)];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    statements.push(db.prepare(`
+      INSERT INTO course_video_sources (
+        video_key, guide_id, lesson_id, source_key, title, audio_only,
+        duration_seconds, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      row.video_key,
+      numericGuideId,
+      row.lesson_id,
+      row.source_key,
+      row.title,
+      Number(row.audio_only || 0),
+      row.duration_seconds ?? null,
+      row.created_at,
+      row.updated_at,
+    ));
+  }
+  await db.batch(statements);
+}
+
 export async function removeOtherCourseVideos(env, guideId, keepKey = null) {
   const numericGuideId = Number.parseInt(guideId, 10);
   if (!Number.isFinite(numericGuideId) || numericGuideId <= 0) return;
