@@ -1,10 +1,10 @@
 # Active Task
 
 ## Task
-Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls remain responsive, large imports do not freeze the browser, stale client code cannot survive deployment, private Whop media is preserved without letting SniperPlug’s R2 usage cross its application-enforced free-tier budget, and the existing guide-quality and publishing safeguards remain intact.
+Repair the live Cloudflare Pages Whop importer and Control Center so group selection registers immediately, all primary controls remain responsive, large imports do not freeze the browser, stale client code cannot survive deployment, private Whop media is preserved without letting SniperPlug’s application-owned R2 usage cross its guarded free-tier budget, and the existing guide-quality and publishing safeguards remain intact.
 
 ## Status
-Active on `agent/whop-guide-importer`. The interaction/performance and R2 binding work is deployed on the draft PR branch. The hard-free media implementation, targeted tests, full local regression suite, syntax validation, and cleanup inspection pass locally. Final GitHub Actions, Cloudflare deployment, conflict inspection, and authenticated live acceptance remain before merge or completion.
+Active on `agent/whop-guide-importer`. The hard-free media implementation landed at `81917f30448a353d171474452256d9047ee1a43c`; the permanent read-only verification workflow was restored at `5c55cabbe4b35e480c130082dbd41d8e23d6d126`. The complete Node 22 regression suite passed on the cleaned branch, Cloudflare Pages deployed that exact cleaned head successfully, and temporary delivery files are absent. PR #2 remains a draft. Authenticated live acceptance with the connected Whop account and private D1 is the remaining completion gate.
 
 ## Scope
 - Preserve Whop OAuth, official Forum/Course/Chat reads, source approval, republication-rights confirmation, private D1 storage, content quality checks, media preservation, safe publishing, and 48-hour undo.
@@ -49,29 +49,30 @@ Active on `agent/whop-guide-importer`. The interaction/performance and R2 bindin
 - Added migration `0003_media_hard_free.sql`, permanent hard-free regression tests, and expanded media/performance audits.
 
 ## Validation
-- Passed locally: complete `npm test` / `npm run build` audit suite under Node 22.
+- Passed: complete `npm test` / `npm run build` audit suite under Node 22 locally and in the permanent GitHub Actions workflow.
 - Passed: JavaScript syntax validation across Functions, browser scripts, and audit scripts.
+- Passed: migration SQL execution and schema assertions.
 - Passed: exact 50 MB, 8 GB, object-count, daily-copy, monthly-copy, and daily-origin-read policy tests.
 - Passed: canonical cache test proving a second full request and cached HEAD do not touch R2.
 - Passed: Range test proving a cached full response returns HTTP 206 without another R2 read.
 - Passed: cache-busting test proving query strings redirect before an R2 operation.
 - Passed: daily hard-stop test proving a cache miss returns HTTP 429 before another R2 read.
 - Passed: existing importer quality, category, media, auth, discovery, bulk recovery, undo, public isolation, and responsive-layout regressions.
-- Pending: permanent GitHub Actions validation on the final branch head.
-- Pending: Cloudflare Pages deployment of that exact head.
-- Pending: PR mergeability/conflict recheck.
+- Passed: Cloudflare Pages deployment of cleaned workflow commit `5c55cabbe4b35e480c130082dbd41d8e23d6d126`.
 - Pending: authenticated live check with the connected Whop account, private D1, and one real private attachment.
 
 ## Cleanup
 - One active Control Center interaction runtime remains.
 - Draft safety is event-driven and observer-free.
+- Temporary source packaging, patch-trigger, and one-shot write workflow changes are removed.
+- `package-lock.json` and `.hard-free-trigger` are absent.
+- The permanent verification workflow is restored to read-only permissions.
 - No token, imported content, fake production row, or private attachment is committed.
 - The R2 bucket remains private and media is served through `/media/<key>`.
-- Temporary source-artifact workflow changes must be removed after the implementation commit lands.
 - Quarantined source records remain reversible; their no-longer-active media receives a 7-day cleanup window rather than immediate deletion.
 
 ## Blockers
 - GitHub-only validation cannot exercise the user’s authenticated Cloudflare Control Center, inspect private production D1 rows, or fetch a private Whop attachment. Live acceptance must confirm the meter, one real copy, hard-stop messaging, group feedback, responsiveness, publishing progress, and public output.
 
 ## Backlog
-- None. Do not switch tasks until final CI, deployment, conflict inspection, authenticated acceptance, and workflow cleanup pass.
+- None. Do not switch tasks until authenticated acceptance and the final post-acceptance cleanup inspection pass.
