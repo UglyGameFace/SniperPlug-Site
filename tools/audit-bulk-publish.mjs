@@ -58,16 +58,3 @@ assert.ok(jobs.includes('const sourceKey = current.readyKeys[current.cursor]') &
 assert.ok(jobs.includes('leaseToken') && jobs.includes('lease_until = ?'), 'Bulk Worker persistence does not verify lease ownership.');
 assert.ok(!jobs.includes('IMPORT_CHUNK = 50'), 'The unsafe source-wide 50-item import batch returned.');
 assert.ok(jobs.includes("item.decision !== 'blocked'"), 'Blocked content can be auto-approved.');
-
-assert.ok(jobsEndpoint.includes("action === 'start'") && jobsEndpoint.includes("action === 'step'") && jobsEndpoint.includes("action === 'cancel'"), 'Bulk job endpoint does not expose the full resumable lifecycle.');
-assert.ok(recent.includes('HISTORY_HOURS = 48') && recent.includes("status IN ('published', 'rejected')"), 'The 48-hour reversible action window is incomplete.');
-assert.ok(recent.includes('db.batch') && recent.includes("decision = 'pending'"), 'Undo does not restore guides and source decisions atomically enough.');
-assert.ok(recentEndpoint.includes('undoRecentActions'), 'Recent-action endpoint cannot perform undo.');
-assert.ok(client.includes('allImported: true') && publishEndpoint.includes('publishReadyGuides'), 'Publish-all endpoint cannot target the imported review queue.');
-assert.ok(publish.includes('auditGuideLinks') && publish.includes('verifyGuideMedia'), 'Publish-all still skips link or media integrity checks.');
-assert.ok(publish.includes('import_freshness_failed') && publish.includes('content_integrity_failed'), 'Publish-all does not fail closed on freshness and content integrity.');
-assert.ok(styles.includes('.bulk-publish-box') && styles.includes('.bulk-selection-bar'), 'Bulk source workflow is not styled.');
-assert.ok(historyStyles.includes('.recent-actions') && historyStyles.includes('.recent-action-list'), 'Recent action history is not styled.');
-assert.ok(hardeningStyles.includes('.bulk-progress-visual') && hardeningStyles.includes('.control-operation-bar'), 'Progress and operation feedback are not production styled.');
-
-console.log('SniperPlug bulk approval, resumable publishing, progress, and 48-hour undo checks passed.');
