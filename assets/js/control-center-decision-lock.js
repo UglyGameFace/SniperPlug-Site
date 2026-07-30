@@ -44,22 +44,11 @@
     return null;
   }
 
-  function relatedButtons(container, clicked) {
-    return [...container.querySelectorAll('button')].filter((button) => {
-      if (!(button instanceof HTMLButtonElement) || button === clicked) return false;
-      const action = String(button.dataset.action || '');
-      return INDIVIDUAL_ACTIONS.has(action) || BULK_SELECTORS.some((selector) => button.matches(selector));
-    });
-  }
-
   function release(key) {
     const entry = active.get(key);
     if (!entry) return;
     clearInterval(entry.poll);
     clearTimeout(entry.timeout);
-    for (const [button, wasDisabled] of entry.siblings) {
-      if (button.isConnected) button.disabled = wasDisabled;
-    }
     if (entry.container.isConnected) delete entry.container.dataset.decisionPending;
     active.delete(key);
   }
@@ -76,11 +65,9 @@
       return;
     }
 
-    const siblings = new Map(relatedButtons(context.container, button).map((item) => [item, item.disabled]));
     const entry = {
       ...context,
       button,
-      siblings,
       sawBusy: false,
       poll: null,
       timeout: null,
@@ -90,7 +77,6 @@
 
     queueMicrotask(() => {
       if (!active.has(context.key)) return;
-      for (const sibling of siblings.keys()) sibling.disabled = true;
       entry.sawBusy = button.getAttribute('aria-busy') === 'true';
       entry.poll = setInterval(() => {
         if (!button.isConnected) return release(context.key);
@@ -102,6 +88,14 @@
     });
   }, true);
 
+  root.addEventListener('sniperplug:dashboard-refreshed', () => {
+    for (const key of [...active.keys()]) release(key);
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      for (const key of [...active.keys()]) release(key);
+    }
+  });
   window.addEventListener('pagehide', () => {
     for (const key of [...active.keys()]) release(key);
   }, { once: true });
