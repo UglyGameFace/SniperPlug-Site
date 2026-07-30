@@ -223,11 +223,31 @@ export async function scanApprovedSource(env, whopSession, experience) {
   return (saved.results || []).map(rowToItem);
 }
 
-export async function savePostDecision(env, sourceKeys, decision) {
-  if (!['approved', 'disapproved', 'pending'].includes(decision)) throw new HttpError(422, 'Choose Approve, Disapprove, or Undo.');
+function normalizedSourceKeys(sourceKeys) {
   const keys = [...new Set((Array.isArray(sourceKeys) ? sourceKeys : [sourceKeys]).map((value) => String(value || '').trim()).filter(Boolean))];
   if (!keys.length) throw new HttpError(422, 'Choose at least one content item.');
   if (keys.length > 2000) throw new HttpError(422, 'Too many content decisions were submitted at once.');
+  return keys;
+}
+
+async function rowsForSourceKeys(db, keys) {
+  if (!keys.length) return [];
+  const output = [];
+  for (let index = 0; index < keys.length; index += 500) {
+    const group = keys.slice(index, index + 500);
+    const placeholders = group.map(() => '?').join(',');
+    const rows = await db.prepare(`
+      SELECT source_key, experience_id, title, decision, decision_updated_at
+      FROM whop_posts WHERE source_key IN (${placeholders})
+    `).bind(...group).all();
+    output.push(...(rows.results || []));
+  }
+  return output;
+}
+
+export async function savePostDecisionVerified(env, sourceKeys, decision) {
+  if (!['approved', 'disapproved', 'pending'].includes(decision)) throw new HttpError(422, 'Choose Approve, Disapprove, or Undo.');
+  const keys = normalizedSourceKeys(sourceKeys);
   const db = requireDatabase(env);
   const now = new Date().toISOString();
   const statements = keys.map((key) => db.prepare(`
@@ -236,7 +256,40 @@ export async function savePostDecision(env, sourceKeys, decision) {
     WHERE source_key = ? AND decision != 'blocked'
   `).bind(decision, decision === 'pending' ? null : now, key));
   const results = await db.batch(statements);
-  return results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
+  const changed = results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
+
+  const rows = await rowsForSourceKeys(db, keys);
+  const byKey = new Map(rows.map((row) => [String(row.source_key), row]));
+  const missing = keys.filter((key) => !byKey.has(key));
+  const blocked = keys.filter((key) => byKey.get(key)?.decision === 'blocked');
+  const mismatched = keys.filter((key) => {
+    const row = byKey.get(key);
+    return row && row.decision !== 'blocked' && row.decision !== decision;
+  });
+  const confirmed = keys.filter((key) => byKey.get(key)?.decision === decision);
+
+  return {
+    requested: keys.length,
+    changed,
+    confirmed: confirmed.length,
+    confirmedKeys: confirmed,
+    blocked,
+    missing,
+    mismatched,
+    complete: missing.length === 0 && mismatched.length === 0 && blocked.length === 0 && confirmed.length === keys.length,
+    rows: rows.map((row) => ({
+      sourceKey: row.source_key,
+      experienceId: row.experience_id,
+      title: row.title,
+      decision: row.decision,
+      decisionUpdatedAt: row.decision_updated_at,
+    })),
+  };
+}
+
+export async function savePostDecision(env, sourceKeys, decision) {
+  const result = await savePostDecisionVerified(env, sourceKeys, decision);
+  return result.changed;
 }
 
 export async function listSavedPosts(env, experienceId) {
