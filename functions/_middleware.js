@@ -5,6 +5,8 @@ const REQUIRED_CONTROL_CONFIGURATION = [
   'WHOP_TOKEN_SECRET',
 ];
 
+const SOURCE_ACCESS_SCRIPT = '<script src="/assets/js/control-center-source-access.js?v=20260731.1" defer></script>';
+
 function missingControlConfiguration(env) {
   return REQUIRED_CONTROL_CONFIGURATION.filter((name) => {
     if (name === 'SNIPERPLUG_DB') return !env?.SNIPERPLUG_DB;
@@ -26,6 +28,25 @@ function configurationError(missing) {
   });
 }
 
+async function injectControlCenterRuntime(original, pathname) {
+  const controlCenterPage = pathname === '/control-center' || pathname === '/control-center/';
+  const contentType = String(original.headers.get('content-type') || '').toLowerCase();
+  if (!controlCenterPage || !contentType.includes('text/html')) return new Response(original.body, original);
+
+  const html = await original.text();
+  const injected = html.includes('/assets/js/control-center-source-access.js')
+    ? html
+    : html.replace('</head>', `  ${SOURCE_ACCESS_SCRIPT}\n</head>`);
+  const headers = new Headers(original.headers);
+  headers.delete('content-length');
+  headers.delete('etag');
+  return new Response(injected, {
+    status: original.status,
+    statusText: original.statusText,
+    headers,
+  });
+}
+
 export async function onRequest(context) {
   const url = new URL(context.request.url);
   if (url.pathname === '/api/control' || url.pathname === '/api/whop/oauth/callback') {
@@ -34,8 +55,8 @@ export async function onRequest(context) {
   }
 
   const original = await context.next();
-  const response = new Response(original.body, original);
   const pathname = url.pathname;
+  const response = await injectControlCenterRuntime(original, pathname);
   const courseVideoFrame = pathname.startsWith('/course-video/');
   const privateGuidePage = pathname === '/guides' || pathname.startsWith('/guides/');
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
