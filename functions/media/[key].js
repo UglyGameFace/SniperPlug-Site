@@ -7,16 +7,20 @@ function validKey(value) {
   return validMediaStorageKey(key);
 }
 
-function mediaHeaders(object) {
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set('etag', object.httpEtag);
-  headers.set('accept-ranges', 'bytes');
+function applyPrivateHeaders(headers) {
   headers.set('x-content-type-options', 'nosniff');
   headers.set('cache-control', 'private, no-store, max-age=0');
   headers.set('cdn-cache-control', 'no-store');
   headers.set('x-robots-tag', 'noindex, nofollow, noarchive');
   return headers;
+}
+
+function mediaHeaders(object) {
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('accept-ranges', 'bytes');
+  return applyPrivateHeaders(headers);
 }
 
 function canonicalUrl(request, key) {
@@ -25,6 +29,36 @@ function canonicalUrl(request, key) {
   url.search = '';
   url.hash = '';
   return url;
+}
+
+function cacheLookupRequest(request, key) {
+  const headers = new Headers();
+  for (const name of ['range', 'if-none-match', 'if-modified-since']) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  return new Request(canonicalUrl(request, key).toString(), { method: 'GET', headers });
+}
+
+function internalCacheResponse(response) {
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  headers.set('cdn-cache-control', 'public, max-age=31536000, immutable');
+  headers.delete('x-robots-tag');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function privateCachedResponse(response, method = 'GET') {
+  const headers = applyPrivateHeaders(new Headers(response.headers));
+  return new Response(method === 'HEAD' ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 function freeTierReadLimitResponse(read, method = 'GET') {
@@ -81,6 +115,13 @@ export async function onRequest(context) {
       return Response.redirect(canonicalUrl(context.request, key).toString(), 308);
     }
 
+    const edgeCache = globalThis.caches?.default || null;
+    const lookup = cacheLookupRequest(context.request, key);
+    if (edgeCache) {
+      const cached = await edgeCache.match(lookup);
+      if (cached) return privateCachedResponse(cached, context.request.method);
+    }
+
     const originRead = await reserveMediaOriginRead(context.env);
     if (!originRead.allowed) return freeTierReadLimitResponse(originRead, context.request.method);
 
@@ -110,7 +151,12 @@ export async function onRequest(context) {
     } else {
       headers.set('content-length', String(object.size));
     }
-    return new Response(object.body, { status, headers });
+    const response = new Response(object.body, { status, headers });
+    if (edgeCache && status === 200 && !context.request.headers.has('range')) {
+      const storeRequest = new Request(canonicalUrl(context.request, key).toString(), { method: 'GET' });
+      context.waitUntil(edgeCache.put(storeRequest, internalCacheResponse(response.clone())));
+    }
+    return response;
   } catch (error) {
     return mediaError(error, context.request.method);
   }
