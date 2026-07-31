@@ -254,7 +254,15 @@
     } finally {
       pending.delete(guideId);
       delete article.dataset.busy;
-      if (!button.disabled || button.getAttribute('aria-busy') === 'true') setButton(button, false);
+      if (article.dataset.sourceUnavailable === 'true') {
+        button.removeAttribute('aria-busy');
+        button.disabled = true;
+        button.textContent = 'Source access required';
+        delete button.dataset.idleLabel;
+        delete button.dataset.pressed;
+      } else {
+        setButton(button, false);
+      }
     }
   }
 
