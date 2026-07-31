@@ -8,7 +8,7 @@ Required path:
 Whop OAuth/session → Experience discovery → exact content scan → import → D1 draft → course media/video → owner review → reject/remove → restore or re-import → publish to owner-only guide library → authenticated guide/video access.
 
 ## Status
-Active. Production routing and owner login are verified, but do not claim the task complete until the source-access truth repair is production-verified, the real content lifecycle can run with current Whop access, browser/isolation regressions pass, and final cleanup is complete.
+Active. Production routing, owner login, implementation, and the latest full Node 22 build are verified, but do not claim the task complete until the source-access truth repair is production-browser verified, the real content lifecycle can run with current Whop access, browser/isolation regressions pass, and final cleanup is complete.
 
 ## Scope
 - One visible `Owner access` entry on the SniperPlug homepage.
@@ -54,6 +54,7 @@ Active. Production routing and owner login are verified, but do not claim the ta
 - Built-in placeholders, malformed IDs, and duplicate saved rows are excluded from saved-decision totals.
 - Applied Control Center no-store/noindex handling to both `/control-center` and `/control-center/` while injecting the new runtime before existing deferred Control Center scripts.
 - Added an executable source-access truth regression test to the full Node 22 build chain.
+- Made the permanent GitHub Actions workflow publish `ci/sniperplug-node22` as the authoritative build/regression status, independent of unrelated Vercel rate limits.
 - Added permanent authorization, media, homepage, recovery, private-guide, mobile Owner-access, and source-access truth audits.
 
 ## Validation completed
@@ -71,13 +72,13 @@ Active. Production routing and owner login are verified, but do not claim the ta
 - The source-access truth test covers the observed case exactly: 34 saved approvals plus a completed live discovery with zero groups produces 0 current approvals and 34 inactive historical approvals.
 - The source-access test also covers mixed live/inactive decisions, pending live sources, duplicate rows, malformed IDs, built-in placeholders, production runtime injection, and protection against legacy summary overwrites.
 - Source check/save/scan endpoints require a live Whop session and retrieve the exact experience; bulk processing also retrieves the exact live experience and holds permission/access failures instead of trusting the saved approval alone.
+- The latest authoritative GitHub Actions status is `ci/sniperplug-node22: success` on commit `487dddc8037c85f1d2e9592ff201b234899baeea`, confirming the complete Node 22 build and regression suite passed with the source-access truth repair included.
 - Temporary preview and Cloudflare API diagnostic workflows were removed after use.
 - The challenge-blocked production polling workflow was removed so it cannot create permanent false failures on future commits.
 
 ## Current blockers
 - Production browser verification is required after the latest Cloudflare deployment. With the current connected account and no readable membership access, the summary must show 0 currently accessible approved sources and identify the 34 previous approvals as inactive history.
 - The connected Whop account currently has 0 active groups and 0 readable sources, so a real Course import → video → reject → restore/re-import → private publish lifecycle cannot be completed until the owner account regains access to at least one authorized readable source.
-- The latest GitHub/Vercel status is not a reliable build verdict because Vercel is returning free-plan build-rate-limit failures. The repository's GitHub Actions workflow remains the source of truth for the full Node 22 build.
 
 ## Required acceptance
 - [x] `SniperPlug.com` visibly shows `Owner access` and no public Guides link.
@@ -87,7 +88,7 @@ Active. Production routing and owner login are verified, but do not claim the ta
 - [ ] Anonymous and customer-importer sessions cannot read a guide, copied media, or course video on production.
 - [ ] A real Course flow passes on the production domain: discover → exact lesson import → draft/video open → reject → restore and rejected re-import → private-library publish.
 - [ ] Repeat the owner flow in Chrome and Samsung Internet with immediate feedback and no duplicate operation.
-- [ ] Latest full Node 22 GitHub Actions build passes after the source-access truth repair.
+- [x] Latest full Node 22 GitHub Actions build passes after the source-access truth repair.
 - [ ] Final conflict, obsolete-code, temporary-file, and redundant-path inspection passes.
 
 ## Backlog after active-task acceptance
