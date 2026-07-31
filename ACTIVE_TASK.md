@@ -52,19 +52,14 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Updated homepage and private-guide audits so future cleanup cannot remove the owner entry or re-expose `/guides/` directly.
 
 ## Validation completed for the private-guide subtask
-- Full Node 22 `npm run build` and regression suite passed on the earlier cleaned branch head.
-- Anonymous, owner, and customer-session authorization tests passed on the earlier cleaned branch head.
-- Existing Whop discovery, import, recovery, concurrency, versioning, media-limit, course-video, and paid-access regressions passed on the earlier cleaned branch head.
-- A temporary GitHub Actions smoke test ran against the earlier deployed Cloudflare branch preview and passed: anonymous guide pages returned the lock page, copied media and course videos returned 401, the homepage exposed no direct guide link, and the sitemap contained no guide URLs.
-- The temporary smoke-test workflow was removed after validation.
-- Cloudflare Pages successfully deployed the earlier cleaned branch head.
-- Pull request conflict inspection reported the earlier branch head mergeable and based directly on current `main` with no behind commits.
-
-## Validation pending after owner-entry correction
-- Run the full Node 22 build and regression suite on the new branch head.
-- Confirm the deployed Cloudflare branch preview visibly shows `Owner access` on the homepage while exposing no direct `/guides/` link.
-- Confirm `Owner access` opens the Control Center login and the authenticated Control Center opens `Private guides` using the same session.
-- Recheck anonymous guide, media, and video denial plus sitemap/robots behavior.
+- Full Node 22 `npm run build` and regression suite passed on the final cleaned branch head after the owner-entry correction.
+- Anonymous, owner, and customer-session authorization tests passed.
+- Existing Whop discovery, import, recovery, concurrency, versioning, media-limit, course-video, and paid-access regressions passed.
+- A deployed Cloudflare smoke test confirmed the branch-preview homepage contains `Owner access`, contains no direct `/guides/` link, and routes the owner through the existing Control Center.
+- The same deployed smoke test confirmed the Control Center exposes `Private guides`, the anonymous guide route returns its intentional 401/403 HTML lock page with the shared-password form, and the sitemap contains no guide URLs.
+- The temporary deployed-smoke workflow was removed after it passed.
+- The final clean branch head passed the normal GitHub Actions build and regression workflow after temporary-test cleanup.
+- Cloudflare Pages successfully deployed the final clean branch head to the branch preview.
 
 ## Remaining blocker before merge
 - Run the real authenticated owner workflow on the Cloudflare preview with the actual Control Center password and live Whop data.
