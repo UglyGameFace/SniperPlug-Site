@@ -14,6 +14,7 @@ const videoRoute = read('functions/course-video/[key].js');
 const middleware = read('functions/_middleware.js');
 const sitemap = read('functions/sitemap.xml.js');
 const homepage = read('index.html');
+const controlCenter = read('control-center/index.html');
 const siteClient = read('assets/js/site.js');
 const templates = read('functions/_lib/templates.js');
 const loginClient = read('assets/js/private-guides-login.js');
@@ -70,7 +71,11 @@ assert.ok(staticHeaders.includes('X-Robots-Tag: noindex, nofollow, noarchive'), 
 
 assert.ok(!sitemap.includes("'/guides/'"), 'Private guide index remains in the public sitemap.');
 assert.ok(!sitemap.includes('publicGuides'), 'Private guide slugs are still queried for the public sitemap.');
-assert.ok(!homepage.includes('href="/guides/"'), 'The public homepage still links to the owner-only guide library.');
+assert.ok(!homepage.includes('href="/guides/"'), 'The public homepage still links directly to the owner-only guide library.');
+assert.ok(homepage.includes('href="/control-center/"'), 'The homepage has no discoverable owner entry point.');
+assert.ok(homepage.includes('>Owner access</a>'), 'The owner entry point is not clearly labeled.');
+assert.ok(controlCenter.includes('href="/guides/"'), 'The protected Control Center does not link to the private guide library.');
+assert.ok(controlCenter.includes('Open private guides'), 'The authenticated Control Center does not clearly expose the private guide library.');
 assert.ok(!siteClient.includes("document.createElement('a')"), 'Public JavaScript still injects a private Guides navigation link.');
 assert.ok(!siteClient.includes("nav.insertBefore"), 'Public JavaScript still mutates navigation to expose private guides.');
 assert.ok(templates.includes('<meta name="robots" content="noindex,nofollow,noarchive">'), 'Rendered guide pages advertise public indexing.');
@@ -79,5 +84,6 @@ assert.ok(!templates.includes('<link rel="canonical" href="https://sniperplug.co
 console.log('\nSNIPERPLUG PRIVATE GUIDE ISOLATION AUDIT PASSED\n');
 console.log('✓ Guide list, details, copied media, and course videos require the owner Control Center session.');
 console.log('✓ The same password/login endpoint is reused; customer importer sessions are denied.');
+console.log('✓ The homepage exposes only a normal Owner access entry, while direct guide URLs remain private and undiscoverable to crawlers.');
 console.log('✓ Owner-authenticated edge caching preserves the hard-free media budget without exposing guide content.');
-console.log('✓ Public navigation, sitemap entries, crawler rules, indexing, and user-facing caches no longer expose guide content.');
+console.log('✓ Sitemap entries, crawler rules, indexing, and user-facing caches no longer expose guide content.');
