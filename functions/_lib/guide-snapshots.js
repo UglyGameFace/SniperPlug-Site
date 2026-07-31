@@ -7,6 +7,15 @@ export const GUIDE_RESTORE_COLUMNS = Object.freeze([
   'imported_at', 'updated_at', 'published_at',
 ]);
 
+function comparable(value) {
+  return value == null ? null : value;
+}
+
+export function guideSnapshotMatches(current, snapshot) {
+  if (!current || !snapshot || Number(current.id) !== Number(snapshot.id)) return false;
+  return GUIDE_RESTORE_COLUMNS.every((column) => comparable(current[column]) === comparable(snapshot[column]));
+}
+
 export async function snapshotGuide(env, id) {
   const db = requireDatabase(env);
   return db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
@@ -22,10 +31,13 @@ export async function restoreGuideSnapshot(env, row, { expectedUpdatedAt = null 
     .bind(...values, row.id, ...(expectedUpdatedAt == null ? [] : [expectedUpdatedAt]))
     .run();
   if (Number(result.meta?.changes || 0) !== 1) {
+    const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(row.id).first();
+    if (guideSnapshotMatches(current, row)) return row;
     throw new HttpError(409, 'The guide changed again before rollback could complete. The newer version was preserved.', {
       code: 'guide_rollback_stale',
       guideId: Number(row.id),
       expectedUpdatedAt,
+      currentUpdatedAt: current?.updated_at || null,
     });
   }
   return row;
