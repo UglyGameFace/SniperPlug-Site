@@ -28,10 +28,13 @@ function configurationError(missing) {
   });
 }
 
+function isControlCenterPage(pathname) {
+  return pathname === '/control-center' || pathname === '/control-center/';
+}
+
 async function injectControlCenterRuntime(original, pathname) {
-  const controlCenterPage = pathname === '/control-center' || pathname === '/control-center/';
   const contentType = String(original.headers.get('content-type') || '').toLowerCase();
-  if (!controlCenterPage || !contentType.includes('text/html')) return new Response(original.body, original);
+  if (!isControlCenterPage(pathname) || !contentType.includes('text/html')) return new Response(original.body, original);
 
   const html = await original.text();
   const injected = html.includes('/assets/js/control-center-source-access.js')
@@ -56,6 +59,7 @@ export async function onRequest(context) {
 
   const original = await context.next();
   const pathname = url.pathname;
+  const controlCenterPage = isControlCenterPage(pathname);
   const response = await injectControlCenterRuntime(original, pathname);
   const courseVideoFrame = pathname.startsWith('/course-video/');
   const privateGuidePage = pathname === '/guides' || pathname.startsWith('/guides/');
@@ -74,14 +78,14 @@ export async function onRequest(context) {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/') || privateGuideContent) {
+  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (controlAsset) {
     response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
-  if (pathname.startsWith('/control-center/') || privateGuideContent) {
+  if (controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
   return response;
