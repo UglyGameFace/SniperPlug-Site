@@ -1,14 +1,4 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const nav = document.querySelector('.nav');
-  if (nav && !nav.querySelector('a[href="/guides/"]')) {
-    const guideLink = document.createElement('a');
-    guideLink.href = '/guides/';
-    guideLink.textContent = 'Guides';
-    if (location.pathname.startsWith('/guides/')) guideLink.classList.add('active');
-    const partnerLink = nav.querySelector('a[href="/partners/"]');
-    nav.insertBefore(guideLink, partnerLink || null);
-  }
-
   const cards = [...document.querySelectorAll('.deal-card')];
   const search = document.querySelector('[data-deal-search]');
   const store = document.querySelector('[data-store-filter]');

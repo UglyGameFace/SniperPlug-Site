@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createAdminSession } from '../functions/_lib/auth.js';
 import {
   MAX_MEDIA_COPIES_PER_DAY,
   MAX_MEDIA_COPIES_PER_MONTH,
@@ -213,6 +214,16 @@ const cache = {
   },
 };
 const db = new FakeDatabase();
+const sessionSecret = 'private-media-owner-session-secret-2026';
+const owner = await createAdminSession({ SNIPERPLUG_SESSION_SECRET: sessionSecret });
+const ownerCookie = String(owner.cookie).split(';', 1)[0];
+
+function ownerRequest(url, init = {}) {
+  const headers = new Headers(init.headers || {});
+  headers.set('cookie', ownerCookie);
+  return new Request(url, { ...init, headers });
+}
+
 const previousCaches = globalThis.caches;
 Object.defineProperty(globalThis, 'caches', { value: { default: cache }, configurable: true, writable: true });
 try {
@@ -220,33 +231,50 @@ try {
   const baseContext = (request, requestedKey = key) => ({
     request,
     params: { key: requestedKey },
-    env: { SNIPERPLUG_MEDIA: bucket, SNIPERPLUG_DB: db },
+    env: {
+      SNIPERPLUG_MEDIA: bucket,
+      SNIPERPLUG_DB: db,
+      SNIPERPLUG_SESSION_SECRET: sessionSecret,
+    },
     waitUntil(promise) { pending.push(Promise.resolve(promise)); },
   });
 
-  const first = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`)));
+  const anonymous = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`)));
+  assert.equal(anonymous.status, 401, 'Anonymous media requests must be rejected before cache or R2 access.');
+  assert.equal(r2Gets, 0);
+  assert.equal(db.state, null);
+
+  const first = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${key}`)));
   assert.equal(first.status, 200);
+  assert.match(first.headers.get('cache-control') || '', /private, no-store/);
+  assert.match(first.headers.get('x-robots-tag') || '', /noindex/);
   assert.equal(r2Gets, 1);
-  assert.equal(db.state.origin_reads_today, 1, 'Only an uncached R2 request should consume the daily origin-read budget.');
+  assert.equal(db.state.origin_reads_today, 1, 'Only an uncached authorized R2 request should consume the daily origin-read budget.');
   await Promise.all(pending.splice(0));
 
-  const second = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`)));
-  assert.equal(second.status, 200);
-  assert.equal(r2Gets, 1, 'A cached full response must not read R2 again.');
-  assert.equal(db.state.origin_reads_today, 1, 'An edge-cache hit must not consume the R2 origin-read budget.');
+  const cachedAnonymous = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`)));
+  assert.equal(cachedAnonymous.status, 401, 'A populated edge cache must not bypass owner authentication.');
+  assert.equal(r2Gets, 1);
 
-  const head = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`, { method: 'HEAD' })));
+  const second = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${key}`)));
+  assert.equal(second.status, 200);
+  assert.match(second.headers.get('cache-control') || '', /private, no-store/);
+  assert.equal(r2Gets, 1, 'An authenticated internal cache hit must not read R2 again.');
+  assert.equal(db.state.origin_reads_today, 1, 'An authenticated edge-cache hit must not consume the R2 origin-read budget.');
+
+  const head = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${key}`, { method: 'HEAD' })));
   assert.equal(head.status, 200);
-  assert.equal(r2Heads, 0, 'A cached object should satisfy HEAD without an R2 operation.');
+  assert.equal(r2Heads, 0, 'An authenticated cached object should satisfy HEAD without an R2 operation.');
   assert.equal(db.state.origin_reads_today, 1);
 
-  const ranged = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}`, { headers: { range: 'bytes=0-5' } })));
+  const ranged = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${key}`, { headers: { range: 'bytes=0-5' } })));
   assert.equal(ranged.status, 206);
   assert.equal(ranged.headers.get('content-range'), `bytes 0-5/${bytes.byteLength}`);
-  assert.equal(r2Gets, 1, 'A cached full response must satisfy byte ranges without another R2 read.');
+  assert.match(ranged.headers.get('cache-control') || '', /private, no-store/);
+  assert.equal(r2Gets, 1, 'An authenticated cached full response must satisfy byte ranges without another R2 read.');
   assert.equal(db.state.origin_reads_today, 1);
 
-  const redirected = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${key}?cacheBust=123`)));
+  const redirected = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${key}?cacheBust=123`)));
   assert.equal(redirected.status, 308);
   assert.equal(redirected.headers.get('location'), `https://sniperplug.example/media/${key}`);
   assert.equal(r2Gets, 1, 'Cache-busting query strings must redirect before reading R2.');
@@ -254,10 +282,10 @@ try {
 
   db.state.origin_reads_today = MAX_MEDIA_ORIGIN_READS_PER_DAY;
   const limitedKey = 'whop-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-limited.mp4';
-  const limited = await serveMedia(baseContext(new Request(`https://sniperplug.example/media/${limitedKey}`), limitedKey));
+  const limited = await serveMedia(baseContext(ownerRequest(`https://sniperplug.example/media/${limitedKey}`), limitedKey));
   assert.equal(limited.status, 429);
   assert.ok(Number(limited.headers.get('retry-after')) >= 60);
-  assert.equal(r2Gets, 1, 'The daily hard stop must run before an uncached R2 read.');
+  assert.equal(r2Gets, 1, 'The daily hard stop must run before an uncached authorized R2 read.');
 } finally {
   if (previousCaches === undefined) delete globalThis.caches;
   else globalThis.caches = previousCaches;
@@ -267,6 +295,7 @@ console.log('\nSNIPERPLUG R2 HARD-FREE TESTS PASSED\n');
 console.log('✓ Private-media copying stops above 50 MB per object.');
 console.log('✓ Storage, object-count, daily-copy, and monthly-copy ceilings stop before billable R2/D1 usage.');
 console.log('✓ Media references are deduplicated and rejected-guide media enters delayed cleanup.');
-console.log('✓ Canonical edge caching prevents repeated full-object reads without breaking ranged playback.');
+console.log('✓ Owner authentication runs before the internal edge cache and every user-facing response remains private/no-store.');
+console.log('✓ Authenticated canonical edge caching prevents repeated full-object reads without breaking ranged playback.');
 console.log('✓ Query-string cache busting redirects before touching R2.');
 console.log('✓ The daily uncached-read ceiling returns 429 before another R2 operation.');

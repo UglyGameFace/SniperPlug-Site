@@ -1,3 +1,8 @@
 User-agent: *
 Allow: /
+Disallow: /control-center/
+Disallow: /api/
+Disallow: /guides/
+Disallow: /media/
+Disallow: /course-video/
 Sitemap: https://sniperplug.com/sitemap.xml

@@ -1,6 +1,6 @@
 import { escapeHtml } from './markdown.js';
 
-function shell({ title, description, body, canonical = 'https://sniperplug.com/guides/' }) {
+function shell({ title, description, body }) {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -8,12 +8,7 @@ function shell({ title, description, body, canonical = 'https://sniperplug.com/g
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
-  <meta name="robots" content="index,follow">
-  <link rel="canonical" href="${escapeHtml(canonical)}">
-  <meta property="og:title" content="${escapeHtml(title)}">
-  <meta property="og:description" content="${escapeHtml(description)}">
-  <meta property="og:type" content="article">
-  <meta property="og:url" content="${escapeHtml(canonical)}">
+  <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#0b0f17">
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/css/styles.css">
@@ -22,9 +17,9 @@ function shell({ title, description, body, canonical = 'https://sniperplug.com/g
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header"><div class="container header-inner"><a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a><nav class="nav" aria-label="Main navigation"><a href="/">Home</a><a href="/deals/">Deals</a><a class="active" href="/guides/">Guides</a><a href="/partners/">Partners</a></nav><a class="header-cta" href="/contact/">Get alerts</a></div></header>
+  <header class="site-header"><div class="container header-inner"><a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a><nav class="nav" aria-label="Private guide navigation"><a href="/">Home</a><a href="/deals/">Deals</a><a class="active" href="/guides/">Private guides</a><a href="/control-center/">Control Center</a></nav><a class="header-cta" href="/control-center/">Manage guides</a></div></header>
   <main id="main">${body}</main>
-  <footer class="site-footer"><div class="container footer-grid"><div><a class="brand footer-brand" href="/"><span class="brand-mark">SP</span><span>SniperPlug</span></a><p>Verified retail deal alerts and practical shopping guides.</p><p class="mini">Verify prices, availability, rules, and final terms before acting.</p></div><div><h4>Explore</h4><a href="/deals/">Deals</a><a href="/guides/">Guides</a><a href="/partners/">Partners</a></div><div><h4>Company</h4><a href="/about/">About</a><a href="/contact/">Contact</a></div><div><h4>Legal</h4><a href="/affiliate-disclosure/">Affiliate disclosure</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></div></div><div class="container footer-bottom">© 2026 SniperPlug. Built for deal discovery and clear methods.</div></footer>
+  <footer class="site-footer"><div class="container footer-grid"><div><a class="brand footer-brand" href="/"><span class="brand-mark">SP</span><span>SniperPlug</span></a><p>Owner-only guide review and reference library.</p><p class="mini">This area is excluded from public navigation, search indexing, and shared caching.</p></div><div><h4>Private tools</h4><a href="/guides/">Guide library</a><a href="/control-center/">Control Center</a></div><div><h4>Public site</h4><a href="/">Home</a><a href="/deals/">Deals</a><a href="/partners/">Partners</a></div><div><h4>Account</h4><a href="/control-center/">Lock or manage access</a></div></div><div class="container footer-bottom">© 2026 SniperPlug. Private owner workspace.</div></footer>
 </body>
 </html>`;
 }
@@ -48,7 +43,7 @@ function pagination(result) {
     pages.push(`<a class="page-link${page === result.page ? ' active' : ''}" href="${guideUrl({ category: result.category, query: result.query, page })}"${page === result.page ? ' aria-current="page"' : ''}>${page}</a>`);
   }
   if (result.page < result.totalPages) pages.push(`<a class="btn ghost" href="${guideUrl({ category: result.category, query: result.query, page: result.page + 1 })}">Next →</a>`);
-  return `<nav class="guide-pagination" aria-label="Guide pages">${pages.join('')}</nav>`;
+  return `<nav class="guide-pagination" aria-label="Private guide pages">${pages.join('')}</nav>`;
 }
 
 export function guideIndexTemplate(result, categories) {
@@ -61,33 +56,32 @@ export function guideIndexTemplate(result, categories) {
       <div class="guide-card-meta"><span>${escapeHtml(guide.categoryLabel)}</span>${guide.featured ? '<span>Featured</span>' : ''}</div>
       <h2><a href="/guides/${encodeURIComponent(guide.slug)}/">${escapeHtml(guide.title)}</a></h2>
       <p>${escapeHtml(guide.description)}</p>
-      <div class="guide-card-foot"><span>${guide.publishedAt ? escapeHtml(new Date(guide.publishedAt).toLocaleDateString('en-US')) : 'Published guide'}</span><a class="btn ghost" href="/guides/${encodeURIComponent(guide.slug)}/">Read guide</a></div>
-    </article>`).join('') : '<div class="guide-empty"><strong>No published guides match these filters.</strong><p>Try another search or category.</p></div>';
+      <div class="guide-card-foot"><span>${guide.publishedAt ? escapeHtml(new Date(guide.publishedAt).toLocaleDateString('en-US')) : 'Saved guide'}</span><a class="btn ghost" href="/guides/${encodeURIComponent(guide.slug)}/">Open guide</a></div>
+    </article>`).join('') : '<div class="guide-empty"><strong>No saved guides match these filters.</strong><p>Try another search or category.</p></div>';
   const rangeStart = result.total ? ((result.page - 1) * result.pageSize) + 1 : 0;
   const rangeEnd = Math.min(result.total, result.page * result.pageSize);
   return shell({
-    title: 'SniperPlug Guides | Shopping methods and deal knowledge',
-    description: 'Browse reviewed SniperPlug guides for retail deals, product research, coupons, tools, electronics, and more.',
-    body: `<section class="page-hero compact"><div class="container"><span class="eyebrow">📚 Reviewed methods</span><h1>SniperPlug guides.</h1><p>Practical guides imported, checked, categorized, and explicitly published after owner review.</p><form class="guide-search" action="/guides/" method="get"><label><span class="sr-only">Search guides</span><input type="search" name="q" value="${escapeHtml(result.query)}" placeholder="Search guides and categories"></label>${result.category ? `<input type="hidden" name="category" value="${escapeHtml(result.category)}">` : ''}<button class="btn primary" type="submit">Search</button>${result.query ? `<a class="btn ghost" href="${guideUrl({ category: result.category })}">Clear</a>` : ''}</form><div class="store-strip guide-categories">${categoryLinks}</div><p class="guide-result-count">${result.total ? `Showing ${rangeStart}–${rangeEnd} of ${result.total} guide${result.total === 1 ? '' : 's'}` : 'No matching guides'}</p></div></section><section class="section"><div class="container guide-grid">${cards}</div>${pagination(result)}</section>`,
+    title: 'Private SniperPlug Guide Library',
+    description: 'Owner-only SniperPlug guide library protected by the Control Center session.',
+    body: `<section class="page-hero compact"><div class="container"><span class="eyebrow">🔒 Owner-only reference</span><h1>Private guide library.</h1><p>Imported and reviewed guide content stays behind the same owner password used by the Control Center.</p><form class="guide-search" action="/guides/" method="get"><label><span class="sr-only">Search private guides</span><input type="search" name="q" value="${escapeHtml(result.query)}" placeholder="Search guides and categories"></label>${result.category ? `<input type="hidden" name="category" value="${escapeHtml(result.category)}">` : ''}<button class="btn primary" type="submit">Search</button>${result.query ? `<a class="btn ghost" href="${guideUrl({ category: result.category })}">Clear</a>` : ''}</form><div class="store-strip guide-categories">${categoryLinks}</div><p class="guide-result-count">${result.total ? `Showing ${rangeStart}–${rangeEnd} of ${result.total} guide${result.total === 1 ? '' : 's'}` : 'No matching guides'}</p></div></section><section class="section"><div class="container guide-grid">${cards}</div>${pagination(result)}</section>`,
   });
 }
 
 export function guideDetailTemplate(guide) {
-  const published = guide.publishedAt ? new Date(guide.publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Published guide';
+  const published = guide.publishedAt ? new Date(guide.publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Saved guide';
   const reviewed = guide.updatedAt ? new Date(guide.updatedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : published;
   const readingMinutes = Math.max(1, Math.ceil(String(guide.body || '').trim().split(/\s+/).filter(Boolean).length / 220));
   return shell({
-    title: `${guide.title} | SniperPlug Guide`,
+    title: `${guide.title} | Private SniperPlug Guide`,
     description: guide.description,
-    canonical: `https://sniperplug.com/guides/${encodeURIComponent(guide.slug)}/`,
-    body: `<section class="page-hero compact"><div class="container narrow"><a class="guide-back" href="/guides/">← All guides</a><span class="eyebrow">${escapeHtml(guide.categoryLabel)}</span><h1>${escapeHtml(guide.title)}</h1><p>${escapeHtml(guide.description)}</p><div class="guide-byline"><span>Published ${escapeHtml(published)}</span><span>Last reviewed ${escapeHtml(reviewed)}</span><span>${readingMinutes} min read</span><span>Reviewed by SniperPlug</span></div></div></section><section class="section guide-section"><article class="container guide-article">${guide.html}</article></section><section class="section"><div class="container notice">Methods, promotions, availability, and retailer rules can change. Verify current terms before acting. <a href="/contact/?subject=outdated-guide&guide=${encodeURIComponent(guide.slug)}">Report outdated information</a>.</div></section>`,
+    body: `<section class="page-hero compact"><div class="container narrow"><a class="guide-back" href="/guides/">← Private guides</a><span class="eyebrow">${escapeHtml(guide.categoryLabel)}</span><h1>${escapeHtml(guide.title)}</h1><p>${escapeHtml(guide.description)}</p><div class="guide-byline"><span>Saved ${escapeHtml(published)}</span><span>Last reviewed ${escapeHtml(reviewed)}</span><span>${readingMinutes} min read</span><span>Owner-only</span></div></div></section><section class="section guide-section"><article class="container guide-article">${guide.html}</article></section><section class="section"><div class="container notice">Imported methods, promotions, availability, and retailer rules can change. Verify current terms before acting. <a href="/contact/?subject=outdated-guide&amp;guide=${encodeURIComponent(guide.slug)}">Report outdated information</a>.</div></section>`,
   });
 }
 
 export function notFoundTemplate() {
   return shell({
-    title: 'Guide not found | SniperPlug',
-    description: 'The requested SniperPlug guide is not published or no longer available.',
-    body: '<section class="page-hero"><div class="container narrow"><span class="eyebrow">404</span><h1>That guide is not available.</h1><p>It may still be under review, rejected, or removed.</p><a class="btn primary" href="/guides/">Browse guides</a></div></section>',
+    title: 'Private guide not found | SniperPlug',
+    description: 'The requested private SniperPlug guide is not available.',
+    body: '<section class="page-hero"><div class="container narrow"><span class="eyebrow">404</span><h1>That private guide is not available.</h1><p>It may still be under review, rejected, or removed.</p><a class="btn primary" href="/guides/">Open private guides</a></div></section>',
   });
 }

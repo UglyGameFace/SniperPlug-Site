@@ -1,10 +1,10 @@
-import { readAdminSession } from '../_lib/auth.js';
 import {
   courseVideoSource,
   findMuxStaticRendition,
   muxPlayerUrl,
 } from '../_lib/course-video.js';
 import { HttpError, requireDatabase } from '../_lib/http.js';
+import { requirePrivateGuideOwner } from '../_lib/private-guides.js';
 import { requireOwnerWhopSession, whopApi } from '../_lib/whop.js';
 
 function escapeHtml(value) {
@@ -21,6 +21,7 @@ function noStoreHeaders(extra = {}) {
   return {
     'cache-control': 'private, no-store, max-age=0',
     'x-content-type-options': 'nosniff',
+    'x-robots-tag': 'noindex, nofollow, noarchive',
     'referrer-policy': 'strict-origin-when-cross-origin',
     ...extra,
   };
@@ -30,8 +31,8 @@ function errorPage(message, reconnect = false) {
   const safeMessage = escapeHtml(message);
   const action = reconnect
     ? '<p><a href="/control-center/">Open the Control Center and reconnect Whop</a></p>'
-    : '<p><a href="javascript:location.reload()">Try again</a></p>';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Course video unavailable</title><style>html,body{height:100%;margin:0;background:#09090b;color:#fff;font-family:system-ui,sans-serif}.error{box-sizing:border-box;display:grid;place-content:center;min-height:100%;padding:1.5rem;text-align:center}.error p{max-width:42rem;line-height:1.55}.error a{color:#8ab4ff}</style></head><body><main class="error"><h1>Course video unavailable</h1><p>${safeMessage}</p>${action}</main></body></html>`;
+    : '<p><a href="">Try again</a></p>';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>Course video unavailable</title><style>html,body{height:100%;margin:0;background:#09090b;color:#fff;font-family:system-ui,sans-serif}.error{box-sizing:border-box;display:grid;place-content:center;min-height:100%;padding:1.5rem;text-align:center}.error p{max-width:42rem;line-height:1.55}.error a{color:#8ab4ff}</style></head><body><main class="error"><h1>Course video unavailable</h1><p>${safeMessage}</p>${action}</main></body></html>`;
 }
 
 function errorResponse(error, method = 'GET') {
@@ -52,7 +53,7 @@ function playerPage(playerUrl, title) {
   const safeTitle = escapeHtml(title || 'Course video');
   const safeUrl = escapeHtml(playerUrl);
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>${safeTitle}</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>${safeTitle}</title>
 <style>html,body{height:100%;margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}iframe{display:block;width:100%;height:100%;border:0;background:#000}.error{display:grid;place-items:center;height:100%;padding:1rem;text-align:center}</style></head>
 <body><iframe src="${safeUrl}" title="${safeTitle}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`;
 }
@@ -86,12 +87,8 @@ export async function onRequest(context) {
     return new Response('Method Not Allowed', { status: 405, headers: noStoreHeaders({ allow: 'GET, HEAD' }) });
   }
   try {
+    await requirePrivateGuideOwner(context.request, context.env);
     const source = await courseVideoSource(context.env, context.params?.key);
-    if (source.guide_status !== 'published') {
-      const admin = await readAdminSession(context.request, context.env);
-      if (!admin || source.guide_status !== 'draft') throw new HttpError(404, 'Course video not found.');
-    }
-
     const lesson = await retrieveLessonWithRefresh(context.request, context.env, source.lesson_id);
     if (String(source.source_key || '') !== `course-lesson:${String(lesson?.id || '')}`) {
       throw new HttpError(409, 'The saved course video no longer matches its Whop lesson. Re-import this lesson.');

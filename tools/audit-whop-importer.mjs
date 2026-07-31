@@ -21,6 +21,7 @@ const required = [
   'assets/css/whop-discovery.css',
   'assets/css/control-center-publishing.css',
   'assets/js/control-center-v2.js',
+  'assets/js/private-guides-login.js',
   'functions/_middleware.js',
   'functions/api/control.js',
   'functions/api/discover.js',
@@ -37,6 +38,7 @@ const required = [
   'functions/_lib/integrity.js',
   'functions/_lib/markdown.js',
   'functions/_lib/posts.js',
+  'functions/_lib/private-guides.js',
   'functions/_lib/source-policy.js',
   'functions/_lib/templates.js',
   'functions/_lib/whop.js',
@@ -122,6 +124,7 @@ const page = read('control-center/index.html');
 const client = read('assets/js/control-center-v2.js');
 const middleware = read('functions/_middleware.js');
 const siteClient = read('assets/js/site.js');
+const privateGuides = read('functions/_lib/private-guides.js');
 
 for (const action of ['session', 'dashboard', 'oauth-start', 'oauth-callback', 'source-check', 'source-decision', 'scan', 'post-decision', 'import', 'category-save', 'guide-save', 'guide-status']) {
   assert.ok(control.includes(`'${action}'`), `Control API is missing action: ${action}`);
@@ -147,7 +150,7 @@ for (const slug of ['guides-tutorials', 'money-makers', 'money-savers', 'freebie
   assert.ok(guides.includes(`'${slug}'`), `Category catalog is missing ${slug}.`);
 }
 assert.ok(guides.includes("status === 'published'"), 'Explicit publishing is missing.');
-assert.ok(guides.includes("WHERE guides.status = 'published'"), 'Public queries can expose drafts.');
+assert.ok(guides.includes("WHERE guides.status = 'published'"), 'Library queries can expose drafts.');
 assert.ok(markdown.includes('noopener noreferrer nofollow') && markdown.includes("url.protocol !== 'https:'"), 'Published link safety is incomplete.');
 
 for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-approve-all', 'data-disapprove-all', 'data-reset-all', 'data-rights-confirm', 'data-publish-guide', 'data-reject-guide', 'data-inline-category-form', 'data-open-inline-category', 'publish-ready-visual']) {
@@ -161,7 +164,9 @@ assert.ok(client.includes('sourceKeys') && !client.includes('body: post.body'), 
 assert.ok(client.includes('autoCategorize: auto'), 'Auto-fit category selection is not submitted.');
 assert.ok(client.includes('linkifyPreview'), 'Safe owner preview links are missing.');
 assert.ok(middleware.includes('Content-Security-Policy') && middleware.includes("pathname.startsWith('/control-center/')"));
-assert.ok(siteClient.includes("guideLink.href = '/guides/'"));
+assert.ok(middleware.includes("pathname.startsWith('/guides/')") && middleware.includes("pathname.startsWith('/media/')"), 'Private guide routes are not protected by middleware.');
+assert.ok(privateGuides.includes("session.kind !== 'owner'"), 'Customer importer sessions can reach owner-only guides.');
+assert.ok(!siteClient.includes("guideLink.href = '/guides/'"), 'Public JavaScript still injects the private guide library into navigation.');
 assert.ok(!exists('src/content'), 'Private imported drafts must not be committed publicly.');
 
 function javascriptFiles(directory) {
@@ -183,6 +188,7 @@ for (const directory of ['functions', 'assets/js', 'tools']) {
 console.log('\nSNIPERPLUG FULL WHOP CONTENT AUDIT PASSED\n');
 console.log('✓ Official Forum, Course, Chat, and file paths remain active.');
 console.log('✓ Exact approved IDs are re-fetched and browser bodies are never trusted.');
-console.log('✓ Formatting, safe links, categories, private drafts, and explicit publishing remain intact.');
+console.log('✓ Formatting, safe links, categories, private drafts, and explicit owner-library publishing remain intact.');
+console.log('✓ Guide pages and media reuse the owner Control Center session instead of public navigation.');
 console.log('✓ The consolidated Control Center runtime wires individual, bulk, and auto-fit actions.');
 console.log('✓ JavaScript syntax validation passed for all Functions, browser scripts, and audits.');

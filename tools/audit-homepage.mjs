@@ -17,20 +17,27 @@ const requiredHtml = [
   'property="og:title"',
   'name="twitter:card"',
   'application/ld+json',
+  'href="/control-center/"',
   'href="/deals/"',
-  'href="/guides/"',
   'href="/partners/"',
   'href="/about/"',
   'href="/contact/"',
   'href="/affiliate-disclosure/"',
   'href="/privacy/"',
   'href="/terms/"',
-  'rel="sponsored nofollow"',
   'assets/css/homepage.css',
 ];
 
 for (const token of requiredHtml) {
   if (!html.includes(token)) fail(`missing required homepage token: ${token}`);
+}
+
+if (!html.includes('>Owner access</a>')) {
+  fail('the public homepage does not provide a clear owner entry point');
+}
+
+if (html.includes('href="/guides/"')) {
+  fail('private guides are exposed in the public homepage navigation or footer');
 }
 
 const bannedCopy = [
@@ -46,8 +53,8 @@ for (const phrase of bannedCopy) {
 }
 
 const requiredRoutes = [
+  'control-center/index.html',
   'deals/index.html',
-  'guides/index.html',
   'partners/index.html',
   'about/index.html',
   'contact/index.html',
