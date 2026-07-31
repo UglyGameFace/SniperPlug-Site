@@ -47,8 +47,11 @@ for (const [name, route] of [['copied media', mediaRoute], ['course video', vide
   assert.ok(route.includes("'cache-control': 'private, no-store, max-age=0'"), `${name} can be shared through public caches.`);
   assert.ok(route.includes("'x-robots-tag': 'noindex, nofollow, noarchive'"), `${name} is not excluded from indexing.`);
 }
-assert.ok(!mediaRoute.includes('caches?.default'), 'Private guide media still uses the public edge cache.');
-assert.ok(!mediaRoute.includes('public, max-age=31536000, immutable'), 'Private guide media still advertises immutable public caching.');
+const mediaAuthPosition = mediaRoute.indexOf('requirePrivateGuideOwner(context.request, context.env)');
+const mediaCachePosition = mediaRoute.indexOf('globalThis.caches?.default');
+assert.ok(mediaAuthPosition >= 0 && mediaCachePosition > mediaAuthPosition, 'Private media checks the shared edge cache before owner authentication.');
+assert.ok(mediaRoute.includes('internalCacheResponse') && mediaRoute.includes('privateCachedResponse'), 'Private media does not separate internal cache headers from user-facing headers.');
+assert.ok(mediaRoute.includes("headers.set('cache-control', 'private, no-store, max-age=0')"), 'Authenticated cached media can leak public cache headers to the browser.');
 assert.ok(!videoRoute.includes('javascript:location.reload()'), 'Course-video retry still conflicts with the strict CSP.');
 
 for (const prefix of ["pathname === '/guides'", "pathname.startsWith('/guides/')", "pathname.startsWith('/media/')", "pathname.startsWith('/course-video/')"]) {
@@ -76,4 +79,5 @@ assert.ok(!templates.includes('<link rel="canonical" href="https://sniperplug.co
 console.log('\nSNIPERPLUG PRIVATE GUIDE ISOLATION AUDIT PASSED\n');
 console.log('✓ Guide list, details, copied media, and course videos require the owner Control Center session.');
 console.log('✓ The same password/login endpoint is reused; customer importer sessions are denied.');
-console.log('✓ Public navigation, sitemap entries, crawler rules, indexing, and shared caching no longer expose guide content.');
+console.log('✓ Owner-authenticated edge caching preserves the hard-free media budget without exposing guide content.');
+console.log('✓ Public navigation, sitemap entries, crawler rules, indexing, and user-facing caches no longer expose guide content.');
