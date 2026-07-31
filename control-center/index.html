@@ -18,7 +18,7 @@
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a>
-      <nav class="nav" aria-label="Control Center navigation"><a href="/guides/">Public guides</a><a href="/deals/">Deals</a><a class="active" href="/control-center/">Control Center</a></nav>
+      <nav class="nav" aria-label="Control Center navigation"><a href="/guides/">Private guides</a><a href="/deals/">Deals</a><a class="active" href="/control-center/">Control Center</a></nav>
     </div>
   </header>
 
@@ -37,7 +37,7 @@
     <section class="control-app container" data-control-app hidden>
       <header class="control-hero">
         <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and guide-worthy content, import hidden drafts, then publish separately or run a resumable complete workflow.</p></div>
-        <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">View public guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
+        <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open private guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
       </header>
 
       <div class="control-status" data-global-status role="status" aria-live="polite" hidden></div>
@@ -142,27 +142,27 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Only real guide candidates stay in this queue. Replies, chat chatter, raw links, duplicate cards, expired picks, and other weak imports are quarantined automatically.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Only real guide candidates stay in this queue. Replies, chat chatter, raw links, duplicate cards, expired picks, and other weak imports are quarantined automatically. Publishing here only makes a guide available inside the owner-only private library; it does not expose the guide publicly.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
         <div class="publish-ready-visual" aria-hidden="true">
           <div class="publish-ready-track"><span></span></div>
-          <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides went live and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open public guides</a></div>
+          <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides were added to the private library and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open private guides</a></div>
         </div>
         <p class="draft-cleanup-note"><strong>Clean review queue:</strong> questionable content is kept private and removed from this normal list. Saving a corrected draft marks it as manually reviewed.</p>
-        <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published</option><option value="all">All valid guides</option></select></label></div>
+        <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published to private library</option><option value="all">All valid guides</option></select></label></div>
         <div class="draft-layout">
           <aside class="draft-list" data-draft-list></aside>
           <div class="draft-empty" data-draft-empty><strong>No guide selected</strong><p>Choose an imported guide to review its exact content.</p></div>
           <form class="draft-editor" data-draft-editor hidden>
             <input type="hidden" name="id">
-            <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open published guide</a></div>
+            <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open private guide</a></div>
             <label><span>Title</span><input name="title" maxlength="140" required></label>
             <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
             <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft">＋ Add category</button></div>
             <label><span>Guide Markdown</span><textarea name="body" rows="24" spellcheck="true" required></textarea></label>
             <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring media file.</span></label>
             <label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide above normal guide ordering.</span></label>
-            <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
+            <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish to private library</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
             <details class="exact-preview"><summary>Exact Markdown preview</summary><pre data-markdown-preview></pre></details>
           </form>
         </div>
