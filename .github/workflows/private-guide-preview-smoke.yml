@@ -1,0 +1,60 @@
+name: Private Guide Preview Smoke
+
+on:
+  push:
+    branches: [fix/private-guides-owner-auth]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-guide-preview-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait for Cloudflare branch preview and verify privacy boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://fix-private-guides-owner-aut.sniperplug.pages.dev'
+          work="${RUNNER_TEMP}/private-guide-preview"
+          mkdir -p "$work"
+
+          ready=false
+          for attempt in $(seq 1 48); do
+            code=$(curl --silent --show-error --dump-header "$work/guides.headers" --output "$work/guides.html" --write-out '%{http_code}' "$base/guides/" || true)
+            if [[ "$code" == '401' ]] && grep -qi 'Unlock the private guides' "$work/guides.html"; then
+              ready=true
+              break
+            fi
+            echo "Preview not updated yet (attempt ${attempt}/48, status ${code})."
+            sleep 10
+          done
+
+          [[ "$ready" == 'true' ]] || { echo 'Cloudflare preview never exposed the private guide lock page.'; exit 1; }
+          tr -d '\r' < "$work/guides.headers" > "$work/guides.normalized.headers"
+          grep -Eqi '^cache-control:.*private.*no-store' "$work/guides.normalized.headers"
+          grep -Eqi '^x-robots-tag:.*noindex.*nofollow.*noarchive' "$work/guides.normalized.headers"
+          ! grep -Eqi 'Sports betting|Casino|Auto checkout|Crypto and trading' "$work/guides.html"
+
+          home_code=$(curl --silent --show-error --output "$work/home.html" --write-out '%{http_code}' "$base/")
+          [[ "$home_code" == '200' ]]
+          ! grep -Fq 'href="/guides/"' "$work/home.html"
+
+          sitemap_code=$(curl --silent --show-error --output "$work/sitemap.xml" --write-out '%{http_code}' "$base/sitemap.xml")
+          [[ "$sitemap_code" == '200' ]]
+          ! grep -Fq '/guides/' "$work/sitemap.xml"
+
+          media_code=$(curl --silent --show-error --output "$work/media.txt" --write-out '%{http_code}' "$base/media/whop-0123456789abcdef0123456789abcdef-proof.png" || true)
+          [[ "$media_code" == '401' ]]
+          grep -qi 'owner Control Center password' "$work/media.txt"
+
+          video_code=$(curl --silent --show-error --output "$work/video.html" --write-out '%{http_code}' "$base/course-video/wcv-0123456789abcdef0123456789abcdef01234567" || true)
+          [[ "$video_code" == '401' ]]
+          grep -qi 'owner Control Center password' "$work/video.html"
+
+          echo 'Cloudflare preview privacy smoke test passed.'
