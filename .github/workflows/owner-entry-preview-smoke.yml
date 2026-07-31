@@ -46,8 +46,10 @@ jobs:
           grep -Fq 'Private guides' <<<"$control_center"
           grep -Fq 'Unlock the Guide Control Center.' <<<"$control_center"
 
-          guide_lock="$(curl --fail --silent --show-error --location --header 'Cache-Control: no-cache' "${PREVIEW_URL}/guides/?owner-entry-smoke=${GITHUB_SHA}")"
+          # The protected route deliberately returns 401/403 with a usable HTML lock page.
+          guide_lock="$(curl --silent --show-error --location --header 'Cache-Control: no-cache' "${PREVIEW_URL}/guides/?owner-entry-smoke=${GITHUB_SHA}")"
           grep -Fq 'same password you already use for the SniperPlug Control Center' <<<"$guide_lock"
+          grep -Fq 'Unlock private guides' <<<"$guide_lock"
 
           sitemap="$(curl --fail --silent --show-error --location --header 'Cache-Control: no-cache' "${PREVIEW_URL}/sitemap.xml?owner-entry-smoke=${GITHUB_SHA}")"
           if grep -Fq '/guides/' <<<"$sitemap"; then
