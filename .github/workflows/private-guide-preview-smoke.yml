@@ -1,14 +1,14 @@
 name: Private Guide Preview Smoke
 
 on:
-  push:
-    branches: [fix/private-guides-owner-auth]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: private-guide-preview-smoke
+  group: private-guide-preview-smoke-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
