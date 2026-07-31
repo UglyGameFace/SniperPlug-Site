@@ -37,6 +37,10 @@ export async function onRequest(context) {
   const response = new Response(original.body, original);
   const pathname = url.pathname;
   const courseVideoFrame = pathname.startsWith('/course-video/');
+  const privateGuidePage = pathname === '/guides' || pathname.startsWith('/guides/');
+  const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
+  const privateGuideContent = privateGuidePage || privateGuideAsset;
+
   response.headers.set('X-Frame-Options', courseVideoFrame ? 'SAMEORIGIN' : 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -49,14 +53,14 @@ export async function onRequest(context) {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/') || courseVideoFrame) {
+  if (pathname.startsWith('/api/') || pathname.startsWith('/control-center/') || privateGuideContent) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (controlAsset) {
     response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
-  if (pathname.startsWith('/control-center/')) {
+  if (pathname.startsWith('/control-center/') || privateGuideContent) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
   return response;
