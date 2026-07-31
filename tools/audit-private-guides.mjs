@@ -23,8 +23,12 @@ const staticHeaders = read('_headers');
 
 assert.ok(gate.includes("import { readAdminSession } from './auth.js'"), 'Private guide access does not reuse the signed Control Center session.');
 assert.ok(gate.includes("session.kind !== 'owner'"), 'Customer importer sessions can reach the owner-only guide library.');
+assert.ok(gate.includes('PrivateGuideAuthError'), 'Private guide auth failures have no dedicated type for safe recovery routing.');
+assert.ok(gate.includes("code: 'PRIVATE_GUIDE_OWNER_REQUIRED'"), 'Private guide auth failures have no stable diagnostic code.');
 assert.ok(gate.includes('privateGuidePageGate'), 'Private guide lock-page gate is missing.');
 assert.ok(gate.includes('same password you already use for the SniperPlug Control Center'), 'The guide lock page does not explain shared password access.');
+assert.ok(gate.includes('<form method="post" action="/api/control?action=session" data-private-guide-login-form>'), 'The private guide fallback form can leak the password through a GET URL.');
+assert.ok(gate.includes('<noscript>'), 'The private guide lock page gives no safe fallback when JavaScript is disabled.');
 
 for (const [name, route] of [['guide index', guideIndex], ['guide detail', guideDetail]]) {
   const gatePosition = route.indexOf('privateGuidePageGate(context.request, context.env)');
@@ -54,6 +58,10 @@ assert.ok(mediaAuthPosition >= 0 && mediaCachePosition > mediaAuthPosition, 'Pri
 assert.ok(mediaRoute.includes('internalCacheResponse') && mediaRoute.includes('privateCachedResponse'), 'Private media does not separate internal cache headers from user-facing headers.');
 assert.ok(mediaRoute.includes("headers.set('cache-control', 'private, no-store, max-age=0')"), 'Authenticated cached media can leak public cache headers to the browser.');
 assert.ok(!videoRoute.includes('javascript:location.reload()'), 'Course-video retry still conflicts with the strict CSP.');
+assert.ok(videoRoute.includes('courseVideoRecoveryKind'), 'Course video failures do not distinguish owner unlock from Whop reconnect.');
+assert.ok(videoRoute.includes('Open Owner access to unlock the private library'), 'Private guide auth failures do not point to Owner access.');
+assert.ok(videoRoute.includes('Open the Control Center and reconnect Whop'), 'Actual Whop auth failures lost their reconnect path.');
+assert.ok(!videoRoute.includes('errorPage(message, status === 401 || status === 403)'), 'All 401/403 video failures are still mislabeled as Whop reconnect errors.');
 
 for (const prefix of ["pathname === '/guides'", "pathname.startsWith('/guides/')", "pathname.startsWith('/media/')", "pathname.startsWith('/course-video/')"]) {
   assert.ok(middleware.includes(prefix), `Middleware does not classify private content: ${prefix}`);
@@ -84,6 +92,7 @@ assert.ok(!templates.includes('<link rel="canonical" href="https://sniperplug.co
 console.log('\nSNIPERPLUG PRIVATE GUIDE ISOLATION AUDIT PASSED\n');
 console.log('✓ Guide list, details, copied media, and course videos require the owner Control Center session.');
 console.log('✓ The same password/login endpoint is reused; customer importer sessions are denied.');
+console.log('✓ The fallback login cannot leak the password into URLs, and video recovery points to the correct owner or Whop action.');
 console.log('✓ The homepage exposes only a normal Owner access entry, while direct guide URLs remain private and undiscoverable to crawlers.');
 console.log('✓ Owner-authenticated edge caching preserves the hard-free media budget without exposing guide content.');
 console.log('✓ Sitemap entries, crawler rules, indexing, and user-facing caches no longer expose guide content.');

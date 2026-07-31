@@ -1,6 +1,13 @@
 import { readAdminSession } from './auth.js';
 import { html, HttpError } from './http.js';
 
+export class PrivateGuideAuthError extends HttpError {
+  constructor(status, message) {
+    super(status, message, { code: 'PRIVATE_GUIDE_OWNER_REQUIRED' });
+    this.name = 'PrivateGuideAuthError';
+  }
+}
+
 function privateGuideLockPage(message) {
   return `<!doctype html>
 <html lang="en">
@@ -28,10 +35,11 @@ function privateGuideLockPage(message) {
       <span class="eyebrow">🔒 Owner-only library</span>
       <h1>Unlock the private guides.</h1>
       <p>${message}</p>
-      <form data-private-guide-login-form>
+      <form method="post" action="/api/control?action=session" data-private-guide-login-form>
         <label><span>Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
         <button class="btn primary" type="submit">Unlock private guides</button>
       </form>
+      <noscript><p class="control-message">JavaScript is required for the secure private-library unlock. <a href="/control-center/">Open Owner access in the Control Center</a>.</p></noscript>
       <p class="control-message" data-private-guide-login-message role="alert" hidden></p>
       <p><a class="btn ghost" href="/control-center/">Open the full Control Center</a></p>
     </section>
@@ -43,9 +51,9 @@ function privateGuideLockPage(message) {
 
 export async function requirePrivateGuideOwner(request, env) {
   const session = await readAdminSession(request, env);
-  if (!session) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  if (!session) throw new PrivateGuideAuthError(401, 'Unlock the SniperPlug Control Center first.');
   if (session.kind !== 'owner') {
-    throw new HttpError(403, 'The private guide library requires the owner Control Center password.');
+    throw new PrivateGuideAuthError(403, 'The private guide library requires the owner Control Center password.');
   }
   return session;
 }
@@ -55,7 +63,7 @@ export async function privateGuidePageGate(request, env) {
     await requirePrivateGuideOwner(request, env);
     return null;
   } catch (error) {
-    if (!(error instanceof HttpError) || ![401, 403].includes(error.status)) throw error;
+    if (!(error instanceof PrivateGuideAuthError)) throw error;
     const message = error.status === 403
       ? 'This browser is using a customer importer session. Enter the owner Control Center password to replace it and open the private library.'
       : 'Use the same password you already use for the SniperPlug Control Center. One successful unlock opens both areas for this browser session.';

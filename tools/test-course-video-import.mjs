@@ -6,9 +6,12 @@ import {
   findMuxStaticRendition,
   muxPlayerUrl,
 } from '../functions/_lib/course-video.js';
+import { HttpError } from '../functions/_lib/http.js';
 import { mediaMarkdown } from '../functions/_lib/media.js';
 import { renderMarkdown } from '../functions/_lib/markdown.js';
+import { PrivateGuideAuthError } from '../functions/_lib/private-guides.js';
 import { resolveWhopExperienceType } from '../functions/_lib/whop.js';
+import { courseVideoRecoveryKind } from '../functions/course-video/[key].js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
@@ -68,6 +71,23 @@ assert.ok(rendered.includes('<iframe'));
 assert.ok(rendered.includes('src="/course-video/wcv-0123456789abcdef0123456789abcdef01234567"'));
 assert.ok(!renderMarkdown('![video-player: Bad](https://evil.example/player)').includes('<iframe'), 'Only same-origin registered player routes may become iframes.');
 
+assert.equal(
+  courseVideoRecoveryKind(new PrivateGuideAuthError(401, 'Unlock the SniperPlug Control Center first.')),
+  'owner-unlock',
+  'Missing owner auth must route to Owner access, not Whop reconnect.',
+);
+assert.equal(
+  courseVideoRecoveryKind(new PrivateGuideAuthError(403, 'Owner access required.')),
+  'owner-unlock',
+  'Customer importer sessions must route to Owner access, not Whop reconnect.',
+);
+assert.equal(
+  courseVideoRecoveryKind(new HttpError(401, 'Reconnect Whop.')),
+  'whop-reconnect',
+  'Actual Whop authentication failures must retain the reconnect path.',
+);
+assert.equal(courseVideoRecoveryKind(new HttpError(409, 'Video is processing.')), 'retry');
+
 const apiCalls = [];
 globalThis.fetch = async (input) => {
   const url = new URL(String(input));
@@ -94,7 +114,10 @@ const whopItems = read('functions/_lib/whop-items.js');
 assert.ok(route.includes('retrieveLessonWithRefresh'));
 assert.ok(route.includes('expireSelectedOwnerSession'));
 assert.ok(route.includes('error.status !== 401'));
+assert.ok(route.includes('Open Owner access to unlock the private library'));
 assert.ok(route.includes('Open the Control Center and reconnect Whop'));
+assert.ok(route.includes('courseVideoRecoveryKind(error)'));
+assert.ok(!route.includes('errorPage(message, status === 401 || status === 403)'), 'Owner authorization must not be mislabeled as Whop reconnect.');
 assert.ok(route.includes('findMuxStaticRendition(asset)'));
 assert.ok(route.includes('playerPage(playerUrl, source.title)'));
 assert.ok(courseVideo.includes('Promise.all('), 'Static rendition probes must not run sequentially.');
@@ -118,6 +141,7 @@ globalThis.fetch = originalFetch;
 console.log('\nSNIPERPLUG COURSE VIDEO AND CAPABILITY PROBE TESTS PASSED\n');
 console.log('✓ Mux static renditions use one-byte GET probes inside one bounded parallel window.');
 console.log('✓ Adaptive signed playback keeps every source rendition available through Mux Player.');
+console.log('✓ Owner authorization failures route to Owner access while Whop failures retain reconnect guidance.');
 console.log('✓ Stale owner access tokens force one refresh before a reconnect error is shown.');
 console.log('✓ Stable SniperPlug player URLs never persist expiring Whop playback credentials.');
 console.log('✓ Renamed native modules are recovered by probing official Whop read endpoints.');
