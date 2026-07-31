@@ -27,12 +27,14 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Copied guide media used immutable public edge caching, and published course videos could be opened without the owner Control Center session.
 - The public sitemap, homepage navigation, and browser runtime exposed the guide library to visitors and reviewers.
 - Customer Whop-importer sessions share the same cookie format, so guide authorization must require `kind=owner` rather than accepting any authenticated session.
+- Removing the public Guides link also removed every visible owner entry point from the branch-preview homepage. The library was protected, but the owner could not reasonably discover how to reach it from the site.
 
 ## Current private-guide subtask
 - Reuse the existing signed `sniperplug_admin` session and `/api/control?action=session` login instead of creating a second password or cookie.
 - Require an owner session before reading guide lists, guide details, copied media, or course videos.
 - Deny customer and customer-pending importer sessions from the owner guide library.
-- Remove guide URLs from public navigation and the sitemap.
+- Remove direct guide URLs from public navigation and the sitemap.
+- Keep one normal, clearly labeled owner entry to the protected Control Center so the private library remains usable without exposing guide content.
 - Force guide pages and media to `private, no-store` with `noindex, nofollow,noarchive` at route, middleware, static-header, and crawler-policy layers.
 - Keep internal `published` lifecycle state for review/recovery compatibility while explaining in the Control Center that it means available only inside the private owner library.
 - Preserve authenticated internal media caching for the hard-free R2 budget while ensuring authentication runs before cache lookup and browser responses never expose public cache headers.
@@ -42,19 +44,27 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Added one shared owner gate backed by the existing Control Center cookie and password endpoint.
 - Gated guide index/detail reads before D1 access.
 - Gated copied R2 media and Whop/Mux course-video routes before cache or origin access.
-- Removed public guide links from the homepage, browser navigation injection, sitemap, and search metadata.
+- Removed direct public guide links from the homepage, browser navigation injection, sitemap, and search metadata.
+- Added a visible `Owner access` entry on the homepage that opens the existing protected Control Center; the Control Center remains the only normal path to `Private guides`.
 - Added no-store/noindex defenses in route responses, middleware, `_headers`, and `robots.txt`.
 - Updated Control Center language so guide publishing cannot be mistaken for public website publication.
 - Added permanent auth/isolation audits and updated the media free-tier regression test for authenticated cache behavior.
+- Updated homepage and private-guide audits so future cleanup cannot remove the owner entry or re-expose `/guides/` directly.
 
 ## Validation completed for the private-guide subtask
-- Full Node 22 `npm run build` and regression suite passed on the final cleaned branch head.
-- Anonymous, owner, and customer-session authorization tests passed.
-- Existing Whop discovery, import, recovery, concurrency, versioning, media-limit, course-video, and paid-access regressions passed.
-- A temporary GitHub Actions smoke test ran against the deployed Cloudflare branch preview and passed: anonymous guide pages returned the lock page, copied media and course videos returned 401, the homepage exposed no guide link, and the sitemap contained no guide URLs.
+- Full Node 22 `npm run build` and regression suite passed on the earlier cleaned branch head.
+- Anonymous, owner, and customer-session authorization tests passed on the earlier cleaned branch head.
+- Existing Whop discovery, import, recovery, concurrency, versioning, media-limit, course-video, and paid-access regressions passed on the earlier cleaned branch head.
+- A temporary GitHub Actions smoke test ran against the earlier deployed Cloudflare branch preview and passed: anonymous guide pages returned the lock page, copied media and course videos returned 401, the homepage exposed no direct guide link, and the sitemap contained no guide URLs.
 - The temporary smoke-test workflow was removed after validation.
-- Cloudflare Pages successfully deployed the cleaned branch head.
-- Pull request conflict inspection reports the branch mergeable and based directly on current `main` with no behind commits at the last comparison.
+- Cloudflare Pages successfully deployed the earlier cleaned branch head.
+- Pull request conflict inspection reported the earlier branch head mergeable and based directly on current `main` with no behind commits.
+
+## Validation pending after owner-entry correction
+- Run the full Node 22 build and regression suite on the new branch head.
+- Confirm the deployed Cloudflare branch preview visibly shows `Owner access` on the homepage while exposing no direct `/guides/` link.
+- Confirm `Owner access` opens the Control Center login and the authenticated Control Center opens `Private guides` using the same session.
+- Recheck anonymous guide, media, and video denial plus sitemap/robots behavior.
 
 ## Remaining blocker before merge
 - Run the real authenticated owner workflow on the Cloudflare preview with the actual Control Center password and live Whop data.
