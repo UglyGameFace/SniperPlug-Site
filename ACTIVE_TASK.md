@@ -8,19 +8,21 @@ Required path:
 Whop OAuth/session → Experience discovery → exact content scan → import → D1 draft → course media/video → owner review → reject/remove → restore or re-import → publish to owner-only guide library → authenticated guide/video access.
 
 ## Status
-Active. The production-domain routing blocker is resolved, but do not claim the task complete until the real authenticated owner workflow, isolation checks, browser regressions, and final cleanup pass on `SniperPlug.com`.
+Active. Production routing and owner login are verified, but do not claim the task complete until the source-access truth repair is production-verified, the real content lifecycle can run with current Whop access, browser/isolation regressions pass, and final cleanup is complete.
 
 ## Scope
 - One visible `Owner access` entry on the SniperPlug homepage.
 - Existing Control Center password/session reused; no second credential system.
 - Private guide list, guide details, copied media, and course video restricted to `kind=owner`.
 - Public navigation, sitemap, crawler metadata, and shared caches must not expose private guides.
+- Saved source decisions must never be presented as current readable Whop access.
 - Chrome and Samsung Internet behavior must remain responsive and duplicate-safe.
 
 ## Confirmed findings
 - PR #4 and PR #5 are merged into `main`.
-- `https://sniperplug.pages.dev`, deployment previews, the current production deployment URL, and the real `https://sniperplug.com/` domain now serve the current homepage.
+- `https://sniperplug.pages.dev`, deployment previews, the current production deployment URL, and the real `https://sniperplug.com/` domain serve the current homepage.
 - A fresh Samsung Internet screenshot on July 31, 2026 shows `sniperplug.com` in the address bar, a visible `Owner access` entry, and no public Guides entry.
+- The owner used the existing Control Center password on `SniperPlug.com`; the Control Center opened and exposed `Private guides`.
 - Cloudflare dashboard checks confirmed:
   - `sniperplug.com` is Active on the `sniperplug-site` Pages project;
   - the apex CNAME points to `sniperplug.pages.dev` and is proxied;
@@ -31,8 +33,11 @@ Active. The production-domain routing blocker is resolved, but do not claim the 
   - the current successful production deployment from `main` explicitly lists `sniperplug.com` as its alias.
 - The prior old public navigation was a stale custom-domain/browser delivery state rather than a second repository, bad DNS target, Worker route, or cache rule.
 - The mobile header uses a horizontally scrollable nav. On Samsung Internet, `Owner access` could previously slide completely off-screen even though it existed in the page source.
+- The Control Center dashboard loaded every persisted `whop_sources` decision and labeled 34 old approvals as `approved sources`, while the live Whop membership/member verification correctly returned 0 active groups and 0 readable sources.
+- The 34 rows are historical policy decisions, not proof of current access. Source check, scan, import, and bulk processing still perform live Whop retrieval and hold or reject inaccessible items, but the summary copy was misleading.
+- Automatically deleting the 34 decisions would destroy useful owner history and create churn if access returns. They must remain saved but be labeled inactive and unusable whenever absent from verified live discovery.
 - No `CLOUDFLARE_API_TOKEN` or `CF_API_TOKEN` exists in GitHub secrets, so automated Cloudflare configuration inspection remains unavailable.
-- Vercel deployment checks are unrelated to the Cloudflare Pages production target.
+- Vercel deployment checks are unrelated to the Cloudflare Pages production target and can fail solely because of the Vercel free-plan build limit.
 
 ## Implemented changes
 - Reused the signed `sniperplug_admin` Control Center session and `/api/control?action=session` login.
@@ -44,33 +49,45 @@ Active. The production-domain routing blocker is resolved, but do not claim the 
 - Made the private-guide fallback form POST to the existing session endpoint, preventing password leakage into URLs when JavaScript fails.
 - Corrected course-video recovery: owner failures point to Owner access; actual Whop authentication failures point to reconnect Whop.
 - Pinned `Owner access` inside the mobile horizontal navigation so it cannot scroll off-screen on Samsung Internet or other narrow browsers.
-- Added permanent authorization, media, homepage, recovery, private-guide, and mobile Owner-access audits.
+- Added a cache-versioned Control Center source-access runtime that captures the saved dashboard decisions and the separately verified `/api/discover` result before rendering the summary.
+- The source summary now distinguishes currently accessible approved sources from previous approvals retained as inactive history and states that inaccessible sources cannot be scanned or imported.
+- Built-in placeholders, malformed IDs, and duplicate saved rows are excluded from saved-decision totals.
+- Applied Control Center no-store/noindex handling to both `/control-center` and `/control-center/` while injecting the new runtime before existing deferred Control Center scripts.
+- Added an executable source-access truth regression test to the full Node 22 build chain.
+- Added permanent authorization, media, homepage, recovery, private-guide, mobile Owner-access, and source-access truth audits.
 
 ## Validation completed
 - Full Node 22 build and regression suite passed after both owner-access merges.
 - Anonymous, owner, and customer-session authorization tests passed.
-- Existing Whop discovery, import, recovery, concurrency, versioning, course-video, hard-free media, and paid-access regressions passed.
+- Existing Whop discovery, import, recovery, concurrency, versioning, course-video, hard-free media, and paid-access regressions passed before the source-summary repair.
 - Deployed Cloudflare branch smoke tests verified:
   - visible Owner access;
   - no direct public Guides link;
   - secure POST private-guide lock form with a safe no-JavaScript path;
   - anonymous course-video access points to Owner access rather than Whop reconnect;
   - private guide URLs are absent from the sitemap.
-- The real production domain now visibly shows `Owner access` with no public Guides link in Samsung Internet.
-- The mobile Owner-access pin and permanent homepage audit are committed to `main` and visible on the production domain.
+- The real production domain visibly shows `Owner access` with no public Guides link in Samsung Internet.
+- Owner login with the existing password opened the production Control Center and exposed the private-library navigation.
+- The source-access truth test covers the observed case exactly: 34 saved approvals plus a completed live discovery with zero groups produces 0 current approvals and 34 inactive historical approvals.
+- The source-access test also covers mixed live/inactive decisions, pending live sources, duplicate rows, malformed IDs, built-in placeholders, production runtime injection, and protection against legacy summary overwrites.
+- Source check/save/scan endpoints require a live Whop session and retrieve the exact experience; bulk processing also retrieves the exact live experience and holds permission/access failures instead of trusting the saved approval alone.
 - Temporary preview and Cloudflare API diagnostic workflows were removed after use.
 - The challenge-blocked production polling workflow was removed so it cannot create permanent false failures on future commits.
 
-## Current blocker
-Run the real owner-authenticated workflow on `SniperPlug.com` using the existing Control Center password. Confirm the Control Center opens, `Private guides` is visible, and the live Whop Course lifecycle works end to end without duplicate actions or stale state.
+## Current blockers
+- Production browser verification is required after the latest Cloudflare deployment. With the current connected account and no readable membership access, the summary must show 0 currently accessible approved sources and identify the 34 previous approvals as inactive history.
+- The connected Whop account currently has 0 active groups and 0 readable sources, so a real Course import → video → reject → restore/re-import → private publish lifecycle cannot be completed until the owner account regains access to at least one authorized readable source.
+- The latest GitHub/Vercel status is not a reliable build verdict because Vercel is returning free-plan build-rate-limit failures. The repository's GitHub Actions workflow remains the source of truth for the full Node 22 build.
 
 ## Required acceptance
 - [x] `SniperPlug.com` visibly shows `Owner access` and no public Guides link.
 - [x] `Owner access` remains visible in the narrow Samsung Internet header while the remaining navigation can scroll.
-- [ ] Owner login on `SniperPlug.com` uses the existing Control Center password and opens `Private guides`.
+- [x] Owner login on `SniperPlug.com` uses the existing Control Center password and opens `Private guides`.
+- [ ] Production shows 0 currently accessible approved sources and 34 inactive previous approvals for the current no-access Whop account.
 - [ ] Anonymous and customer-importer sessions cannot read a guide, copied media, or course video on production.
 - [ ] A real Course flow passes on the production domain: discover → exact lesson import → draft/video open → reject → restore and rejected re-import → private-library publish.
 - [ ] Repeat the owner flow in Chrome and Samsung Internet with immediate feedback and no duplicate operation.
+- [ ] Latest full Node 22 GitHub Actions build passes after the source-access truth repair.
 - [ ] Final conflict, obsolete-code, temporary-file, and redundant-path inspection passes.
 
 ## Backlog after active-task acceptance
