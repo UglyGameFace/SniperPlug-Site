@@ -1,0 +1,14 @@
+{
+  "name": "sniperplug-site",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audit": "node tools/audit-whop-importer.mjs && node tools/audit-runtime-config.mjs && node tools/audit-whop-discovery.mjs && node tools/audit-bulk-publish.mjs && node tools/audit-control-hardening.mjs && node tools/audit-control-performance-media.mjs && node tools/audit-import-quality-recovery.mjs && node tools/audit-control-network.mjs && node tools/audit-decision-confirmation.mjs && node tools/audit-scan-persistence.mjs && node tools/audit-import-concurrency.mjs && node tools/audit-guide-versioning.mjs && node tools/audit-recovery-ownership.mjs && node tools/audit-paid-importer-access.mjs && node tools/test-media-hard-free.mjs && node tools/test-course-video-import.mjs && node tools/test-discovery-resilience.mjs",
+    "test": "npm run audit",
+    "build": "npm run audit"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}

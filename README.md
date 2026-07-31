@@ -1,33 +1,43 @@
 # SniperPlug Site v2 — Cloudflare Pages
 
-A Cloudflare Pages-ready affiliate/deal publisher site for SniperPlug.
+A Cloudflare Pages affiliate/deal publisher site with private D1-backed guide publishing.
 
 ## What is included
 
 - Homepage with partner-safe positioning
 - `/deals/` deal board with search/store/category filters
-- Store pages:
-  - `/deals/walmart/`
-  - `/deals/lowes/`
-  - `/deals/best-buy/`
-  - `/deals/home-depot/`
-  - `/deals/amazon/`
+- Store pages for Walmart, Lowe's, Best Buy, Home Depot, and Amazon
 - Individual deal detail pages under `/deal/<deal-id>/`
-- Affiliate/tracked redirect structure under `/go/<deal-id>` using Cloudflare Pages Functions
-- Partner page for retailer/API/affiliate approval reviewers
-- Contact, privacy, terms, and affiliate disclosure pages
-- `_headers`, `_redirects`, `robots.txt`, and `sitemap.xml`
-- Seed data in `/data/deals.json`
+- Affiliate/tracked redirects under `/go/<deal-id>` using Cloudflare Pages Functions
+- Public reviewed guides at `/guides/` and `/guides/<slug>/`
+- Private guide Control Center at `/control-center/`
+- Authorized Whop forum-post importer with source/post approval and draft-first publishing
+- Partner, contact, privacy, terms, and affiliate disclosure pages
+- Security headers, robots rules, and a guide-aware dynamic sitemap
+- Seed deal data in `/data/deals.json`
 
 ## Cloudflare Pages deployment
 
 Use these settings:
 
 - Framework preset: None / Static HTML
-- Build command: `exit 0`
-- Build output directory: `/` or `.`
+- Build command: `npm run build`
+- Build output directory: `.`
+- Root directory: `/`
 
-If Cloudflare does not accept `/`, use `.`.
+The build command runs the importer audit. Cloudflare Pages Functions serve the Control Center API, public guide pages, dynamic sitemap, and affiliate redirects.
+
+## D1 guide storage
+
+Create and bind a Cloudflare D1 database as `SNIPERPLUG_DB`, then apply:
+
+```text
+migrations/0001_whop_guides.sql
+```
+
+D1 privately stores OAuth sessions, exact source and post decisions, imported drafts, owner-managed guide categories, and published guide records. Imported Whop content is never committed to this public repository.
+
+See `docs/WHOP_IMPORTER.md` and `.dev.vars.example` for the required private variables and owner workflow.
 
 ## Important before public launch
 
@@ -42,13 +52,21 @@ For affiliate links, replace each URL in `functions/go/[id].js` with the approve
 
 ## Editing store/deal pages
 
-This package is static. To add a new deal quickly:
+The deal board remains static:
 
 1. Copy an existing folder in `/deal/`.
 2. Rename it to the new deal ID.
 3. Edit the title, price, was price, savings, variant, status, and retailer notes.
-4. Add a card to `/deals/index.html` and the matching `/deals/<store>/index.html`.
+4. Add a card to `/deals/index.html` and the matching store page.
 5. Add the redirect target to `functions/go/[id].js`.
-6. Update `/data/deals.json` and `sitemap.xml`.
+6. Update `/data/deals.json`.
 
-Later, your Discord bot can write deals into Supabase, Cloudflare D1/KV, or a JSON file and the website can render live deals automatically.
+The dynamic sitemap automatically includes every published D1 guide.
+
+## Validation
+
+```bash
+npm run build
+```
+
+This checks JavaScript syntax, Unicode/Markdown round trips, unsafe-content rejection, source and post decision enforcement, OAuth security wiring, D1-only draft storage, attachment review gates, and published-only public queries.
