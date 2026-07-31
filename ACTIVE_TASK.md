@@ -8,7 +8,7 @@ Required path:
 Whop OAuth/session → Experience discovery → exact content scan → import → D1 draft → course media/video → owner review → reject/remove → restore or re-import → publish to owner-only guide library → authenticated guide/video access.
 
 ## Status
-Active. Do not claim the production task complete until `SniperPlug.com` itself serves the current Cloudflare Pages production project and the real authenticated owner workflow passes there.
+Active. The production-domain routing blocker is resolved, but do not claim the task complete until the real authenticated owner workflow, isolation checks, browser regressions, and final cleanup pass on `SniperPlug.com`.
 
 ## Scope
 - One visible `Owner access` entry on the SniperPlug homepage.
@@ -19,8 +19,8 @@ Active. Do not claim the production task complete until `SniperPlug.com` itself 
 
 ## Confirmed findings
 - PR #4 and PR #5 are merged into `main`.
-- `https://sniperplug.pages.dev` and the current production deployment URL serve the current homepage with `Owner access` and no direct public Guides link.
-- Cloudflare branch previews also serve the protected owner flow correctly.
+- `https://sniperplug.pages.dev`, deployment previews, the current production deployment URL, and the real `https://sniperplug.com/` domain now serve the current homepage.
+- A fresh Samsung Internet screenshot on July 31, 2026 shows `sniperplug.com` in the address bar, a visible `Owner access` entry, and no public Guides entry.
 - Cloudflare dashboard checks confirmed:
   - `sniperplug.com` is Active on the `sniperplug-site` Pages project;
   - the apex CNAME points to `sniperplug.pages.dev` and is proxied;
@@ -29,10 +29,9 @@ Active. Do not claim the production task complete until `SniperPlug.com` itself 
   - no zone Worker Routes exist;
   - Trace shows no Snippets or Cloud Connector match and ends with HTTP 200;
   - the current successful production deployment from `main` explicitly lists `sniperplug.com` as its alias.
-- A full zone cache purge did not resolve the previously observed old public Guides navigation on the custom domain.
-- External diagnostics receive a Cloudflare managed challenge on `SniperPlug.com`, while Pages deployment URLs return the current site normally.
-- The mobile header uses a horizontally scrollable nav. On Samsung Internet, `Owner access` could slide completely off-screen even though it existed in the page source.
-- No `CLOUDFLARE_API_TOKEN` or `CF_API_TOKEN` exists in GitHub secrets, so the repository cannot inspect or change Pages custom domains through the Cloudflare API.
+- The prior old public navigation was a stale custom-domain/browser delivery state rather than a second repository, bad DNS target, Worker route, or cache rule.
+- The mobile header uses a horizontally scrollable nav. On Samsung Internet, `Owner access` could previously slide completely off-screen even though it existed in the page source.
+- No `CLOUDFLARE_API_TOKEN` or `CF_API_TOKEN` exists in GitHub secrets, so automated Cloudflare configuration inspection remains unavailable.
 - Vercel deployment checks are unrelated to the Cloudflare Pages production target.
 
 ## Implemented changes
@@ -57,21 +56,22 @@ Active. Do not claim the production task complete until `SniperPlug.com` itself 
   - secure POST private-guide lock form with a safe no-JavaScript path;
   - anonymous course-video access points to Owner access rather than Whop reconnect;
   - private guide URLs are absent from the sitemap.
-- The mobile Owner-access pin and permanent homepage audit were committed to `main`; deployment verification is pending.
+- The real production domain now visibly shows `Owner access` with no public Guides link in Samsung Internet.
+- The mobile Owner-access pin and permanent homepage audit are committed to `main` and visible on the production domain.
 - Temporary preview and Cloudflare API diagnostic workflows were removed after use.
 - The challenge-blocked production polling workflow was removed so it cannot create permanent false failures on future commits.
 
 ## Current blocker
-Obtain a fresh user-browser comparison using the actual `https://sniperplug.com/` address after the cache purge and latest deployment. The screenshots received so far both used the deployment URL, so they prove the deployment is current but do not yet prove the custom-domain alias is current.
+Run the real owner-authenticated workflow on `SniperPlug.com` using the existing Control Center password. Confirm the Control Center opens, `Private guides` is visible, and the live Whop Course lifecycle works end to end without duplicate actions or stale state.
 
 ## Required acceptance
-- `SniperPlug.com` visibly shows `Owner access` and no public Guides link.
-- `Owner access` remains visible in the narrow Samsung Internet header while the remaining navigation can scroll.
-- Owner login on `SniperPlug.com` uses the existing Control Center password and opens `Private guides`.
-- Anonymous and customer-importer sessions cannot read a guide, copied media, or course video.
-- A real Course flow passes on the production domain: discover → exact lesson import → draft/video open → reject → restore and rejected re-import → private-library publish.
-- Repeat the owner flow in Chrome and Samsung Internet with immediate feedback and no duplicate operation.
-- Final conflict, obsolete-code, temporary-file, and redundant-path inspection passes.
+- [x] `SniperPlug.com` visibly shows `Owner access` and no public Guides link.
+- [x] `Owner access` remains visible in the narrow Samsung Internet header while the remaining navigation can scroll.
+- [ ] Owner login on `SniperPlug.com` uses the existing Control Center password and opens `Private guides`.
+- [ ] Anonymous and customer-importer sessions cannot read a guide, copied media, or course video on production.
+- [ ] A real Course flow passes on the production domain: discover → exact lesson import → draft/video open → reject → restore and rejected re-import → private-library publish.
+- [ ] Repeat the owner flow in Chrome and Samsung Internet with immediate feedback and no duplicate operation.
+- [ ] Final conflict, obsolete-code, temporary-file, and redundant-path inspection passes.
 
 ## Backlog after active-task acceptance
 - Newegg/affiliate reviewer readiness: replace or hide all demo deals and sample/replacement instructions.
