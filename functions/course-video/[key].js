@@ -5,6 +5,7 @@ import {
 } from '../_lib/course-video.js';
 import { HttpError, requireDatabase } from '../_lib/http.js';
 import { PrivateGuideAuthError, requirePrivateGuideOwner } from '../_lib/private-guides.js';
+import { permanentCourseArchive, whopRecoveryError } from '../_lib/recovery-media.js';
 import { requireOwnerWhopSession, whopApi } from '../_lib/whop.js';
 
 function escapeHtml(value) {
@@ -29,7 +30,10 @@ function noStoreHeaders(extra = {}) {
 
 export function courseVideoRecoveryKind(error) {
   if (error instanceof PrivateGuideAuthError) return 'owner-unlock';
-  if (error instanceof HttpError && [401, 403].includes(error.status)) return 'whop-reconnect';
+  const code = String(error?.details?.code || '');
+  if (code === 'whop_recovery_source_access_lost' || code === 'whop_recovery_source_missing') return 'source-access';
+  if (error instanceof HttpError && error.status === 401) return 'whop-reconnect';
+  if (error instanceof HttpError && error.status === 403) return 'source-access';
   return 'retry';
 }
 
@@ -39,7 +43,9 @@ function errorPage(message, recoveryKind = 'retry') {
     ? '<p><a href="/control-center/">Open Owner access to unlock the private library</a></p>'
     : recoveryKind === 'whop-reconnect'
       ? '<p><a href="/control-center/">Open the Control Center and reconnect Whop</a></p>'
-      : '<p><a href="">Try again</a></p>';
+      : recoveryKind === 'source-access'
+        ? '<p><a href="/control-center/">Open the Control Center to verify current source access or restore a permanent R2 copy</a></p>'
+        : '<p><a href="">Try again</a></p>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>Course video unavailable</title><style>html,body{height:100%;margin:0;background:#09090b;color:#fff;font-family:system-ui,sans-serif}.error{box-sizing:border-box;display:grid;place-content:center;min-height:100%;padding:1.5rem;text-align:center}.error p{max-width:42rem;line-height:1.55}.error a{color:#8ab4ff}</style></head><body><main class="error"><h1>Course video unavailable</h1><p>${safeMessage}</p>${action}</main></body></html>`;
 }
 
@@ -52,7 +58,7 @@ function errorResponse(error, method = 'GET') {
     headers: noStoreHeaders({
       'content-type': 'text/html; charset=utf-8',
       'x-frame-options': 'SAMEORIGIN',
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'; navigate-to 'self'",
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
     }),
   });
 }
@@ -64,6 +70,19 @@ function playerPage(playerUrl, title) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>${safeTitle}</title>
 <style>html,body{height:100%;margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}iframe{display:block;width:100%;height:100%;border:0;background:#000}.error{display:grid;place-items:center;height:100%;padding:1rem;text-align:center}</style></head>
 <body><iframe src="${safeUrl}" title="${safeTitle}" allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></body></html>`;
+}
+
+function archivedPlayerPage(mediaUrl, title, contentType) {
+  const safeTitle = escapeHtml(title || 'Course video');
+  const safeUrl = escapeHtml(mediaUrl);
+  const audio = String(contentType || '').toLowerCase().startsWith('audio/');
+  const player = audio
+    ? `<audio controls preload="metadata" src="${safeUrl}"></audio>`
+    : `<video controls playsinline preload="metadata" src="${safeUrl}"></video>`;
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>${safeTitle}</title>
+<style>html,body{height:100%;margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif}body{display:grid;place-items:center}video{display:block;width:100%;height:100%;object-fit:contain;background:#000}audio{width:min(94%,52rem)}</style></head>
+<body>${player}</body></html>`;
 }
 
 async function expireSelectedOwnerSession(env) {
@@ -90,6 +109,33 @@ async function retrieveLessonWithRefresh(request, env, lessonId) {
   }
 }
 
+async function permanentArchiveForSource(env, source) {
+  const db = requireDatabase(env);
+  const guide = await db.prepare('SELECT attachment_json FROM guides WHERE id = ?').bind(source.guide_id).first();
+  return permanentCourseArchive(guide?.attachment_json);
+}
+
+function permanentArchiveResponse(request, archive, title) {
+  const url = new URL(request.url);
+  const mediaUrl = new URL(String(archive.url || ''), url.origin).toString();
+  if (url.searchParams.get('download') === '1') {
+    return new Response(null, {
+      status: 307,
+      headers: noStoreHeaders({ location: mediaUrl }),
+    });
+  }
+  const body = request.method === 'HEAD' ? null : archivedPlayerPage(mediaUrl, title, archive.contentType);
+  return new Response(body, {
+    status: 200,
+    headers: noStoreHeaders({
+      'content-type': 'text/html; charset=utf-8',
+      'x-frame-options': 'SAMEORIGIN',
+      'content-security-policy': "default-src 'none'; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+      'x-sniperplug-media-source': 'permanent-r2-copy',
+    }),
+  });
+}
+
 export async function onRequest(context) {
   if (!['GET', 'HEAD'].includes(context.request.method)) {
     return new Response('Method Not Allowed', { status: 405, headers: noStoreHeaders({ allow: 'GET, HEAD' }) });
@@ -97,7 +143,18 @@ export async function onRequest(context) {
   try {
     await requirePrivateGuideOwner(context.request, context.env);
     const source = await courseVideoSource(context.env, context.params?.key);
-    const lesson = await retrieveLessonWithRefresh(context.request, context.env, source.lesson_id);
+    const archive = await permanentArchiveForSource(context.env, source);
+    if (archive) return permanentArchiveResponse(context.request, archive, source.title);
+
+    let lesson;
+    try {
+      lesson = await retrieveLessonWithRefresh(context.request, context.env, source.lesson_id);
+    } catch (error) {
+      throw whopRecoveryError(error, {
+        sourceKey: source.source_key,
+        operation: 'play this course video because no permanent R2 copy exists',
+      });
+    }
     if (String(source.source_key || '') !== `course-lesson:${String(lesson?.id || '')}`) {
       throw new HttpError(409, 'The saved course video no longer matches its Whop lesson. Re-import this lesson.');
     }
@@ -116,6 +173,7 @@ export async function onRequest(context) {
         headers: noStoreHeaders({
           location: rendition.url,
           'content-disposition': `attachment; filename="${String(source.title || 'course-video').replace(/["\r\n]/g, '')}.${extension}"`,
+          'x-sniperplug-media-source': 'live-whop-source',
         }),
       });
     }
@@ -129,6 +187,7 @@ export async function onRequest(context) {
         'content-type': 'text/html; charset=utf-8',
         'x-frame-options': 'SAMEORIGIN',
         'content-security-policy': "default-src 'none'; frame-src https://player.mux.com; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+        'x-sniperplug-media-source': 'live-whop-source',
       }),
     });
   } catch (error) {
