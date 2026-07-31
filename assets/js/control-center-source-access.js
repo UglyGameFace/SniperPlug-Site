@@ -90,7 +90,7 @@
   global.fetch = async function sourceAccessFetch(input, options = {}) {
     const url = sameOriginApi(input);
     const response = await nativeFetch(input, options);
-    if (url && String(response.headers.get('content-type') || '').includes('application/json')) {
+    if (url && response.ok && String(response.headers.get('content-type') || '').includes('application/json')) {
       response.clone().json().then((payload) => remember(url, payload)).catch(() => null);
     }
     return response;
@@ -144,7 +144,7 @@
     if (!(container instanceof HTMLElement)) return;
     const copy = desiredCopy();
     if (!copy) return;
-    const expected = `${copy.title} ${copy.detail} Manage sources`.replace(/\s+/g, ' ').trim();
+    const expected = `${copy.title}${copy.detail}Manage sources`.replace(/\s+/g, ' ').trim();
     const current = String(container.textContent || '').replace(/\s+/g, ' ').trim();
     if (current === expected && container.dataset.accessTruth === copy.state) return;
 
