@@ -17,6 +17,7 @@ const requiredHtml = [
   'property="og:title"',
   'name="twitter:card"',
   'application/ld+json',
+  'href="/control-center/"',
   'href="/deals/"',
   'href="/partners/"',
   'href="/about/"',
@@ -29,6 +30,10 @@ const requiredHtml = [
 
 for (const token of requiredHtml) {
   if (!html.includes(token)) fail(`missing required homepage token: ${token}`);
+}
+
+if (!html.includes('>Owner access</a>')) {
+  fail('the public homepage does not provide a clear owner entry point');
 }
 
 if (html.includes('href="/guides/"')) {
@@ -48,6 +53,7 @@ for (const phrase of bannedCopy) {
 }
 
 const requiredRoutes = [
+  'control-center/index.html',
   'deals/index.html',
   'partners/index.html',
   'about/index.html',
