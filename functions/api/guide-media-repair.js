@@ -9,12 +9,35 @@ import {
   requireDatabase,
   requireSameOrigin,
 } from '../_lib/http.js';
+import { whopRecoveryError } from '../_lib/recovery-media.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 function guideId(value) {
   const id = Number.parseInt(value, 10);
   if (!Number.isFinite(id) || id <= 0) throw new HttpError(422, 'Choose a valid guide to repair.');
   return id;
+}
+
+async function liveExperience(request, env, admin, row) {
+  let whop;
+  try {
+    whop = await requireWhopSession(request, env, admin);
+  } catch (error) {
+    throw whopRecoveryError(error, {
+      experienceId: row.source_experience_id,
+      sourceKey: row.source_key,
+      operation: 'repair this guide’s media',
+    });
+  }
+  try {
+    return { whop, experience: await retrieveExperience(whop, row.source_experience_id) };
+  } catch (error) {
+    throw whopRecoveryError(error, {
+      experienceId: row.source_experience_id,
+      sourceKey: row.source_key,
+      operation: 'repair this guide’s media',
+    });
+  }
 }
 
 export async function onRequest(context) {
@@ -43,8 +66,7 @@ export async function onRequest(context) {
       throw new HttpError(422, 'This guide is not linked to a recoverable Whop item.');
     }
 
-    const whop = await requireWhopSession(context.request, context.env, admin);
-    const experience = await retrieveExperience(whop, row.source_experience_id);
+    const { whop, experience } = await liveExperience(context.request, context.env, admin, row);
     const output = await importApprovedPosts(context.env, whop, {
       experienceId: experience.id,
       sourceKeys: [row.source_key],
