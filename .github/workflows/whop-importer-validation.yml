@@ -2,7 +2,6 @@ name: Verify SniperPlug
 
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main, agent/whop-guide-importer]
 
@@ -10,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: verify-sniperplug-${{ github.ref }}
+  group: verify-sniperplug-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
