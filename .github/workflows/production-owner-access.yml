@@ -16,9 +16,9 @@ concurrency:
 jobs:
   host-diagnostic:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
-      - name: Record production DNS and response headers
+      - name: Record production DNS, headers, and deployment content
         run: |
           set -euo pipefail
           echo '=== DNS A ==='
@@ -27,10 +27,30 @@ jobs:
           dig +short AAAA sniperplug.com || true
           echo '=== DNS CNAME ==='
           dig +short CNAME sniperplug.com || true
-          echo '=== HTTPS response chain ==='
+          echo '=== SniperPlug.com HTTPS response chain ==='
           curl --silent --show-error --location --head --max-time 30 \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
             --header 'Cache-Control: no-cache, no-store' \
-            "https://sniperplug.com/?production-host-diagnostic=${GITHUB_SHA}"
+            "https://sniperplug.com/?production-host-diagnostic=${GITHUB_SHA}" || true
+
+          inspect_page() {
+            label="$1"
+            url="$2"
+            body="$(mktemp)"
+            status="$(curl --silent --show-error --location --max-time 30 \
+              --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
+              --header 'Cache-Control: no-cache, no-store' \
+              --output "$body" --write-out '%{http_code}' \
+              "${url}?deployment-content=${GITHUB_SHA}" || true)"
+            echo "=== ${label}: HTTP ${status} ==="
+            echo "Owner access count: $(grep -Foc '>Owner access</a>' "$body" || true)"
+            echo "Direct Guides link count: $(grep -Foc 'href=\"/guides/\"' "$body" || true)"
+            echo "Title: $(grep -Eo '<title>[^<]+' "$body" | head -n 1 || true)"
+          }
+
+          inspect_page 'custom domain' 'https://sniperplug.com/'
+          inspect_page 'Cloudflare production project' 'https://sniperplug.pages.dev/'
+          inspect_page 'Cloudflare protected branch' 'https://fix-private-guides-owner-aut.sniperplug.pages.dev/'
 
   production-smoke:
     runs-on: ubuntu-latest
@@ -71,6 +91,7 @@ jobs:
           homepage=''
           for attempt in $(seq 1 60); do
             homepage="$(curl --fail --silent --show-error --location \
+              --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
               --header 'Cache-Control: no-cache, no-store' \
               "https://sniperplug.com/?production-owner-access=${GITHUB_SHA}-${attempt}" || true)"
 
@@ -88,6 +109,7 @@ jobs:
           done
 
           control_center="$(curl --fail --silent --show-error --location \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
             --header 'Cache-Control: no-cache, no-store' \
             "https://sniperplug.com/control-center/?production-owner-access=${GITHUB_SHA}")"
           grep -Fq 'Unlock the Guide Control Center.' <<<"$control_center"
@@ -95,6 +117,7 @@ jobs:
 
           guide_body="$(mktemp)"
           guide_status="$(curl --silent --show-error --location \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
             --header 'Cache-Control: no-cache, no-store' \
             --output "$guide_body" \
             --write-out '%{http_code}' \
@@ -103,6 +126,7 @@ jobs:
           grep -Fq 'same password you already use for the SniperPlug Control Center' "$guide_body"
 
           sitemap="$(curl --fail --silent --show-error --location \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/138 Safari/537.36' \
             --header 'Cache-Control: no-cache, no-store' \
             "https://sniperplug.com/sitemap.xml?production-owner-access=${GITHUB_SHA}")"
           if grep -Fq '/guides/' <<<"$sitemap"; then
