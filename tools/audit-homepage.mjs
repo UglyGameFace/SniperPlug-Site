@@ -10,6 +10,7 @@ const fail = (message) => {
 
 const html = read('index.html');
 const css = read('assets/css/homepage.css');
+const runtime = read('assets/js/site.js');
 
 const requiredHtml = [
   '<meta name="viewport"',
@@ -71,6 +72,17 @@ if (!/@media\s*\(max-width\s*:\s*9(?:40|39)px\)/i.test(css)) fail('tablet breakp
 if (!/@media\s*\(max-width\s*:\s*(?:6\d{2}|700)px\)/i.test(css)) fail('mobile breakpoint is missing');
 if (!css.includes('minmax(0,1fr)')) fail('responsive grid overflow protection is missing');
 if (/min-width\s*:\s*[7-9]\d{2,}px/i.test(css)) fail('large fixed min-width may cause horizontal overflow');
+
+const requiredMobileOwnerRuntime = [
+  'querySelector(\'a[href="/control-center/"]\')',
+  "matchMedia('(max-width: 620px)')",
+  "ownerLink.style.position = 'sticky'",
+  "ownerLink.style.left = '0'",
+  "ownerLink.dataset.mobilePinned = 'true'",
+];
+for (const token of requiredMobileOwnerRuntime) {
+  if (!runtime.includes(token)) fail(`mobile Owner access protection is missing: ${token}`);
+}
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
