@@ -5,9 +5,9 @@ Repair and fully audit the Whop importer workflow in `UglyGameFace/SniperPlug-Si
 
 The required end-to-end path is:
 
-Whop OAuth/session → Experience discovery → app/type routing → exact content scan → source/item decisions → import → D1 draft → course media/video enhancement → owner review → reject/remove → restore or re-import → publish → public guide/video access.
+Whop OAuth/session → Experience discovery → app/type routing → exact content scan → source/item decisions → import → D1 draft → course media/video enhancement → owner review → reject/remove → restore or re-import → publish to the owner-only private guide library → authenticated guide/video access.
 
-The frontend scope includes the complete Control Center, async feedback, duplicate-submit prevention, rendering, caching, Samsung Internet compatibility, and truthful recovery state.
+The frontend scope includes the complete Control Center, async feedback, duplicate-submit prevention, rendering, caching, Samsung Internet compatibility, truthful recovery state, and owner-only access to imported guide content.
 
 ## Status
 Active. No merge or completion claim until the real authenticated workflow passes. Static source-string checks and a green syntax build are not acceptance.
@@ -23,6 +23,19 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Samsung Internet has shown stale immutable assets, delayed tap feedback, and rendering problems around `content-visibility`.
 - Site middleware does not validate the complete Whop OAuth configuration up front.
 - The branch contains many accumulated changes; duplicate, superseded, and contradictory paths require full caller inspection before cleanup.
+- The guide index and guide detail routes were publicly readable and publicly cacheable.
+- Copied guide media used immutable public edge caching, and published course videos could be opened without the owner Control Center session.
+- The public sitemap, homepage navigation, and browser runtime exposed the guide library to visitors and reviewers.
+- Customer Whop-importer sessions share the same cookie format, so guide authorization must require `kind=owner` rather than accepting any authenticated session.
+
+## Current private-guide subtask
+- Reuse the existing signed `sniperplug_admin` session and `/api/control?action=session` login instead of creating a second password or cookie.
+- Require an owner session before reading guide lists, guide details, copied media, or course videos.
+- Deny customer and customer-pending importer sessions from the owner guide library.
+- Remove guide URLs from public navigation and the sitemap.
+- Force guide pages and media to `private, no-store` with `noindex, nofollow, noarchive` at both route and middleware layers.
+- Keep internal `published` lifecycle state for review/recovery compatibility while explaining in the Control Center that it means available only inside the private owner library.
+- Add executable owner/customer/anonymous session tests and permanent source audits.
 
 ## Audit and repair order
 1. Runtime/deployment configuration, OAuth requirements, D1/R2 bindings, routes, and migrations.
@@ -31,7 +44,7 @@ Active. No merge or completion claim until the real authenticated workflow passe
 4. Source/item decision lifecycle and import idempotency.
 5. D1 guide lifecycle: draft, published, rejected, restored, re-imported, quarantined, and deduplicated states.
 6. Course video/media registration, playback, download behavior, stale records, and failure recovery.
-7. Publishing/public guide access, authorization, reconciliation, and search/detail routes.
+7. Owner-only guide access, authorization, reconciliation, search/detail routes, copied media, and course-video isolation.
 8. Control Center event delegation, busy state, progress, retry, stale caches, Samsung Internet, and accessibility.
 9. Replace static-only checks with executable D1/API state-transition tests and browser workflow coverage.
 10. Remove verified duplicate, obsolete, temporary, and conflicting Whop-importer code only after caller/reference validation.
@@ -44,8 +57,15 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Reject/remove that guide.
 - Restore it and separately prove rejected re-import works.
 - Confirm failure at any recovery step does not leave source/item approvals or guide/media state partially changed.
-- Publish and open the public guide/video successfully.
+- Publish it to the owner-only library and open the protected guide/video successfully while signed in.
+- Confirm an anonymous browser and a customer importer session cannot read the guide, copied media, or course video.
 - Repeat the owner workflow in Chrome and Samsung Internet with immediate visible feedback and no duplicate operation.
+
+## Backlog after active-task acceptance
+- Newegg/affiliate reviewer readiness: replace or hide every demo deal page and every sample/replacement instruction.
+- Replace retailer search redirects with exact product/SKU destinations or remove the affected deal cards until exact links exist.
+- Finish the privacy policy so it accurately covers analytics, affiliate tracking, cookies, Discord/Whop connections, retention, and deletion without starter-template wording.
+- Audit every public deal/store/partner page for consistent claims, real timestamps, variants, sellers, fulfillment, availability, and current links before applying to Newegg.
 
 ## Scope lock
 The separate `UglyGameFace/SniperPlug` Discord deal-bot audit is paused. Preserve its existing findings and commits, but make no further changes there until this Whop importer task is accepted.
