@@ -70,14 +70,16 @@ const repair = read('functions/api/guide-repair.js');
 const mediaRepair = read('functions/api/guide-media-repair.js');
 const client = read('assets/js/control-center-recovery.js');
 const snapshots = read('functions/_lib/guide-snapshots.js');
+const routeHandler = route.slice(route.indexOf('export async function onRequest'));
 
 assert.ok(route.includes('permanentArchiveForSource') && route.includes("x-sniperplug-media-source': 'permanent-r2-copy'"), 'Course video playback does not prefer permanent R2 media.');
-assert.ok(route.indexOf('if (archive) return permanentArchiveResponse') < route.indexOf('retrieveLessonWithRefresh'), 'The route contacts Whop before checking its permanent copy.');
+assert.ok(routeHandler.indexOf('if (archive) return permanentArchiveResponse') < routeHandler.indexOf('retrieveLessonWithRefresh'), 'The request path contacts Whop before checking its permanent copy.');
 assert.ok(repair.includes('mediaTruth.canRestoreSavedCopy') && repair.includes("recoveryMode: 'saved-r2-copy'"), 'Removed imports with permanent media still require Whop.');
 assert.ok(repair.includes('whopRecoveryError') && mediaRepair.includes('whopRecoveryError'), 'Recovery endpoints do not explain expired or lost Whop access consistently.');
 assert.ok(snapshots.includes('guideSnapshotMatches(current, row)'), 'No-op recovery rollback can still become a false 500.');
 assert.ok(client.includes('Permanent R2 copies can be restored directly') && client.includes('error.details = body.details'), 'Recovery UI does not expose media truth or server recovery codes.');
 assert.ok(client.includes('Source access required'), 'Lost source access still leaves a misleading re-import button.');
+assert.ok(client.includes("article.dataset.sourceUnavailable === 'true'"), 'An unavailable source button can be accidentally re-enabled after the failed request.');
 
 for (const file of [
   'functions/_lib/recovery-media.js',
