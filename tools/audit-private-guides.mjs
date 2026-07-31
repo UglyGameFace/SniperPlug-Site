@@ -17,6 +17,8 @@ const homepage = read('index.html');
 const siteClient = read('assets/js/site.js');
 const templates = read('functions/_lib/templates.js');
 const loginClient = read('assets/js/private-guides-login.js');
+const robots = read('robots.txt');
+const staticHeaders = read('_headers');
 
 assert.ok(gate.includes("import { readAdminSession } from './auth.js'"), 'Private guide access does not reuse the signed Control Center session.');
 assert.ok(gate.includes("session.kind !== 'owner'"), 'Customer importer sessions can reach the owner-only guide library.');
@@ -56,6 +58,13 @@ assert.ok(middleware.includes('privateGuideContent'), 'Middleware does not share
 assert.ok(middleware.includes("response.headers.set('Cache-Control', 'private, no-store, max-age=0')"), 'Middleware does not override private guide caching.');
 assert.ok(middleware.includes("response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive')"), 'Middleware does not exclude private guide routes from indexing.');
 
+for (const route of ['/guides/', '/media/', '/course-video/']) {
+  assert.ok(robots.includes(`Disallow: ${route}`), `robots.txt does not exclude ${route}.`);
+  assert.ok(staticHeaders.includes(route), `_headers does not include a defense-in-depth rule for ${route}.`);
+}
+assert.ok(staticHeaders.includes('Cache-Control: private, no-store, max-age=0'), 'Static private routes do not enforce no-store caching.');
+assert.ok(staticHeaders.includes('X-Robots-Tag: noindex, nofollow, noarchive'), 'Static private routes do not enforce noindex headers.');
+
 assert.ok(!sitemap.includes("'/guides/'"), 'Private guide index remains in the public sitemap.');
 assert.ok(!sitemap.includes('publicGuides'), 'Private guide slugs are still queried for the public sitemap.');
 assert.ok(!homepage.includes('href="/guides/"'), 'The public homepage still links to the owner-only guide library.');
@@ -67,4 +76,4 @@ assert.ok(!templates.includes('<link rel="canonical" href="https://sniperplug.co
 console.log('\nSNIPERPLUG PRIVATE GUIDE ISOLATION AUDIT PASSED\n');
 console.log('✓ Guide list, details, copied media, and course videos require the owner Control Center session.');
 console.log('✓ The same password/login endpoint is reused; customer importer sessions are denied.');
-console.log('✓ Public navigation, sitemap entries, indexing, and shared caching no longer expose guide content.');
+console.log('✓ Public navigation, sitemap entries, crawler rules, indexing, and shared caching no longer expose guide content.');
