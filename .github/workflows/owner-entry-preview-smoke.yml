@@ -1,6 +1,7 @@
 name: Owner entry preview smoke
 
 on:
+  pull_request:
   push:
     branches: [fix/private-guides-owner-auth]
 
@@ -8,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: owner-entry-preview-smoke
+  group: owner-entry-preview-smoke-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
