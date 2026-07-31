@@ -4,7 +4,7 @@ import {
   muxPlayerUrl,
 } from '../_lib/course-video.js';
 import { HttpError, requireDatabase } from '../_lib/http.js';
-import { requirePrivateGuideOwner } from '../_lib/private-guides.js';
+import { PrivateGuideAuthError, requirePrivateGuideOwner } from '../_lib/private-guides.js';
 import { requireOwnerWhopSession, whopApi } from '../_lib/whop.js';
 
 function escapeHtml(value) {
@@ -27,18 +27,26 @@ function noStoreHeaders(extra = {}) {
   };
 }
 
-function errorPage(message, reconnect = false) {
+export function courseVideoRecoveryKind(error) {
+  if (error instanceof PrivateGuideAuthError) return 'owner-unlock';
+  if (error instanceof HttpError && [401, 403].includes(error.status)) return 'whop-reconnect';
+  return 'retry';
+}
+
+function errorPage(message, recoveryKind = 'retry') {
   const safeMessage = escapeHtml(message);
-  const action = reconnect
-    ? '<p><a href="/control-center/">Open the Control Center and reconnect Whop</a></p>'
-    : '<p><a href="">Try again</a></p>';
+  const action = recoveryKind === 'owner-unlock'
+    ? '<p><a href="/control-center/">Open Owner access to unlock the private library</a></p>'
+    : recoveryKind === 'whop-reconnect'
+      ? '<p><a href="/control-center/">Open the Control Center and reconnect Whop</a></p>'
+      : '<p><a href="">Try again</a></p>';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="robots" content="noindex,nofollow,noarchive"><title>Course video unavailable</title><style>html,body{height:100%;margin:0;background:#09090b;color:#fff;font-family:system-ui,sans-serif}.error{box-sizing:border-box;display:grid;place-content:center;min-height:100%;padding:1.5rem;text-align:center}.error p{max-width:42rem;line-height:1.55}.error a{color:#8ab4ff}</style></head><body><main class="error"><h1>Course video unavailable</h1><p>${safeMessage}</p>${action}</main></body></html>`;
 }
 
 function errorResponse(error, method = 'GET') {
   const status = error instanceof HttpError ? error.status : 500;
   const message = error instanceof HttpError ? error.message : 'The course video could not be opened.';
-  const body = method === 'HEAD' ? null : errorPage(message, status === 401 || status === 403);
+  const body = method === 'HEAD' ? null : errorPage(message, courseVideoRecoveryKind(error));
   return new Response(body, {
     status,
     headers: noStoreHeaders({
