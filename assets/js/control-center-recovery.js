@@ -13,7 +13,7 @@
       <div>
         <span class="eyebrow">Recovery</span>
         <h2>Removed Whop imports</h2>
-        <p>Restore an item from Whop, or clear old rejected imports from this recovery queue.</p>
+        <p>Permanent R2 copies can be restored directly. Anything that was only linked to Whop must still be readable by the connected Whop account before it can be re-imported.</p>
       </div>
       <div class="button-row">
         <button class="btn ghost" type="button" data-recovery-toggle aria-expanded="false">Show removed imports</button>
@@ -50,6 +50,14 @@
     .recovery-list{max-height:min(58vh,720px);overflow:auto;overscroll-behavior:contain}
     .recovery-panel .panel-head{align-items:flex-start}
     .recovery-item[data-busy="true"]{opacity:.72;pointer-events:none}
+    .recovery-item-copy{display:grid;gap:.35rem;min-width:0}
+    .recovery-item-note{margin:0;color:var(--muted,#aab0c0);line-height:1.45}
+    .recovery-media-state{display:inline-flex;width:max-content;max-width:100%;padding:.25rem .55rem;border:1px solid rgba(255,255,255,.12);border-radius:999px;font-size:.78rem}
+    .recovery-item[data-media-state="permanent-video"] .recovery-media-state,
+    .recovery-item[data-media-state="permanent-media"] .recovery-media-state{color:#74e99a;border-color:rgba(116,233,154,.35)}
+    .recovery-item[data-media-state="live-source-video"] .recovery-media-state,
+    .recovery-item[data-media-state="missing-media-copy"] .recovery-media-state{color:#ffcf70;border-color:rgba(255,207,112,.35)}
+    .recovery-item[data-source-unavailable="true"]{border-color:rgba(255,104,118,.35)}
   `;
   document.head.append(style);
 
@@ -74,7 +82,12 @@
       const text = await response.text();
       let body = {};
       try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
-      if (!response.ok) throw new Error(body.error || `Recovery request failed (${response.status}).`);
+      if (!response.ok) {
+        const error = new Error(body.error || `Recovery request failed (${response.status}).`);
+        error.status = response.status;
+        error.details = body.details || null;
+        throw error;
+      }
       return body;
     } catch (error) {
       if (controller.signal.aborted) throw new Error('The server took too long. No duplicate action was started; refresh and try again.');
@@ -96,23 +109,40 @@
     }
   }
 
+  function mediaLabel(item) {
+    if (item.mediaState === 'permanent-video') return 'Permanent R2 video saved';
+    if (item.mediaState === 'permanent-media') return 'Permanent R2 media saved';
+    if (item.mediaState === 'live-source-video') return 'Video requires live Whop access';
+    if (item.mediaState === 'missing-media-copy') return 'Text saved · media was not copied';
+    return 'Text-only saved import';
+  }
+
   function row(item) {
     const article = document.createElement('article');
     article.className = 'recovery-item';
     article.dataset.guideId = String(item.id);
+    article.dataset.mediaState = String(item.mediaState || 'text-only');
     const copy = document.createElement('div');
+    copy.className = 'recovery-item-copy';
     const title = document.createElement('strong');
     title.textContent = item.title || 'Removed Whop import';
     const meta = document.createElement('small');
     meta.textContent = `${item.sourceGroup || 'Whop Experience'} · ${item.experienceId} · removed ${item.removedAt ? new Date(item.removedAt).toLocaleString() : 'recently'}`;
-    copy.append(title, meta);
+    const media = document.createElement('span');
+    media.className = 'recovery-media-state';
+    media.textContent = mediaLabel(item);
+    const note = document.createElement('p');
+    note.className = 'recovery-item-note';
+    note.dataset.recoveryNote = '';
+    note.textContent = item.recoveryNote || 'Re-importing requires the original Whop source.';
+    copy.append(title, meta, media, note);
     const actions = document.createElement('div');
     actions.className = 'button-row';
     const restore = document.createElement('button');
     restore.type = 'button';
     restore.className = 'btn primary';
     restore.dataset.recoveryRepair = '';
-    restore.textContent = 'Restore & re-import';
+    restore.textContent = item.canRestoreSavedCopy ? 'Restore saved R2 copy' : 'Re-import from Whop';
     const clear = document.createElement('button');
     clear.type = 'button';
     clear.className = 'btn ghost';
@@ -126,7 +156,7 @@
   function syncSummary(data) {
     total = Number(data.total || 0);
     offset = Number(data.offset || 0) + (data.removed || []).length;
-    stateCopy.textContent = total ? `${total} removed import${total === 1 ? '' : 's'} available.` : 'No removed Whop imports remain.';
+    stateCopy.textContent = total ? `${total} removed import${total === 1 ? '' : 's'} available. Each row now shows whether its media is permanent or still depends on Whop.` : 'No removed Whop imports remain.';
     stateCopy.dataset.state = total ? 'warning' : 'ok';
     clearAll.hidden = total === 0;
     more.hidden = !data.hasMore;
@@ -180,6 +210,18 @@
     } finally { setButton(button, false); }
   }
 
+  function showSourceFailure(article, button, error) {
+    const note = article.querySelector('[data-recovery-note]');
+    if (note) note.textContent = error.message;
+    const code = String(error?.details?.code || '');
+    if (['whop_recovery_source_access_lost', 'whop_recovery_source_missing'].includes(code) || [403, 404].includes(Number(error.status || 0))) {
+      article.dataset.sourceUnavailable = 'true';
+      button.textContent = 'Source access required';
+      button.disabled = true;
+      button.dataset.idleLabel = 'Source access required';
+    }
+  }
+
   async function repair(article, button) {
     const guideId = Number(article.dataset.guideId || 0);
     if (!guideId || pending.has(guideId)) return;
@@ -198,18 +240,21 @@
       }, 180_000);
       article.remove();
       total = Math.max(0, total - 1);
-      stateCopy.textContent = `${data.guide?.title || 'Guide'} returned to the draft queue.`;
+      stateCopy.textContent = data.recoveryMode === 'saved-r2-copy'
+        ? `${data.guide?.title || 'Guide'} was restored from its permanent R2 copy without using Whop.`
+        : `${data.guide?.title || 'Guide'} was fetched again from Whop and returned to the draft queue.`;
       stateCopy.dataset.state = 'ok';
       toggle.textContent = panel.dataset.collapsed === 'true' ? `Show removed imports${total ? ` (${total})` : ''}` : 'Collapse removed imports';
       clearAll.hidden = total === 0;
       root.dispatchEvent(new CustomEvent('sniperplug:recovery-complete', { detail: { guide: data.guide } }));
     } catch (error) {
+      showSourceFailure(article, button, error);
       stateCopy.textContent = error.message;
       stateCopy.dataset.state = 'error';
     } finally {
       pending.delete(guideId);
       delete article.dataset.busy;
-      setButton(button, false);
+      if (!button.disabled || button.getAttribute('aria-busy') === 'true') setButton(button, false);
     }
   }
 
