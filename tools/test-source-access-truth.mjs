@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import '../assets/js/control-center-source-access.js';
 
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const middleware = readFileSync(join(root, 'functions/_middleware.js'), 'utf8');
+const runtime = readFileSync(join(root, 'assets/js/control-center-source-access.js'), 'utf8');
 const truth = globalThis.SniperPlugSourceAccessTruth;
 assert.ok(truth?.summarize, 'The source-access truth helper was not exposed for executable validation.');
+assert.ok(middleware.includes('control-center-source-access.js?v=20260731.1'), 'The cache-safe source-access runtime is not injected into the production Control Center HTML.');
+assert.ok(middleware.includes("html.replace('</head>'"), 'The source-access runtime is not inserted before the existing deferred Control Center scripts.');
+assert.ok(middleware.includes("pathname === '/control-center' || pathname === '/control-center/'"), 'Both canonical Control Center paths are not covered by the runtime injection.');
+assert.ok(runtime.includes("url.pathname === '/api/discover'"), 'The browser does not capture the real live Whop discovery response.');
+assert.ok(runtime.includes("action === 'dashboard'"), 'The browser does not capture the saved source-decision dashboard response.');
+assert.ok(runtime.includes('MutationObserver(scheduleRender)'), 'Later legacy summary renders can still overwrite the current-access truth.');
+assert.ok(runtime.includes('inaccessible sources cannot be scanned or imported'), 'The UI does not explain the security meaning of inactive source history.');
 
 const previousApprovals = Array.from({ length: 34 }, (_, index) => ({
   experienceId: `exp_old_${index}`,
@@ -45,3 +58,4 @@ console.log('\nSOURCE ACCESS TRUTH TEST PASSED\n');
 console.log('✓ Saved approval history is separate from current readable Whop access.');
 console.log('✓ Lost memberships produce zero currently accessible approvals without deleting history.');
 console.log('✓ Built-in placeholders and duplicate rows cannot inflate saved-source totals.');
+console.log('✓ The production Control Center injects the cache-safe truth runtime before legacy scripts.');
