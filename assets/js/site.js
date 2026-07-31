@@ -1,4 +1,34 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const nav = document.querySelector('.nav');
+  const ownerLink = nav?.querySelector('a[href="/control-center/"]');
+  const mobileNavigation = window.matchMedia('(max-width: 620px)');
+  const pinnedProperties = ['position', 'left', 'z-index', 'background', 'color', 'box-shadow'];
+
+  const syncOwnerAccess = () => {
+    if (!nav || !ownerLink) return;
+
+    if (mobileNavigation.matches) {
+      ownerLink.dataset.mobilePinned = 'true';
+      ownerLink.style.position = 'sticky';
+      ownerLink.style.left = '0';
+      ownerLink.style.zIndex = '2';
+      ownerLink.style.background = 'var(--brand)';
+      ownerLink.style.color = '#06100a';
+      ownerLink.style.boxShadow = '10px 0 18px rgba(11,15,23,.95)';
+      return;
+    }
+
+    delete ownerLink.dataset.mobilePinned;
+    for (const property of pinnedProperties) ownerLink.style.removeProperty(property);
+  };
+
+  syncOwnerAccess();
+  if (typeof mobileNavigation.addEventListener === 'function') {
+    mobileNavigation.addEventListener('change', syncOwnerAccess);
+  } else if (typeof mobileNavigation.addListener === 'function') {
+    mobileNavigation.addListener(syncOwnerAccess);
+  }
+
   const cards = [...document.querySelectorAll('.deal-card')];
   const search = document.querySelector('[data-deal-search]');
   const store = document.querySelector('[data-store-filter]');
