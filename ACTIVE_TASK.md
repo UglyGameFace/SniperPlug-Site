@@ -33,9 +33,33 @@ Active. No merge or completion claim until the real authenticated workflow passe
 - Require an owner session before reading guide lists, guide details, copied media, or course videos.
 - Deny customer and customer-pending importer sessions from the owner guide library.
 - Remove guide URLs from public navigation and the sitemap.
-- Force guide pages and media to `private, no-store` with `noindex, nofollow, noarchive` at both route and middleware layers.
+- Force guide pages and media to `private, no-store` with `noindex, nofollow,noarchive` at route, middleware, static-header, and crawler-policy layers.
 - Keep internal `published` lifecycle state for review/recovery compatibility while explaining in the Control Center that it means available only inside the private owner library.
+- Preserve authenticated internal media caching for the hard-free R2 budget while ensuring authentication runs before cache lookup and browser responses never expose public cache headers.
 - Add executable owner/customer/anonymous session tests and permanent source audits.
+
+## Private-guide implementation record
+- Added one shared owner gate backed by the existing Control Center cookie and password endpoint.
+- Gated guide index/detail reads before D1 access.
+- Gated copied R2 media and Whop/Mux course-video routes before cache or origin access.
+- Removed public guide links from the homepage, browser navigation injection, sitemap, and search metadata.
+- Added no-store/noindex defenses in route responses, middleware, `_headers`, and `robots.txt`.
+- Updated Control Center language so guide publishing cannot be mistaken for public website publication.
+- Added permanent auth/isolation audits and updated the media free-tier regression test for authenticated cache behavior.
+
+## Validation completed for the private-guide subtask
+- Full Node 22 `npm run build` and regression suite passed on the final cleaned branch head.
+- Anonymous, owner, and customer-session authorization tests passed.
+- Existing Whop discovery, import, recovery, concurrency, versioning, media-limit, course-video, and paid-access regressions passed.
+- A temporary GitHub Actions smoke test ran against the deployed Cloudflare branch preview and passed: anonymous guide pages returned the lock page, copied media and course videos returned 401, the homepage exposed no guide link, and the sitemap contained no guide URLs.
+- The temporary smoke-test workflow was removed after validation.
+- Cloudflare Pages successfully deployed the cleaned branch head.
+- Pull request conflict inspection reports the branch mergeable and based directly on current `main` with no behind commits at the last comparison.
+
+## Remaining blocker before merge
+- Run the real authenticated owner workflow on the Cloudflare preview with the actual Control Center password and live Whop data.
+- Complete Course discovery → exact lesson import → draft/video open → reject → restore and rejected re-import → owner-library publish.
+- Repeat the interaction flow in Chrome and Samsung Internet and confirm immediate feedback with no duplicate operation.
 
 ## Audit and repair order
 1. Runtime/deployment configuration, OAuth requirements, D1/R2 bindings, routes, and migrations.
