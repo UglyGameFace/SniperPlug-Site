@@ -14,6 +14,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  host-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record production DNS and response headers
+        run: |
+          set -euo pipefail
+          echo '=== DNS A ==='
+          dig +short A sniperplug.com || true
+          echo '=== DNS AAAA ==='
+          dig +short AAAA sniperplug.com || true
+          echo '=== DNS CNAME ==='
+          dig +short CNAME sniperplug.com || true
+          echo '=== HTTPS response chain ==='
+          curl --silent --show-error --location --head --max-time 30 \
+            --header 'Cache-Control: no-cache, no-store' \
+            "https://sniperplug.com/?production-host-diagnostic=${GITHUB_SHA}"
+
   production-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 12
