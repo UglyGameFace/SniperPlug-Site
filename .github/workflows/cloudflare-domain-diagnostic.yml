@@ -1,0 +1,101 @@
+name: Cloudflare domain diagnostic
+
+on:
+  push:
+    branches: [fix/custom-domain-pages-routing]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: cloudflare-domain-diagnostic
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ACCOUNT_ID: e5e10cf61310838dddfe30ce86dcff06
+      PROJECT_NAME: sniperplug-site
+      DOMAIN_NAME: sniperplug.com
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Inspect Pages custom domain and DNS routing
+        run: |
+          set -Eeuo pipefail
+
+          result_state='failure'
+          result_description='Cloudflare custom-domain diagnostic failed'
+          post_status() {
+            payload="$(jq -nc \
+              --arg state "$result_state" \
+              --arg context 'diagnostic/cloudflare-domain' \
+              --arg description "$result_description" \
+              --arg target_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+            curl --fail --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+              --data "$payload" >/dev/null || true
+          }
+          result_state='pending'
+          result_description='Inspecting Cloudflare Pages domain binding'
+          post_status
+          result_state='failure'
+          result_description='Cloudflare custom-domain diagnostic failed'
+          trap post_status EXIT
+
+          token="${CLOUDFLARE_API_TOKEN:-${CF_API_TOKEN:-}}"
+          if [ -z "$token" ]; then
+            result_description='No Cloudflare API token is available in GitHub secrets'
+            echo "$result_description" >&2
+            exit 2
+          fi
+
+          cf_get() {
+            curl --fail --silent --show-error \
+              --header "Authorization: Bearer ${token}" \
+              --header 'Content-Type: application/json' \
+              "https://api.cloudflare.com/client/v4$1"
+          }
+
+          echo '=== Pages project ==='
+          project="$(cf_get "/accounts/${ACCOUNT_ID}/pages/projects/${PROJECT_NAME}")"
+          jq '{success,errors,result:{name:.result.name,subdomain:.result.subdomain,production_branch:.result.production_branch,domains:.result.domains,canonical_deployment_url:.result.canonical_deployment.url}}' <<<"$project"
+          test "$(jq -r '.success' <<<"$project")" = 'true'
+
+          echo '=== Pages custom domains ==='
+          domains="$(cf_get "/accounts/${ACCOUNT_ID}/pages/projects/${PROJECT_NAME}/domains")"
+          jq '{success,errors,result:[.result[]|{name,status,zone_tag,validation_data,verification_data}]}' <<<"$domains"
+          test "$(jq -r '.success' <<<"$domains")" = 'true'
+
+          domain_match="$(jq --arg domain "$DOMAIN_NAME" '[.result[] | select(.name == $domain)] | length' <<<"$domains")"
+          if [ "$domain_match" -eq 0 ]; then
+            result_description='sniperplug.com is not attached to the Cloudflare Pages project'
+            echo "$result_description" >&2
+            exit 3
+          fi
+
+          domain_status="$(jq -r --arg domain "$DOMAIN_NAME" '.result[] | select(.name == $domain) | .status' <<<"$domains")"
+          if [ "$domain_status" != 'active' ]; then
+            result_description="Pages custom domain is ${domain_status}, not active"
+            echo "$result_description" >&2
+            exit 4
+          fi
+
+          zone_id="$(jq -r --arg domain "$DOMAIN_NAME" '.result[] | select(.name == $domain) | .zone_tag // empty' <<<"$domains")"
+          if [ -n "$zone_id" ]; then
+            echo '=== Apex DNS records ==='
+            records="$(cf_get "/zones/${zone_id}/dns_records?name=${DOMAIN_NAME}")"
+            jq '{success,errors,result:[.result[]|{id,type,name,content,proxied,ttl,comment}]}' <<<"$records"
+          fi
+
+          result_state='success'
+          result_description='sniperplug.com is active on the Pages project'
