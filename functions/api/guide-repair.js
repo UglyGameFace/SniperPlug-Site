@@ -9,6 +9,7 @@ import {
   releaseRecoveryLease,
   renewRecoveryLease,
 } from '../_lib/recovery-leases.js';
+import { recoveryMediaState, whopRecoveryError } from '../_lib/recovery-media.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 const PAGE_SIZE = 30;
@@ -18,6 +19,10 @@ function numericId(value) {
   const id = Number.parseInt(value, 10);
   if (!Number.isFinite(id) || id <= 0) throw new HttpError(422, 'Choose a valid removed guide.');
   return id;
+}
+
+function safeJson(value, fallback = {}) {
+  try { return JSON.parse(String(value || '')); } catch { return fallback; }
 }
 
 async function rejectedImportCount(env) {
@@ -34,19 +39,20 @@ async function rejectedImports(env, offset = 0) {
   const safeOffset = Math.max(0, Number.parseInt(offset, 10) || 0);
   const rows = await db.prepare(`
     SELECT id, title, description, source_key, source_group, source_experience_id,
-           source_post_id, category_slug, updated_at
+           source_post_id, category_slug, body_markdown, attachment_json, updated_at
     FROM guides
     WHERE status = 'rejected' AND source_key IS NOT NULL AND source_experience_id IS NOT NULL
     ORDER BY updated_at DESC
     LIMIT ? OFFSET ?
   `).bind(PAGE_SIZE, safeOffset).all();
   const total = await rejectedImportCount(env);
+  const removedRows = rows.results || [];
   return {
     total,
     offset: safeOffset,
     limit: PAGE_SIZE,
-    hasMore: safeOffset + PAGE_SIZE < total,
-    removed: (rows.results || []).map((row) => ({
+    hasMore: safeOffset + removedRows.length < total,
+    removed: removedRows.map((row) => ({
       id: Number(row.id),
       title: row.title,
       description: row.description,
@@ -56,6 +62,7 @@ async function rejectedImports(env, offset = 0) {
       sourcePostId: row.source_post_id,
       category: row.category_slug,
       removedAt: row.updated_at,
+      ...recoveryMediaState(row),
     })),
   };
 }
@@ -109,6 +116,80 @@ async function discardRemoved(request, env) {
   return json({ cleared: selected.length, ...(await rejectedImports(env, 0)) });
 }
 
+async function restoreSavedCopy(env, row) {
+  const db = requireDatabase(env);
+  const now = new Date().toISOString();
+  const integrity = safeJson(row.integrity_json, {});
+  const result = await db.prepare(`
+    UPDATE guides
+    SET status = 'draft', published_at = NULL, updated_at = ?, integrity_json = ?
+    WHERE id = ? AND status = 'rejected' AND source_key = ? AND updated_at = ?
+  `).bind(
+    now,
+    JSON.stringify({
+      ...integrity,
+      restoredFromPermanentCopy: true,
+      restoredFromPermanentCopyAt: now,
+      recoveryMode: 'saved-r2-copy',
+      quarantined: false,
+      quarantineReason: null,
+      quarantinedAt: null,
+    }),
+    row.id,
+    row.source_key,
+    row.updated_at,
+  ).run();
+  if (Number(result.meta?.changes || 0) !== 1) {
+    throw new HttpError(409, 'This removed guide changed before its permanent copy could be restored. Refresh the recovery list.');
+  }
+  const guide = await adminGuide(env, row.id);
+  if (!guide || guide.status !== 'draft') throw new HttpError(409, 'The permanent copy was restored but did not return to the private draft queue.');
+  return guide;
+}
+
+async function liveExperience(request, env, admin, row) {
+  let whop;
+  try {
+    whop = await requireWhopSession(request, env, admin);
+  } catch (error) {
+    throw whopRecoveryError(error, {
+      experienceId: row.source_experience_id,
+      sourceKey: row.source_key,
+      operation: 're-import this removed guide',
+    });
+  }
+  let experience;
+  try {
+    experience = await retrieveExperience(whop, row.source_experience_id);
+  } catch (error) {
+    throw whopRecoveryError(error, {
+      experienceId: row.source_experience_id,
+      sourceKey: row.source_key,
+      operation: 're-import this removed guide',
+    });
+  }
+  return { whop, experience };
+}
+
+async function rollbackRecovery(env, lease, id, lockedRow, videoSnapshot, originalError) {
+  try {
+    await assertRecoveryLeaseOwned(env, lease);
+    const db = requireDatabase(env);
+    const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
+    if (!current || String(current.source_key || '') !== String(lockedRow.source_key || '')) {
+      throw new HttpError(409, 'The guide changed identity while recovery was running. Newer work was preserved.');
+    }
+    await restoreGuideSnapshot(env, lockedRow, { expectedUpdatedAt: current.updated_at });
+    await restoreCourseVideos(env, id, videoSnapshot);
+  } catch (rollbackError) {
+    throw new HttpError(500, 'Recovery failed and SniperPlug could not safely restore the original rejected guide and video state.', {
+      code: 'guide_recovery_rollback_failed',
+      recoveryError: String(originalError?.message || originalError),
+      rollbackError: String(rollbackError?.message || rollbackError),
+    });
+  }
+}
+
 async function repairGuide(request, env, admin) {
   requireSameOrigin(request);
   const input = await readJson(request, { maxBytes: 20_000 });
@@ -124,13 +205,27 @@ async function repairGuide(request, env, admin) {
   const lease = await acquireRecoveryLease(env, id);
   try {
     const lockedRow = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
-    if (!lockedRow || lockedRow.status !== 'rejected' || lockedRow.source_key !== row.source_key) throw new HttpError(409, 'This guide changed before recovery started. Refresh the recovery list.');
+    if (!lockedRow || lockedRow.status !== 'rejected' || lockedRow.source_key !== row.source_key) {
+      throw new HttpError(409, 'This guide changed before recovery started. Refresh the recovery list.');
+    }
 
-    const whop = await requireWhopSession(request, env, admin);
-    const experience = await retrieveExperience(whop, lockedRow.source_experience_id);
     const videoSnapshot = await snapshotCourseVideos(env, id);
     try {
       await renewRecoveryLease(env, lease);
+      const mediaTruth = recoveryMediaState(lockedRow);
+      if (mediaTruth.canRestoreSavedCopy) {
+        const guide = await restoreSavedCopy(env, lockedRow);
+        return json({
+          repaired: true,
+          action: 'restored-saved-copy',
+          recoveryMode: 'saved-r2-copy',
+          guide,
+          media: mediaTruth,
+          ...(await rejectedImports(env, 0)),
+        });
+      }
+
+      const { whop, experience } = await liveExperience(request, env, admin, lockedRow);
       const output = await importApprovedPosts(env, whop, {
         experienceId: experience.id,
         sourceKeys: [lockedRow.source_key],
@@ -141,26 +236,23 @@ async function repairGuide(request, env, admin) {
         rightsConfirmed: true,
       });
       const result = (output.results || []).find((item) => String(item.sourceKey) === String(lockedRow.source_key));
-      if (!result || !['created-draft', 'updated-draft'].includes(result.action)) throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild the draft.');
+      if (!result || !['created-draft', 'updated-draft'].includes(result.action)) {
+        throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild the draft.');
+      }
       const guideId = Number(result.guideId || id);
       if (guideId !== id) throw new HttpError(409, 'Recovery rebuilt a different guide record and was stopped.');
       const guide = await adminGuide(env, guideId);
       if (!guide || guide.status !== 'draft') throw new HttpError(409, 'The item was fetched but did not return to the private draft queue.');
-      return json({ repaired: true, action: result.action, guide, import: output, ...(await rejectedImports(env, 0)) });
+      return json({
+        repaired: true,
+        action: result.action,
+        recoveryMode: 'live-whop-reimport',
+        guide,
+        import: output,
+        ...(await rejectedImports(env, 0)),
+      });
     } catch (error) {
-      try {
-        await assertRecoveryLeaseOwned(env, lease);
-        const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
-        if (!current || String(current.source_key || '') !== String(lockedRow.source_key || '')) throw new HttpError(409, 'The guide changed identity while recovery was running. Newer work was preserved.');
-        await restoreGuideSnapshot(env, lockedRow, { expectedUpdatedAt: current.updated_at });
-        await restoreCourseVideos(env, id, videoSnapshot);
-      } catch (rollbackError) {
-        throw new HttpError(500, 'Recovery failed and SniperPlug could not safely restore the original rejected guide and video state.', {
-          code: 'guide_recovery_rollback_failed',
-          recoveryError: String(error?.message || error),
-          rollbackError: String(rollbackError?.message || rollbackError),
-        });
-      }
+      await rollbackRecovery(env, lease, id, lockedRow, videoSnapshot, error);
       throw error;
     }
   } finally {
