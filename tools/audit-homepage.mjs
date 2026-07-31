@@ -18,19 +18,21 @@ const requiredHtml = [
   'name="twitter:card"',
   'application/ld+json',
   'href="/deals/"',
-  'href="/guides/"',
   'href="/partners/"',
   'href="/about/"',
   'href="/contact/"',
   'href="/affiliate-disclosure/"',
   'href="/privacy/"',
   'href="/terms/"',
-  'rel="sponsored nofollow"',
   'assets/css/homepage.css',
 ];
 
 for (const token of requiredHtml) {
   if (!html.includes(token)) fail(`missing required homepage token: ${token}`);
+}
+
+if (html.includes('href="/guides/"')) {
+  fail('private guides are exposed in the public homepage navigation or footer');
 }
 
 const bannedCopy = [
@@ -47,7 +49,6 @@ for (const phrase of bannedCopy) {
 
 const requiredRoutes = [
   'deals/index.html',
-  'guides/index.html',
   'partners/index.html',
   'about/index.html',
   'contact/index.html',
