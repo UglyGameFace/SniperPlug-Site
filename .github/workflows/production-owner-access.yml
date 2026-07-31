@@ -42,6 +42,12 @@ jobs:
               "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
               --data "$payload" >/dev/null || true
           }
+
+          result_state='pending'
+          result_description='Waiting for SniperPlug.com production deployment'
+          post_status
+          result_state='failure'
+          result_description='Production owner access verification failed'
           trap post_status EXIT
 
           homepage=''
