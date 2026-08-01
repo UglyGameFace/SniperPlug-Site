@@ -1,67 +1,68 @@
-# SniperPlug Site v2 — Cloudflare Pages
+# SniperPlug Site — Cloudflare Pages
 
-A Cloudflare Pages affiliate/deal publisher site with private D1-backed guide publishing.
+SniperPlug is a Cloudflare Pages retail deal-discovery and affiliate publisher site with an owner-only D1-backed guide/importer workflow.
 
-## What is included
+## Public site
 
-- Homepage with partner-safe positioning
-- `/deals/` deal board with search/store/category filters
-- Store pages for Walmart, Lowe's, Best Buy, Home Depot, and Amazon
-- Individual deal detail pages under `/deal/<deal-id>/`
-- Affiliate/tracked redirects under `/go/<deal-id>` using Cloudflare Pages Functions
-- Public reviewed guides at `/guides/` and `/guides/<slug>/`
-- Private guide Control Center at `/control-center/`
-- Authorized Whop forum-post importer with source/post approval and draft-first publishing
-- Partner, contact, privacy, terms, and affiliate disclosure pages
-- Security headers, robots rules, and a guide-aware dynamic sitemap
-- Seed deal data in `/data/deals.json`
+- Partner-ready homepage with independent-retailer and affiliate disclosures
+- `/deals/` publishing standard and current verified-board status
+- Retailer coverage pages for Walmart, Lowe's, Best Buy, Home Depot, and Amazon
+- Exact-product-only click-out policy
+- About, partner, contact, privacy, terms, and affiliate disclosure pages
+- Dynamic sitemap and security headers
+
+Unverified demonstration prices and generic retailer-search links are intentionally absent. A public deal record should not be created until the exact product, destination, offer evidence, and relevant context are available.
+
+## Private owner workflow
+
+- Existing owner Control Center at `/control-center/`
+- Owner-only guides at `/guides/`
+- Authorized Whop discovery/import, source decisions, draft review, media handling, recovery, and publishing
+- D1-backed sessions, policy state, drafts, jobs, and guide records
+- Private R2 media delivery with owner authorization
+
+Imported private content is not committed to this repository and is not included in the public sitemap.
 
 ## Cloudflare Pages deployment
-
-Use these settings:
 
 - Framework preset: None / Static HTML
 - Build command: `npm run build`
 - Build output directory: `.`
 - Root directory: `/`
 
-The build command runs the importer audit. Cloudflare Pages Functions serve the Control Center API, public guide pages, dynamic sitemap, and affiliate redirects.
+Cloudflare Pages Functions serve private application routes, the dynamic sitemap, retired-link redirects, and future exact deal click-outs.
 
-## D1 guide storage
+## Required bindings and secrets
 
-Create and bind a Cloudflare D1 database as `SNIPERPLUG_DB`, then apply:
+The project uses:
 
-```text
-migrations/0001_whop_guides.sql
-```
+- `SNIPERPLUG_DB` — Cloudflare D1
+- `SNIPERPLUG_MEDIA` — Cloudflare R2
+- `SNIPERPLUG_ADMIN_PASSWORD`
+- `SNIPERPLUG_SESSION_SECRET`
+- `WHOP_TOKEN_SECRET`
+- Whop OAuth configuration documented in `docs/WHOP_IMPORTER.md`
 
-D1 privately stores OAuth sessions, exact source and post decisions, imported drafts, owner-managed guide categories, and published guide records. Imported Whop content is never committed to this public repository.
+Apply the migrations in order and keep every private value in Cloudflare Preview and Production secrets rather than source control.
 
-See `docs/WHOP_IMPORTER.md` and `.dev.vars.example` for the required private variables and owner workflow.
+## Publishing a public deal
 
-## Important before public launch
+A future deal pipeline must fail closed unless it has:
 
-The included deal records are seed/example content. Replace each deal in `/data/deals.json`, individual HTML pages, and `functions/go/[id].js` with live verified SniperPlug deal data before sending real traffic.
+1. Exact retailer and product/SKU identity
+2. Exact official product page or approved affiliate deep link
+3. Product-defining variant information
+4. Current visible offer evidence
+5. Seller, condition, fulfillment, location, coupon, reward, or eligibility context when relevant
+6. Verification timestamp
+7. Clear final-price and availability disclaimer
 
-For affiliate links, replace each URL in `functions/go/[id].js` with the approved affiliate/tracking URL from Walmart, Lowe's, Best Buy, Home Depot, Amazon, FlexOffers, Impact, or another approved network.
+Do not publish a generic retailer search page as an exact deal destination.
 
-## Email addresses used
+## Email addresses
 
-- Support: `support@sniperplug.com`
-- Partnerships: `partners@sniperplug.com`
-
-## Editing store/deal pages
-
-The deal board remains static:
-
-1. Copy an existing folder in `/deal/`.
-2. Rename it to the new deal ID.
-3. Edit the title, price, was price, savings, variant, status, and retailer notes.
-4. Add a card to `/deals/index.html` and the matching store page.
-5. Add the redirect target to `functions/go/[id].js`.
-6. Update `/data/deals.json`.
-
-The dynamic sitemap automatically includes every published D1 guide.
+- Support and corrections: `support@sniperplug.com`
+- Retailer, API, and affiliate partnerships: `partners@sniperplug.com`
 
 ## Validation
 
@@ -69,4 +70,4 @@ The dynamic sitemap automatically includes every published D1 guide.
 npm run build
 ```
 
-This checks JavaScript syntax, Unicode/Markdown round trips, unsafe-content rejection, source and post decision enforcement, OAuth security wiring, D1-only draft storage, attachment review gates, and published-only public queries.
+The Node 22 build runs public affiliate-review audits plus the existing private-guide, Whop discovery/import, security, concurrency, recovery, media, and resilience regressions.
