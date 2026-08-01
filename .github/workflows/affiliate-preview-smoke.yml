@@ -14,7 +14,6 @@ on:
       - 'affiliate-disclosure/**'
       - 'assets/css/**'
       - 'assets/js/site.js'
-      - 'assets/sniperplug-logo.svg'
       - 'data/deals.json'
       - 'functions/deal/**'
       - 'functions/go/**'
@@ -49,20 +48,26 @@ jobs:
 
           ready=0
           for attempt in $(seq 1 36); do
-            code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${base}/deals/?preview=${COMMIT_SHA}-${attempt}" || true)"
+            nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
+            code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${base}/deals/?preview=${nonce}" || true)"
+            runtime_code="$(curl --silent --show-error --max-time 25 --output site-runtime.js --write-out '%{http_code}' "${base}/assets/js/site.js?preview=${nonce}" || true)"
             if [ "$code" = '200' ] \
+              && [ "$runtime_code" = '200' ] \
               && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
-              && grep -Fq '/assets/css/homepage.css' deals-ready.html; then
+              && grep -Fq '/assets/css/homepage.css' deals-ready.html \
+              && grep -Fq 'data:image/png;base64,' site-runtime.js \
+              && grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: preview returned HTTP ${code}; waiting for the themed deployment."
+            echo "Attempt ${attempt}: page=${code} runtime=${runtime_code}; waiting for the exact-logo preview."
             sleep 20
           done
 
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Cloudflare branch preview did not deploy the themed affiliate-ready deal board before timeout.'
+            echo '::error::Cloudflare branch preview did not deploy the exact-logo affiliate-ready build before timeout.'
             sed -n '1,120p' deals-ready.html 2>/dev/null || true
+            sed -n '1,80p' site-runtime.js 2>/dev/null || true
             exit 1
           fi
 
@@ -106,15 +111,30 @@ jobs:
           grep -Fq '.capability-card{' shared-theme.css
           grep -Fq '@media(max-width:700px)' shared-theme.css
 
-          curl --silent --show-error --max-time 25 "${base}/assets/sniperplug-logo.svg?preview=${COMMIT_SHA}" > sniperplug-logo.svg
-          grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg
-          grep -Fq '>SP</text>' sniperplug-logo.svg
-          grep -Fq '<linearGradient id="g"' sniperplug-logo.svg
-
-          curl --silent --show-error --max-time 25 "${base}/assets/js/site.js?preview=${COMMIT_SHA}" > site-runtime.js
-          grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js
           grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
+          grep -Fq "logo.style.objectFit = 'contain'" site-runtime.js
+          grep -Fq "logo.style.aspectRatio = '1 / 1'" site-runtime.js
+          grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js
           grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
+
+          python3 - <<'PY'
+          import base64, hashlib, re, struct
+          runtime = open('site-runtime.js', encoding='utf-8').read()
+          match = re.search(r"data:image/png;base64,([A-Za-z0-9+/='\",\s]+?)',\s*\]", runtime, re.S)
+          if not match:
+              raise SystemExit('embedded exact PNG not found')
+          encoded = re.sub(r"['\",\s]", '', match.group(1))
+          image = base64.b64decode(encoded, validate=True)
+          if image[:8] != b'\x89PNG\r\n\x1a\n':
+              raise SystemExit('embedded logo is not PNG')
+          width, height = struct.unpack('>II', image[16:24])
+          if (width, height) != (96, 96):
+              raise SystemExit(f'embedded logo is {width}x{height}, expected 96x96')
+          digest = hashlib.sha256(image).hexdigest()
+          expected = '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86'
+          if digest != expected:
+              raise SystemExit(f'embedded logo checksum changed: {digest}')
+          PY
 
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${base}/deal/walmart-shark-navigator-vacuum/?preview=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
@@ -125,4 +145,4 @@ jobs:
           grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
           ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
 
-          echo 'Affiliate-ready Cloudflare preview, public theme, and shared logo passed.'
+          echo 'Affiliate-ready Cloudflare preview, public theme, and exact owner-approved logo passed.'
