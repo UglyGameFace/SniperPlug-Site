@@ -47,6 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           branch_alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
+          branch_alias="${branch_alias:0:28}"
           base="https://${branch_alias}.sniperplug.pages.dev"
           echo "Checking ${base}"
 
@@ -86,16 +87,27 @@ jobs:
             sed -n '1,80p' site-shell.css 2>/dev/null || true
             exit 1
           fi
+          echo 'Preview deployment is current. Beginning route-surface checks.'
 
           banned='Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00'
           check_page() {
             path="$1"
             marker="$2"
             output="$3"
+            echo "Checking page ${path}"
             code="$(curl --silent --show-error --location --max-time 25 --output "$output" --write-out '%{http_code}' "${base}${path}?preview=${COMMIT_SHA}" || true)"
-            test "$code" = '200'
-            grep -Fiq "$marker" "$output"
-            ! grep -Eiq "$banned" "$output"
+            if [ "$code" != '200' ]; then
+              echo "::error::${path} returned HTTP ${code}."
+              return 1
+            fi
+            if ! grep -Fiq "$marker" "$output"; then
+              echo "::error::${path} is missing marker: ${marker}"
+              return 1
+            fi
+            if grep -Eiq "$banned" "$output"; then
+              echo "::error::${path} contains retired or placeholder content."
+              return 1
+            fi
           }
 
           check_shell_page() {
@@ -103,10 +115,10 @@ jobs:
             marker="$2"
             output="$3"
             check_page "$path" "$marker" "$output"
-            grep -Eq '<link rel="stylesheet" href="/assets/css/styles.css([^" ]*)?">' "$output"
-            grep -Fq 'class="site-header"' "$output"
-            grep -Fq 'class="brand-mark"' "$output"
-            grep -Fq 'class="site-footer"' "$output"
+            grep -Eq '<link rel="stylesheet" href="/assets/css/styles.css([^" ]*)?">' "$output" || { echo "::error::${path} is missing the visual aggregator."; return 1; }
+            grep -Fq 'class="site-header"' "$output" || { echo "::error::${path} is missing the shared header."; return 1; }
+            grep -Fq 'class="brand-mark"' "$output" || { echo "::error::${path} is missing the shared brand mark."; return 1; }
+            grep -Fq 'class="site-footer"' "$output" || { echo "::error::${path} is missing the shared footer."; return 1; }
           }
 
           check_marketing_page() {
@@ -114,10 +126,11 @@ jobs:
             marker="$2"
             output="$3"
             check_shell_page "$path" "$marker" "$output"
-            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output"
-            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1'
+            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output" || { echo "::error::${path} is missing marketing components."; return 1; }
+            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1' || { echo "::error::${path} loads marketing components more than once."; return 1; }
           }
 
+          echo 'Checking marketing routes.'
           check_marketing_page '/' 'No exact destination means no public deal card.' homepage.html
           check_marketing_page '/deals/' 'No verified public deal cards are active.' deals.html
           check_marketing_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
@@ -128,18 +141,22 @@ jobs:
           check_marketing_page '/about/' 'Deal discovery with exact-offer discipline.' about.html
           check_marketing_page '/partners/' 'Exact deep links' partners.html
           check_marketing_page '/contact/' 'Reach SniperPlug directly.' contact.html
+
+          echo 'Checking legal routes.'
           check_shell_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
           check_shell_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
           check_shell_page '/terms/' 'Authorized private tools' terms.html
 
+          echo 'Checking the unified 404 route.'
           missing_code="$(curl --silent --show-error --max-time 25 --output missing.html --write-out '%{http_code}' "${base}/definitely-not-a-real-sniperplug-route-${COMMIT_SHA}" || true)"
-          test "$missing_code" = '404'
-          grep -Fq 'That page slipped away.' missing.html
-          grep -Fq 'class="site-header"' missing.html
-          grep -Fq 'class="site-footer"' missing.html
-          grep -Fq 'class="error-card"' missing.html
+          test "$missing_code" = '404' || { echo "::error::Missing route returned HTTP ${missing_code}, expected 404."; exit 1; }
+          grep -Fq 'That page slipped away.' missing.html || { echo '::error::404 page is missing its user-facing message.'; exit 1; }
+          grep -Fq 'class="site-header"' missing.html || { echo '::error::404 page is missing the shared header.'; exit 1; }
+          grep -Fq 'class="site-footer"' missing.html || { echo '::error::404 page is missing the shared footer.'; exit 1; }
+          grep -Fq 'class="error-card"' missing.html || { echo '::error::404 page is missing the visual error card.'; exit 1; }
 
-          test "$(grep -c '^@import' styles.css)" = '2'
+          echo 'Checking ordered visual layers.'
+          test "$(grep -c '^@import' styles.css)" = '2' || { echo '::error::Visual aggregator import count changed.'; exit 1; }
           grep -Fq "@import url('/assets/css/site-base.css');" styles.css
           grep -Fq "@import url('/assets/css/site-shell.css');" styles.css
           grep -Fq -- '--brand:#68e384' site-base.css
@@ -152,6 +169,7 @@ jobs:
           grep -Fq '.error-shell{' site-shell.css
           grep -Fq '@media(max-width:700px)' site-shell.css
 
+          echo 'Checking marketing component layer.'
           curl --silent --show-error --max-time 25 "${base}/assets/css/homepage.css?preview=${COMMIT_SHA}" > marketing-theme.css
           grep -Fq '.section-soft{' marketing-theme.css
           grep -Fq '.capability-grid{' marketing-theme.css
@@ -159,6 +177,7 @@ jobs:
           grep -Fq '@media(max-width:700px)' marketing-theme.css
           ! grep -Fq 'sniperplug-logo-exact.png' marketing-theme.css
 
+          echo 'Checking exact logo delivery and runtime behavior.'
           grep -Fiq 'cache-control: public, max-age=0, must-revalidate' exact-logo.headers
           grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
           grep -Fq "logo.style.objectFit = 'contain'" site-runtime.js
@@ -188,11 +207,13 @@ jobs:
               raise SystemExit('runtime and static exact-logo bytes differ')
           PY
 
+          echo 'Checking retired deal behavior.'
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${base}/deal/walmart-shark-navigator-vacuum/?preview=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
           grep -Fq 'Only confirmed offers belong here.' retired.html
           ! grep -Eiq 'Shark Navigator|\$89\.00|Launch example|sample item' retired.html
 
+          echo 'Checking sitemap safety.'
           curl --silent --show-error --max-time 25 "${base}/sitemap.xml?preview=${COMMIT_SHA}" > sitemap.xml
           grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
           ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
