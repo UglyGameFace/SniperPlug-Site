@@ -14,6 +14,14 @@
 /assets/sniperplug-logo-exact.png
   Cache-Control: public, max-age=0, must-revalidate
 
+/deal/*
+  Cache-Control: private, no-store, max-age=0
+  X-Robots-Tag: noindex, nofollow, noarchive
+
+/go/*
+  Cache-Control: private, no-store, max-age=0
+  X-Robots-Tag: noindex, nofollow, noarchive
+
 /control-center/*
   Cache-Control: private, no-store, max-age=0
   X-Robots-Tag: noindex, nofollow, noarchive
