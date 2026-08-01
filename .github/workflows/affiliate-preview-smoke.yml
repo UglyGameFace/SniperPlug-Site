@@ -37,6 +37,7 @@ jobs:
         run: |
           set -euo pipefail
           alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
+          alias="${alias:0:28}"
           base="https://${alias}.sniperplug.pages.dev"
           echo "Checking ${base}"
 
