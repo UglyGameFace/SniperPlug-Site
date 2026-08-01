@@ -4,49 +4,46 @@
 Make the public `SniperPlug.com` website credible, visually consistent, and complete for a Newegg affiliate-program review.
 
 ## Status
-Merged and production-validated at the code, deployment, stylesheet, and responsive-rule levels. The owner’s final Samsung Internet refresh is the only remaining acceptance item before the Newegg application task can be closed without reservation.
+Active. The affiliate-content and shared-theme work is merged and production-validated. The owner accepted the corrected Deals-page theme and requested the newly approved SniperPlug logo in the shared brand badge. The logo implementation is validated on a branch and still requires merge, production validation, and one final Samsung Internet check.
 
-## Confirmed root cause
-- Deals, retailer coverage, About, Partners, and Contact rendered shared `section-soft`, `section-kicker`, `capability-grid`, and `capability-card` classes.
-- Those classes are defined in `assets/css/homepage.css`, but the affected pages loaded only `assets/css/styles.css`.
-- The browser therefore displayed plain stacked text on a mostly black background instead of SniperPlug’s green/blue gradient cards, icons, and responsive grids.
-- Earlier affiliate tests validated content and deployment but did not validate the stylesheet execution path required by the markup.
+## Confirmed root causes
+- Deals, retailer coverage, About, Partners, and Contact used shared homepage component classes without loading the stylesheet that defined them. PR #7 repaired that execution path.
+- Headers and footers still rendered the temporary `<span class="brand-mark">SP</span>` badge even after a proper SniperPlug plug-mark logo was approved.
+- Copying custom image markup into every page would create duplicate branding implementations and future drift.
 
 ## Implemented changes
-- PR #7 loaded the shared visual stylesheet after the base stylesheet on:
-  - Deals;
-  - Walmart, Lowe’s, Best Buy, Home Depot, and Amazon coverage;
-  - About;
-  - Partners;
-  - Contact.
-- Preserved the base-first cascade so color variables, spacing, and typography exist before shared component rules.
-- Added `tools/audit-public-theme.mjs` to verify stylesheet presence, order, uniqueness, base theme variables, backgrounds, card rules, icons, grids, and mobile behavior.
-- Added that audit to every Node 22 build.
-- Strengthened Cloudflare preview and production workflows to inspect every affected deployed page, the stylesheet links, the live shared CSS asset, responsive rules, affiliate safeguards, retired URLs, and sitemap output.
+### Public theme
+- PR #7 loaded the shared green/blue visual layer on Deals, Walmart, Lowe’s, Best Buy, Home Depot, Amazon, About, Partners, and Contact.
+- Added permanent static, Cloudflare preview, and production checks for shared cards, gradients, grids, and responsive rules.
+
+### Shared SniperPlug logo on `feat/sniperplug-site-logo`
+- Added `assets/sniperplug-logo.svg`, a compact scalable green/cyan SP monogram with an electrical plug on the existing dark rounded-square treatment.
+- Reused the existing shared `assets/js/site.js` path instead of editing every header and footer separately.
+- Every `.brand-mark` keeps its text fallback, then receives the shared logo after DOM readiness.
+- Preserved the existing 42×42 footprint, rounded shape, mobile owner-link behavior, navigation spacing, and accessible brand-link label.
+- Added build checks for the logo asset and runtime integration.
+- Extended Cloudflare preview and production checks to retrieve and inspect the deployed SVG and shared runtime.
 
 ## Validation completed
 - PR #7 was squash-merged as `2152b001f34322b5d31fd8f38672207a6e25d352`.
-- Full Node 22 build passed, including affiliate, private-guide, Whop, security, media, recovery, concurrency, and resilience regressions.
-- The public-theme regression audit passed.
-- Cloudflare branch preview passed at `fix-public-theme-consistency.sniperplug.pages.dev`.
-- Preview checks confirmed all affected pages load the base and shared stylesheets exactly once and in the correct order.
-- Preview checks confirmed the deployed CSS contains `section-soft`, capability grid/card, icon, and mobile breakpoint rules.
-- Raw Pages production serves the themed Deals, retailer, About, Partners, and Contact pages.
-- The first production smoke ran during deployment propagation and failed; the unchanged rerun passed after propagation.
-- The successful production rerun checked all affected pages, the live CSS asset, retired URLs, sitemap output, and custom-domain safety.
-- The custom domain returned Cloudflare’s bot challenge to automation rather than stale content; the owner’s normal browser remains the authoritative final visual check.
+- PR #7 Node 22, branch preview, raw production, responsive-theme, private-guide, Whop, security, recovery, media, concurrency, and affiliate checks passed.
+- Logo branch full Node 22 suite passed at `80df2493ab032168883c11dff2b572284b7699fc`.
+- Logo branch Cloudflare preview passed at `feat-sniperplug-site-logo.sniperplug.pages.dev`.
+- The preview confirmed the SVG, gradient monogram, shared `site.js` logo swap, affiliate pages, retailer pages, retired URLs, sitemap, and existing responsive theme.
+- The logo branch is based directly on current `main`; no competing implementation or unrelated feature change was added.
 - Vercel free-plan build-limit failures remain unrelated; Cloudflare Pages is the production runtime.
 
 ## Required acceptance
 - [x] No demo/sample/launch-placeholder content or unverified public prices remain.
 - [x] Exact-destination, legal, partner, private-guide, sitemap, and production safety requirements pass.
-- [x] Root cause of the plain Deals-page rendering was identified in the real CSS execution path.
-- [x] All affected public pages load the shared green/blue visual layer after the base theme.
-- [x] Permanent static, preview, and production theme regressions are included.
-- [x] Full Node 22 build and all existing regressions pass.
-- [x] Cloudflare branch preview serves the corrected theme.
-- [x] PR #7 is merged and raw production is validated.
-- [ ] Owner confirms the production Deals page visually matches the homepage in Samsung Internet, including card backgrounds, green/blue accents, responsive spacing, and footer consistency.
+- [x] Shared public theme matches the green/blue SniperPlug homepage design.
+- [x] A single reusable logo asset exists.
+- [x] Existing shared brand locations use one runtime integration rather than duplicate page-specific patches.
+- [x] Logo asset and runtime have permanent Node 22 and Cloudflare preview checks.
+- [x] Logo branch full regression suite passes.
+- [ ] PR #8 is merged.
+- [ ] Main production serves the new logo asset and runtime.
+- [ ] Owner confirms the header logo looks correct in Samsung Internet without navigation overflow.
 
 ## Backlog after acceptance
 - Submit the Newegg affiliate application through its Rakuten partnership flow.
