@@ -46,9 +46,8 @@ jobs:
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
-          alias="${alias:0:28}"
-          base="https://${alias}.sniperplug.pages.dev"
+          branch_alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
+          base="https://${branch_alias}.sniperplug.pages.dev"
           echo "Checking ${base}"
 
           ready=0
@@ -60,6 +59,7 @@ jobs:
             foundation_code="$(curl --silent --show-error --max-time 25 --output site-base.css --write-out '%{http_code}' "${base}/assets/css/site-base.css?preview=${nonce}" || true)"
             shell_code="$(curl --silent --show-error --max-time 25 --output site-shell.css --write-out '%{http_code}' "${base}/assets/css/site-shell.css?preview=${nonce}" || true)"
             logo_code="$(curl --silent --show-error --max-time 25 --dump-header exact-logo.headers --output exact-logo.png --write-out '%{http_code}' "${base}/assets/sniperplug-logo-exact.png?preview=${nonce}" || true)"
+            echo "Attempt ${attempt}: page=${page_code} runtime=${runtime_code} aggregator=${aggregator_code} base=${foundation_code} shell=${shell_code} logo=${logo_code}"
             if [ "$page_code" = '200' ] \
               && [ "$runtime_code" = '200' ] \
               && [ "$aggregator_code" = '200' ] \
@@ -76,7 +76,6 @@ jobs:
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: page=${page_code} runtime=${runtime_code} aggregator=${aggregator_code} base=${foundation_code} shell=${shell_code} logo=${logo_code}; waiting for the unified preview."
             sleep 20
           done
 
