@@ -31,17 +31,20 @@ jobs:
           ready=0
           for attempt in $(seq 1 36); do
             nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
-            code="$(curl --silent --show-error --max-time 25 --output homepage.html --write-out '%{http_code}' "${pages}/?production=${nonce}" || true)"
-            if [ "$code" = '200' ] && grep -Fq 'No exact destination means no public deal card.' homepage.html && ! grep -Eiq "$banned" homepage.html; then
+            code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${pages}/deals/?production=${nonce}" || true)"
+            if [ "$code" = '200' ] \
+              && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
+              && grep -Fq '/assets/css/homepage.css' deals-ready.html \
+              && ! grep -Eiq "$banned" deals-ready.html; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: Pages production HTTP ${code}; waiting for the main deployment."
+            echo "Attempt ${attempt}: Pages production HTTP ${code}; waiting for the themed main deployment."
             sleep 20
           done
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Pages production never served the affiliate-ready homepage.'
-            sed -n '1,120p' homepage.html 2>/dev/null || true
+            echo '::error::Pages production never served the themed affiliate-ready deal board.'
+            sed -n '1,140p' deals-ready.html 2>/dev/null || true
             exit 1
           fi
 
@@ -55,13 +58,35 @@ jobs:
             ! grep -Eiq "$banned" "$output"
           }
 
-          check_page '/deals/' 'No verified public deal cards are active.' deals.html
-          check_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
-          check_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
-          check_page '/partners/' 'Exact deep links' partners.html
+          check_themed_page() {
+            path="$1"
+            marker="$2"
+            output="$3"
+            check_page "$path" "$marker" "$output"
+            grep -Fq '<link rel="stylesheet" href="/assets/css/styles.css">' "$output"
+            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output"
+            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1'
+          }
+
+          check_page '/' 'No exact destination means no public deal card.' homepage.html
+          check_themed_page '/deals/' 'No verified public deal cards are active.' deals.html
+          check_themed_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
+          check_themed_page '/deals/lowes/' 'No verified Lowe’s deal cards are active.' lowes.html
+          check_themed_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
+          check_themed_page '/deals/home-depot/' 'No verified Home Depot deal cards are active.' homedepot.html
+          check_themed_page '/deals/amazon/' 'No verified Amazon deal cards are active.' amazon.html
+          check_themed_page '/about/' 'Deal discovery with exact-offer discipline.' about.html
+          check_themed_page '/partners/' 'Exact deep links' partners.html
+          check_themed_page '/contact/' 'Reach SniperPlug directly.' contact.html
           check_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
           check_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
           check_page '/terms/' 'Authorized private tools' terms.html
+
+          curl --silent --show-error --max-time 25 "${pages}/assets/css/homepage.css?production=${COMMIT_SHA}" > shared-theme.css
+          grep -Fq '.section-soft{' shared-theme.css
+          grep -Fq '.capability-grid{' shared-theme.css
+          grep -Fq '.capability-card{' shared-theme.css
+          grep -Fq '@media(max-width:700px)' shared-theme.css
 
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${pages}/deal/walmart-shark-navigator-vacuum/?production=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
@@ -75,20 +100,21 @@ jobs:
           custom_code="$(curl --silent --show-error --location --max-time 25 \
             --user-agent 'Mozilla/5.0 (compatible; SniperPlug-Affiliate-Readiness/1.0)' \
             --output custom.html --write-out '%{http_code}' \
-            "${custom}/?production=${COMMIT_SHA}" || true)"
+            "${custom}/deals/?production=${COMMIT_SHA}" || true)"
           ! grep -Eiq "$banned" custom.html 2>/dev/null
           if [ "$custom_code" = '200' ]; then
-            grep -Fq 'No exact destination means no public deal card.' custom.html
-            echo 'Custom domain served the affiliate-ready homepage.'
+            grep -Fq 'No verified public deal cards are active.' custom.html
+            grep -Fq '/assets/css/homepage.css' custom.html
+            echo 'Custom domain served the themed affiliate-ready deal board.'
           elif [ "$custom_code" = '403' ]; then
             echo 'Custom domain applied a Cloudflare bot challenge; no retired public content was returned.'
           else
             echo "::error::Custom domain returned unexpected HTTP ${custom_code}."
-            sed -n '1,120p' custom.html 2>/dev/null || true
+            sed -n '1,140p' custom.html 2>/dev/null || true
             exit 1
           fi
 
-          echo 'reason=Pages production passed all reviewer checks and the custom domain returned no retired content.' >> "$GITHUB_OUTPUT"
+          echo 'reason=Pages production passed affiliate content, public theme, and custom-domain safety checks.' >> "$GITHUB_OUTPUT"
 
       - name: Publish production readiness status
         if: always()
@@ -99,7 +125,7 @@ jobs:
           set -euo pipefail
           if [ "$JOB_STATUS" = 'success' ]; then
             state='success'
-            description='Affiliate-ready production pages passed'
+            description='Affiliate-ready production theme passed'
           else
             state='failure'
             description='Affiliate reviewer production checks failed'
