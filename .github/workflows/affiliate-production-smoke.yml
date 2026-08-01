@@ -32,19 +32,27 @@ jobs:
           for attempt in $(seq 1 36); do
             nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
             code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${pages}/deals/?production=${nonce}" || true)"
+            logo_code="$(curl --silent --show-error --max-time 25 --output sniperplug-logo.svg --write-out '%{http_code}' "${pages}/assets/sniperplug-logo.svg?production=${nonce}" || true)"
+            runtime_code="$(curl --silent --show-error --max-time 25 --output site-runtime.js --write-out '%{http_code}' "${pages}/assets/js/site.js?production=${nonce}" || true)"
             if [ "$code" = '200' ] \
+              && [ "$logo_code" = '200' ] \
+              && [ "$runtime_code" = '200' ] \
               && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
               && grep -Fq '/assets/css/homepage.css' deals-ready.html \
+              && grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg \
+              && grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js \
               && ! grep -Eiq "$banned" deals-ready.html; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: Pages production HTTP ${code}; waiting for the themed main deployment."
+            echo "Attempt ${attempt}: page=${code} logo=${logo_code} runtime=${runtime_code}; waiting for the branded main deployment."
             sleep 20
           done
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Pages production never served the themed affiliate-ready deal board.'
+            echo '::error::Pages production never served the branded affiliate-ready deployment.'
             sed -n '1,140p' deals-ready.html 2>/dev/null || true
+            sed -n '1,80p' sniperplug-logo.svg 2>/dev/null || true
+            sed -n '1,100p' site-runtime.js 2>/dev/null || true
             exit 1
           fi
 
@@ -88,12 +96,10 @@ jobs:
           grep -Fq '.capability-card{' shared-theme.css
           grep -Fq '@media(max-width:700px)' shared-theme.css
 
-          curl --silent --show-error --max-time 25 "${pages}/assets/sniperplug-logo.svg?production=${COMMIT_SHA}" > sniperplug-logo.svg
           grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg
           grep -Fq '>SP</text>' sniperplug-logo.svg
           grep -Fq '<linearGradient id="g"' sniperplug-logo.svg
 
-          curl --silent --show-error --max-time 25 "${pages}/assets/js/site.js?production=${COMMIT_SHA}" > site-runtime.js
           grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js
           grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
           grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
