@@ -110,7 +110,7 @@ jobs:
           grep -Fq 'No verified public deal cards are active.' deal-final.html
           grep -Fq 'No verified public deal cards are active.' go-final.html
           ! grep -Eiq "$banned" board.html deal-final.html go-final.html
-          ! grep -Eiq 'class=["'"'][^"'"']*deal-card' board.html deal-final.html go-final.html
+          ! grep -Fqi 'deal-card' board.html deal-final.html go-final.html
 
           echo 'Retired deal and click-out routes fail closed to the verified empty board.'
 
