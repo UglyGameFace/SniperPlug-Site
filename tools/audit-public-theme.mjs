@@ -23,8 +23,21 @@ const staticShellPages = [
   'terms/index.html',
   '404.html',
 ];
+const marketingPages = [
+  'index.html',
+  'deals/index.html',
+  'deals/walmart/index.html',
+  'deals/lowes/index.html',
+  'deals/best-buy/index.html',
+  'deals/home-depot/index.html',
+  'deals/amazon/index.html',
+  'about/index.html',
+  'partners/index.html',
+  'contact/index.html',
+];
 
 const baseStylesheetPattern = /<link rel="stylesheet" href="\/assets\/css\/styles\.css(?:\?[^"']*)?">/;
+const marketingStylesheet = '<link rel="stylesheet" href="/assets/css/homepage.css">';
 const requiredShellTokens = [
   '<meta name="viewport"',
   'class="site-header"',
@@ -44,8 +57,16 @@ for (const path of staticShellPages) {
   assert.doesNotMatch(content, /<style(?:\s|>)/i, `${path} contains page-specific inline CSS that can drift from the shared theme.`);
 }
 
+for (const path of marketingPages) {
+  const content = read(path);
+  const first = content.indexOf(marketingStylesheet);
+  assert.notEqual(first, -1, `${path} uses marketing components without the marketing stylesheet.`);
+  assert.equal(content.indexOf(marketingStylesheet, first + 1), -1, `${path} loads the marketing stylesheet more than once.`);
+}
+
 const baseCss = read('assets/css/styles.css');
-assert.ok(baseCss.startsWith("@import url('/assets/css/homepage.css');"), 'styles.css must load the shared visual layer before base rules.');
+assert.ok(baseCss.startsWith("@import url('/assets/css/site-shell.css');"), 'styles.css must load the global shell before base rules.');
+assert.doesNotMatch(baseCss, /@import url\('\/assets\/css\/homepage\.css'\)/, 'styles.css must not duplicate the page-specific marketing stylesheet.');
 for (const requirement of [
   /--brand:#68e384/,
   /--brand2:#35c2ff/,
@@ -58,7 +79,7 @@ for (const requirement of [
   assert.match(baseCss, requirement, `Base theme is missing ${requirement}.`);
 }
 
-const sharedCss = read('assets/css/homepage.css');
+const shellCss = read('assets/css/site-shell.css');
 for (const requirement of [
   /\.brand-mark\{[^}]*sniperplug-logo-exact\.svg/s,
   /object-fit:contain!important/,
@@ -68,12 +89,22 @@ for (const requirement of [
   /\.page-hero\{position:relative/,
   /\.legal-card\{max-width:980px/,
   /\.error-shell\{/,
-  /\.section-soft\{/,
-  /\.capability-grid\{/,
   /@media\(max-width:700px\)/,
 ]) {
-  assert.match(sharedCss, requirement, `Shared visual theme is missing ${requirement}.`);
+  assert.match(shellCss, requirement, `Global visual shell is missing ${requirement}.`);
 }
+
+const marketingCss = read('assets/css/homepage.css');
+for (const requirement of [
+  /\.section-soft\{/,
+  /\.section-kicker\{/,
+  /\.capability-grid\{/,
+  /\.capability-card\{/,
+  /@media\(max-width:700px\)/,
+]) {
+  assert.match(marketingCss, requirement, `Marketing visual layer is missing ${requirement}.`);
+}
+assert.doesNotMatch(marketingCss, /sniperplug-logo-exact\.svg/, 'Exact global branding must not be duplicated in the marketing stylesheet.');
 
 const exactLogo = read('assets/sniperplug-logo-exact.svg');
 assert.match(exactLogo, /<title id="title">SniperPlug logo<\/title>/, 'Exact shared logo is missing its accessible title.');
@@ -120,6 +151,7 @@ for (const token of ['class="error-shell"', 'class="error-card"', 'src="/assets/
 }
 
 console.log('\nSNIPERPLUG FULL VISUAL CONSISTENCY AUDIT PASSED\n');
-console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, and visual foundation.`);
+console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, and global visual foundation.`);
+console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
 console.log('✓ Exact approved logo bytes, proportional rendering, and revalidation headers are enforced.');
