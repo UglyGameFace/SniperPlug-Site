@@ -38,6 +38,31 @@ function isPrivateGuidePage(pathname) {
   return pathname === '/guides' || pathname.startsWith('/guides/');
 }
 
+function isRetiredPublicDealPath(pathname) {
+  return pathname === '/deal'
+    || pathname.startsWith('/deal/')
+    || pathname === '/go'
+    || pathname.startsWith('/go/');
+}
+
+function retiredPublicDealRedirect(url, pathname) {
+  if (!isRetiredPublicDealPath(pathname)) return null;
+
+  const destination = new URL('/deals/', url);
+  destination.searchParams.set('notice', pathname === '/deal' || pathname.startsWith('/deal/')
+    ? 'retired-deal'
+    : 'retired-link');
+
+  return new Response(null, {
+    status: 308,
+    headers: {
+      location: destination.toString(),
+      'cache-control': 'private, no-store, max-age=0',
+      'x-robots-tag': 'noindex, nofollow, noarchive',
+    },
+  });
+}
+
 async function injectControlCenterRuntime(original, pathname) {
   const contentType = String(original.headers.get('content-type') || '').toLowerCase();
   if (!isControlCenterPage(pathname) || !contentType.includes('text/html')) return new Response(original.body, original);
@@ -62,6 +87,7 @@ function secureResponse(response, url, pathname) {
   const privateGuidePage = isPrivateGuidePage(pathname);
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
   const privateGuideContent = privateGuidePage || privateGuideAsset;
+  const retiredPublicDealPath = isRetiredPublicDealPath(pathname);
 
   response.headers.set('X-Frame-Options', courseVideoFrame ? 'SAMEORIGIN' : 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
@@ -75,14 +101,14 @@ function secureResponse(response, url, pathname) {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent) {
+  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (controlAsset) {
     response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
-  if (controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent) {
+  if (controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
   return response;
@@ -96,6 +122,12 @@ export async function onRequest(context) {
     const missing = missingControlConfiguration(context.env);
     if (missing.length) return secureResponse(configurationError(missing), url, pathname);
   }
+
+  // Fail closed before Pages can resolve a stale static deal page, old click-out,
+  // or nested function. No retired public route may expose a fake deal or a
+  // generic retailer search destination, even during mixed deployments.
+  const retiredDeal = retiredPublicDealRedirect(url, pathname);
+  if (retiredDeal) return secureResponse(retiredDeal, url, pathname);
 
   // Fail closed before Pages can resolve a static asset or a nested function.
   // This protects every present and future /guides route, even if an old HTML
