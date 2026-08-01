@@ -1,3 +1,5 @@
+import { privateGuidePageGate } from './_lib/private-guides.js';
+
 const REQUIRED_CONTROL_CONFIGURATION = [
   'SNIPERPLUG_DB',
   'SNIPERPLUG_ADMIN_PASSWORD',
@@ -32,6 +34,10 @@ function isControlCenterPage(pathname) {
   return pathname === '/control-center' || pathname === '/control-center/';
 }
 
+function isPrivateGuidePage(pathname) {
+  return pathname === '/guides' || pathname.startsWith('/guides/');
+}
+
 async function injectControlCenterRuntime(original, pathname) {
   const contentType = String(original.headers.get('content-type') || '').toLowerCase();
   if (!isControlCenterPage(pathname) || !contentType.includes('text/html')) return new Response(original.body, original);
@@ -50,19 +56,10 @@ async function injectControlCenterRuntime(original, pathname) {
   });
 }
 
-export async function onRequest(context) {
-  const url = new URL(context.request.url);
-  if (url.pathname === '/api/control' || url.pathname === '/api/whop/oauth/callback') {
-    const missing = missingControlConfiguration(context.env);
-    if (missing.length) return configurationError(missing);
-  }
-
-  const original = await context.next();
-  const pathname = url.pathname;
+function secureResponse(response, url, pathname) {
   const controlCenterPage = isControlCenterPage(pathname);
-  const response = await injectControlCenterRuntime(original, pathname);
   const courseVideoFrame = pathname.startsWith('/course-video/');
-  const privateGuidePage = pathname === '/guides' || pathname.startsWith('/guides/');
+  const privateGuidePage = isPrivateGuidePage(pathname);
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
   const privateGuideContent = privateGuidePage || privateGuideAsset;
 
@@ -89,4 +86,26 @@ export async function onRequest(context) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
   return response;
+}
+
+export async function onRequest(context) {
+  const url = new URL(context.request.url);
+  const pathname = url.pathname;
+
+  if (url.pathname === '/api/control' || url.pathname === '/api/whop/oauth/callback') {
+    const missing = missingControlConfiguration(context.env);
+    if (missing.length) return secureResponse(configurationError(missing), url, pathname);
+  }
+
+  // Fail closed before Pages can resolve a static asset or a nested function.
+  // This protects every present and future /guides route, even if an old HTML
+  // artifact is accidentally left in the build output.
+  if (isPrivateGuidePage(pathname)) {
+    const gate = await privateGuidePageGate(context.request, context.env);
+    if (gate) return secureResponse(gate, url, pathname);
+  }
+
+  const original = await context.next();
+  const response = await injectControlCenterRuntime(original, pathname);
+  return secureResponse(response, url, pathname);
 }
