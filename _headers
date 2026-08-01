@@ -5,6 +5,15 @@
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Content-Security-Policy: default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self' mailto:
 
+/assets/css/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/js/*
+  Cache-Control: public, max-age=0, must-revalidate
+
+/assets/sniperplug-logo-exact.svg
+  Cache-Control: public, max-age=0, must-revalidate
+
 /control-center/*
   Cache-Control: private, no-store, max-age=0
   X-Robots-Tag: noindex, nofollow, noarchive
