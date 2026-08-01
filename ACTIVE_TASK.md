@@ -1,63 +1,75 @@
 # Active Task
 
 ## Task
-Make the public `SniperPlug.com` website credible, visually consistent, and complete for a Newegg affiliate-program review.
+Make the entire `SniperPlug.com` route surface visually consistent and complete for a Newegg affiliate-program review.
 
 ## Status
-Merged and production-validated at the code, exact-artwork, deployment, affiliate, and private-security levels. The exact owner-approved SniperPlug logo is live. One normal Samsung Internet visual confirmation remains before this task can be closed without reservation.
+Active on `fix/unified-site-visual-system` in draft PR #11. The route and template audit is complete, the new ordered visual architecture is implemented, and the exact owner-approved logo remains checksum-protected. Full regression and Cloudflare preview validation are running; cleanup, merge, production validation, and normal-browser acceptance remain.
 
 ## Confirmed root causes
-- Deals, retailer coverage, About, Partners, and Contact used shared homepage component classes without loading the stylesheet that defined them. PR #7 repaired that execution path.
-- The first branding implementation recreated the visual as SVG rather than using the exact owner-approved image.
-- The owner-approved source contained a square 512×512 neon SP plug icon; rendering a substitute was not equivalent.
-- Stretch risk existed unless the runtime enforced a square intrinsic size, `object-fit: contain`, and a fixed 1:1 aspect ratio.
-- Keeping the substitute SVG after switching artwork would allow conflicting branding to return later.
+- The prior consistency check covered only selected marketing pages and mostly verified stylesheet links rather than the actual route shell.
+- Terms, Privacy, Affiliate Disclosure, the 404 page, the locked private-guide page, generated guide pages, and the Control Center were outside that permanent visual contract.
+- The visual rules were split ambiguously between foundational and richer marketing styles, making cascade order and page coverage easy to drift.
+- `404.html` did not use the normal site header or footer.
+- The locked private-guide page did not use the normal footer and did not load the shared brand runtime.
+- Pages without `site.js` could fall back to the temporary text badge even though the exact logo artwork was already approved.
+- Shared CSS, JavaScript, and branding assets had no explicit revalidation policy, allowing mixed browser/CDN generations after a deployment.
+- The old preview workflow silently checked a truncated Cloudflare alias without named checkpoints, making page failures look like deployment failures.
 
 ## Implemented changes
-### Public theme
-- PR #7 loaded the shared green/blue visual layer on Deals, Walmart, Lowe’s, Best Buy, Home Depot, Amazon, About, Partners, and Contact.
-- Added permanent static, Cloudflare preview, and production checks for shared cards, gradients, grids, and responsive rules.
+### Ordered visual layers
+- `assets/css/styles.css` is now a two-line aggregator that loads `site-base.css` first and `site-shell.css` second.
+- `assets/css/site-base.css` owns tokens and foundational components.
+- `assets/css/site-shell.css` owns the global header, exact-logo fallback, navigation state, page heroes, legal layout, footer, private/owner surfaces, error shell, and responsive consistency.
+- `assets/css/homepage.css` contains only richer marketing components and is loaded exactly once by the routes that use those components.
+- The architecture avoids duplicate rule sets and ensures the global shell overrides the foundation before any page-specific layer.
 
-### Exact SniperPlug logo
-- PR #10 replaced the substitute SVG with a losslessly resized 96×96 derivative of the exact approved 512×512 source.
-- Embedded those exact PNG bytes in the existing shared `assets/js/site.js` path, avoiding Porkbun changes, manual binary uploads, and duplicate per-page markup.
-- Preserved the text fallback and shared brand-link accessibility.
-- Enforced `object-fit: contain`, `aspect-ratio: 1 / 1`, equal intrinsic dimensions, zero padding, hidden overflow, and the existing rounded-square footprint.
-- Added `data-brand-artwork="owner-approved-exact"` runtime state for deployed verification.
-- Removed the incorrect substitute `assets/sniperplug-logo.svg`.
-- Added Node, Cloudflare preview, and production checks that decode the embedded PNG and verify:
-  - valid PNG signature;
-  - exact 96×96 dimensions;
-  - exact SHA-256 checksum `3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86`;
-  - proportional, non-distorting rendering rules;
-  - absence of the substitute SVG.
+### Exact branding
+- Added the actual binary `assets/sniperplug-logo-exact.png`; no text-transcribed or recreated SVG remains.
+- The PNG is 96×96 and must match SHA-256 `3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86`.
+- Static fallback and JavaScript-enhanced rendering both enforce square, proportional `contain` behavior.
+- Static and runtime logo bytes are compared in preview and production checks.
+
+### Route shells
+- Rebuilt `404.html` with the shared header, footer, logo, actions, and responsive error card.
+- Separated the 404 container from its visual card for clean layout ownership.
+- Brought the locked private-guide page into the shared header/footer/runtime path.
+- Preserved generated guide and Control Center specialized styles after the shared shell.
+- Added revalidation headers for shared CSS, JavaScript, and the exact PNG.
+
+### Permanent validation
+- Replaced the narrow theme test with a full route-surface audit covering 14 static routes, 10 marketing routes, legal pages, the 404 page, generated guide templates, the locked guide screen, Control Center ordering, exact logo bytes, and cache behavior.
+- Expanded Cloudflare preview and production workflows to check ordered CSS layers, representative public/retailer/legal/error routes, branding bytes, retired URL behavior, sitemap safety, and affiliate readiness.
+- Restored Cloudflare Pages' actual 28-character branch alias and added named checkpoints so failures identify the exact route or layer.
 
 ## Validation completed
-- PR #7 was squash-merged as `2152b001f34322b5d31fd8f38672207a6e25d352`.
-- PR #10 was squash-merged as `143a293dcf4ceb09b4c29aa9132516233e1831f2`.
+- Root execution paths, callers, templates, CSS layers, private gates, Control Center styles, redirects, and existing audits were inspected before implementation.
+- The branch was created from current `main`; changed-file scope remains limited to the active visual task and its validation paths.
+- The first SVG wrapper attempt was rejected by checksum validation and removed rather than patched.
+- The exact binary PNG was committed through GitHub's blob/tree path and verified against the approved derivative.
+- Homepage and affiliate-readiness audits passed during the latest full-suite run.
+- The full-route audit correctly caught the combined 404 utility/card markup; that structure has been cleaned up.
+- Cloudflare's PR deployment comment confirmed the successful branch deployment and its actual stable alias.
+- The accidental one-word placeholder created while resolving the GitHub branch API was immediately deleted from `main`; no application or deployment file was altered by it.
 - Exact approved source SHA-256: `6d40df40afaa275f1816af789bb1975b38d26ab87a81cc61419d9a5aef0d1788`.
 - Exact web derivative SHA-256: `3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86`.
-- Full Node 22 suite passed after correcting the audit parser for the split embedded data URI.
-- Cloudflare branch preview passed and validated the exact logo runtime, affiliate pages, retailer pages, legal pages, retired URLs, sitemap, and theme.
-- Branch was zero commits behind `main`, mergeable, and free of competing branding implementations.
-- Main production affiliate-readiness check passed the exact PNG checksum, dimensions, rendering contract, public content, theme, retired URLs, sitemap, and custom-domain safety path.
-- Main production private-guide protection passed.
 - Vercel free-plan build-limit failures remain unrelated; Cloudflare Pages is the production runtime.
 
 ## Required acceptance
-- [x] No demo/sample/launch-placeholder content or unverified public prices remain.
-- [x] Exact-destination, legal, partner, private-guide, sitemap, and production safety requirements pass.
-- [x] Shared public theme matches the green/blue SniperPlug homepage design.
-- [x] The exact owner-approved logo artwork replaces the substitute recreation.
-- [x] Rendering preserves a square aspect ratio without stretching or smushing.
-- [x] The obsolete substitute SVG is removed.
-- [x] Exact bytes, dimensions, checksum, and render contract have permanent audits.
-- [x] Full Node 22 suite passes.
-- [x] Cloudflare branch preview serves and validates the exact-logo runtime.
-- [x] Changed-file and conflict inspection pass.
-- [x] PR #10 is merged.
-- [x] Main production passes the exact-logo and existing affiliate/security checks.
-- [ ] Owner confirms the exact logo looks flush and proportional in Samsung Internet without navigation overflow.
+- [x] Root causes and real route/template execution paths inspected.
+- [x] Ordered base, global shell, and page-specific component layers implemented.
+- [x] Legal, error, locked-guide, generated-guide, and Control Center surfaces included in permanent audits.
+- [x] Exact approved PNG remains checksum-protected and proportionally rendered.
+- [x] Obsolete SVG-wrapper branding path removed.
+- [x] Shared assets use explicit revalidation headers.
+- [ ] Targeted full-route visual audit passes after the 404 structure correction.
+- [ ] Full Node 22 regression suite passes.
+- [ ] Cloudflare branch preview passes every named route/layer checkpoint.
+- [ ] No obsolete, duplicate, or conflicting theme implementation remains.
+- [ ] Changed-file and conflict inspection pass.
+- [ ] Visual-consistency PR is merged.
+- [ ] Main production passes affiliate, private-security, and full visual-route checks.
+- [ ] Owner confirms representative pages look consistent in Samsung Internet without navigation overflow.
 
 ## Backlog after acceptance
 - Submit the Newegg affiliate application through its Rakuten partnership flow.

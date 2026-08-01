@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'index.html'
+      - '404.html'
+      - '_headers'
       - 'deals/**'
       - 'deal/**'
       - 'about/**'
@@ -14,7 +16,10 @@ on:
       - 'affiliate-disclosure/**'
       - 'assets/css/**'
       - 'assets/js/site.js'
+      - 'assets/sniperplug-logo-exact.png'
       - 'data/deals.json'
+      - 'functions/_lib/private-guides.js'
+      - 'functions/_lib/templates.js'
       - 'functions/deal/**'
       - 'functions/go/**'
       - 'functions/sitemap.xml.js'
@@ -35,82 +40,145 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Wait for Cloudflare preview and inspect public pages
+      - name: Wait for Cloudflare preview and inspect the full visual shell
         env:
           HEAD_REF: ${{ github.head_ref }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
-          alias="${alias:0:28}"
-          base="https://${alias}.sniperplug.pages.dev"
+          branch_alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
+          branch_alias="${branch_alias:0:28}"
+          base="https://${branch_alias}.sniperplug.pages.dev"
           echo "Checking ${base}"
 
           ready=0
           for attempt in $(seq 1 36); do
             nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
-            code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${base}/deals/?preview=${nonce}" || true)"
+            page_code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${base}/deals/?preview=${nonce}" || true)"
             runtime_code="$(curl --silent --show-error --max-time 25 --output site-runtime.js --write-out '%{http_code}' "${base}/assets/js/site.js?preview=${nonce}" || true)"
-            if [ "$code" = '200' ] \
+            aggregator_code="$(curl --silent --show-error --max-time 25 --output styles.css --write-out '%{http_code}' "${base}/assets/css/styles.css?preview=${nonce}" || true)"
+            foundation_code="$(curl --silent --show-error --max-time 25 --output site-base.css --write-out '%{http_code}' "${base}/assets/css/site-base.css?preview=${nonce}" || true)"
+            shell_code="$(curl --silent --show-error --max-time 25 --output site-shell.css --write-out '%{http_code}' "${base}/assets/css/site-shell.css?preview=${nonce}" || true)"
+            logo_code="$(curl --silent --show-error --max-time 25 --dump-header exact-logo.headers --output exact-logo.png --write-out '%{http_code}' "${base}/assets/sniperplug-logo-exact.png?preview=${nonce}" || true)"
+            echo "Attempt ${attempt}: page=${page_code} runtime=${runtime_code} aggregator=${aggregator_code} base=${foundation_code} shell=${shell_code} logo=${logo_code}"
+            if [ "$page_code" = '200' ] \
               && [ "$runtime_code" = '200' ] \
+              && [ "$aggregator_code" = '200' ] \
+              && [ "$foundation_code" = '200' ] \
+              && [ "$shell_code" = '200' ] \
+              && [ "$logo_code" = '200' ] \
               && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
-              && grep -Fq '/assets/css/homepage.css' deals-ready.html \
+              && grep -Fq "@import url('/assets/css/site-base.css');" styles.css \
+              && grep -Fq "@import url('/assets/css/site-shell.css');" styles.css \
+              && grep -Fq -- '--brand:#68e384' site-base.css \
+              && grep -Fq 'sniperplug-logo-exact.png' site-shell.css \
               && grep -Fq 'data:image/png;base64,' site-runtime.js \
               && grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: page=${code} runtime=${runtime_code}; waiting for the exact-logo preview."
             sleep 20
           done
 
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Cloudflare branch preview did not deploy the exact-logo affiliate-ready build before timeout.'
+            echo '::error::Cloudflare branch preview did not deploy the unified visual build before timeout.'
             sed -n '1,120p' deals-ready.html 2>/dev/null || true
-            sed -n '1,80p' site-runtime.js 2>/dev/null || true
+            sed -n '1,40p' styles.css 2>/dev/null || true
+            sed -n '1,80p' site-shell.css 2>/dev/null || true
             exit 1
           fi
+          echo 'Preview deployment is current. Beginning route-surface checks.'
 
+          banned='Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00'
           check_page() {
             path="$1"
             marker="$2"
             output="$3"
+            echo "Checking page ${path}"
             code="$(curl --silent --show-error --location --max-time 25 --output "$output" --write-out '%{http_code}' "${base}${path}?preview=${COMMIT_SHA}" || true)"
-            test "$code" = '200'
-            grep -Fiq "$marker" "$output"
-            ! grep -Eiq 'Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00' "$output"
+            if [ "$code" != '200' ]; then
+              echo "::error::${path} returned HTTP ${code}."
+              return 1
+            fi
+            if ! grep -Fiq "$marker" "$output"; then
+              echo "::error::${path} is missing marker: ${marker}"
+              return 1
+            fi
+            if grep -Eiq "$banned" "$output"; then
+              echo "::error::${path} contains retired or placeholder content."
+              return 1
+            fi
           }
 
-          check_themed_page() {
+          check_shell_page() {
             path="$1"
             marker="$2"
             output="$3"
             check_page "$path" "$marker" "$output"
-            grep -Fq '<link rel="stylesheet" href="/assets/css/styles.css">' "$output"
-            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output"
-            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1'
+            grep -Eq '<link rel="stylesheet" href="/assets/css/styles.css([^" ]*)?">' "$output" || { echo "::error::${path} is missing the visual aggregator."; return 1; }
+            grep -Fq 'class="site-header"' "$output" || { echo "::error::${path} is missing the shared header."; return 1; }
+            grep -Fq 'class="brand-mark"' "$output" || { echo "::error::${path} is missing the shared brand mark."; return 1; }
+            grep -Fq 'class="site-footer"' "$output" || { echo "::error::${path} is missing the shared footer."; return 1; }
           }
 
-          check_page '/' 'No exact destination means no public deal card.' homepage.html
-          check_themed_page '/deals/' 'No verified public deal cards are active.' deals.html
-          check_themed_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
-          check_themed_page '/deals/lowes/' 'No verified Lowe’s deal cards are active.' lowes.html
-          check_themed_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
-          check_themed_page '/deals/home-depot/' 'No verified Home Depot deal cards are active.' homedepot.html
-          check_themed_page '/deals/amazon/' 'No verified Amazon deal cards are active.' amazon.html
-          check_themed_page '/about/' 'Deal discovery with exact-offer discipline.' about.html
-          check_themed_page '/partners/' 'Exact deep links' partners.html
-          check_themed_page '/contact/' 'Reach SniperPlug directly.' contact.html
-          check_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
-          check_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
-          check_page '/terms/' 'Authorized private tools' terms.html
+          check_marketing_page() {
+            path="$1"
+            marker="$2"
+            output="$3"
+            check_shell_page "$path" "$marker" "$output"
+            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output" || { echo "::error::${path} is missing marketing components."; return 1; }
+            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1' || { echo "::error::${path} loads marketing components more than once."; return 1; }
+          }
 
-          curl --silent --show-error --max-time 25 "${base}/assets/css/homepage.css?preview=${COMMIT_SHA}" > shared-theme.css
-          grep -Fq '.section-soft{' shared-theme.css
-          grep -Fq '.capability-grid{' shared-theme.css
-          grep -Fq '.capability-card{' shared-theme.css
-          grep -Fq '@media(max-width:700px)' shared-theme.css
+          echo 'Checking marketing routes.'
+          check_marketing_page '/' 'No exact destination means no public deal card.' homepage.html
+          check_marketing_page '/deals/' 'No verified public deal cards are active.' deals.html
+          check_marketing_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
+          check_marketing_page '/deals/lowes/' 'No verified Lowe’s deal cards are active.' lowes.html
+          check_marketing_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
+          check_marketing_page '/deals/home-depot/' 'No verified Home Depot deal cards are active.' homedepot.html
+          check_marketing_page '/deals/amazon/' 'No verified Amazon deal cards are active.' amazon.html
+          check_marketing_page '/about/' 'Deal discovery with exact-offer discipline.' about.html
+          check_marketing_page '/partners/' 'Exact deep links' partners.html
+          check_marketing_page '/contact/' 'Reach SniperPlug directly.' contact.html
 
+          echo 'Checking legal routes.'
+          check_shell_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
+          check_shell_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
+          check_shell_page '/terms/' 'Authorized private tools' terms.html
+
+          echo 'Checking the unified 404 route.'
+          missing_code="$(curl --silent --show-error --max-time 25 --output missing.html --write-out '%{http_code}' "${base}/definitely-not-a-real-sniperplug-route-${COMMIT_SHA}" || true)"
+          test "$missing_code" = '404' || { echo "::error::Missing route returned HTTP ${missing_code}, expected 404."; exit 1; }
+          grep -Fq 'That page slipped away.' missing.html || { echo '::error::404 page is missing its user-facing message.'; exit 1; }
+          grep -Fq 'class="site-header"' missing.html || { echo '::error::404 page is missing the shared header.'; exit 1; }
+          grep -Fq 'class="site-footer"' missing.html || { echo '::error::404 page is missing the shared footer.'; exit 1; }
+          grep -Fq 'class="error-card"' missing.html || { echo '::error::404 page is missing the visual error card.'; exit 1; }
+
+          echo 'Checking ordered visual layers.'
+          test "$(grep -c '^@import' styles.css)" = '2' || { echo '::error::Visual aggregator import count changed.'; exit 1; }
+          grep -Fq "@import url('/assets/css/site-base.css');" styles.css
+          grep -Fq "@import url('/assets/css/site-shell.css');" styles.css
+          grep -Fq -- '--brand:#68e384' site-base.css
+          grep -Fq '.site-header{' site-base.css
+          grep -Fq '.site-footer{' site-base.css
+          grep -Fq '.brand-mark{' site-shell.css
+          grep -Fq 'sniperplug-logo-exact.png' site-shell.css
+          grep -Fq '.page-hero{position:relative' site-shell.css
+          grep -Fq '.legal-card{max-width:980px' site-shell.css
+          grep -Fq '.error-shell{' site-shell.css
+          grep -Fq '@media(max-width:700px)' site-shell.css
+
+          echo 'Checking marketing component layer.'
+          curl --silent --show-error --max-time 25 "${base}/assets/css/homepage.css?preview=${COMMIT_SHA}" > marketing-theme.css
+          grep -Fq '.section-soft{' marketing-theme.css
+          grep -Fq '.capability-grid{' marketing-theme.css
+          grep -Fq '.capability-card{' marketing-theme.css
+          grep -Fq '@media(max-width:700px)' marketing-theme.css
+          ! grep -Fq 'sniperplug-logo-exact.png' marketing-theme.css
+
+          echo 'Checking exact logo delivery and runtime behavior.'
+          grep -Fiq 'cache-control: public, max-age=0, must-revalidate' exact-logo.headers
           grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
           grep -Fq "logo.style.objectFit = 'contain'" site-runtime.js
           grep -Fq "logo.style.aspectRatio = '1 / 1'" site-runtime.js
@@ -119,30 +187,35 @@ jobs:
 
           python3 - <<'PY'
           import base64, hashlib, re, struct
+          expected = '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86'
           runtime = open('site-runtime.js', encoding='utf-8').read()
           match = re.search(r"data:image/png;base64,([A-Za-z0-9+/='\",\s]+?)',\s*\]", runtime, re.S)
           if not match:
-              raise SystemExit('embedded exact PNG not found')
-          encoded = re.sub(r"['\",\s]", '', match.group(1))
-          image = base64.b64decode(encoded, validate=True)
-          if image[:8] != b'\x89PNG\r\n\x1a\n':
-              raise SystemExit('embedded logo is not PNG')
-          width, height = struct.unpack('>II', image[16:24])
-          if (width, height) != (96, 96):
-              raise SystemExit(f'embedded logo is {width}x{height}, expected 96x96')
-          digest = hashlib.sha256(image).hexdigest()
-          expected = '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86'
-          if digest != expected:
-              raise SystemExit(f'embedded logo checksum changed: {digest}')
+              raise SystemExit('exact PNG not found in site runtime')
+          runtime_png = base64.b64decode(re.sub(r"['\",\s]", '', match.group(1)), validate=True)
+          asset_png = open('exact-logo.png', 'rb').read()
+          for label, image in [('runtime', runtime_png), ('asset', asset_png)]:
+              if image[:8] != b'\x89PNG\r\n\x1a\n':
+                  raise SystemExit(f'{label} logo is not PNG')
+              width, height = struct.unpack('>II', image[16:24])
+              if (width, height) != (96, 96):
+                  raise SystemExit(f'{label} logo is {width}x{height}, expected 96x96')
+              digest = hashlib.sha256(image).hexdigest()
+              if digest != expected:
+                  raise SystemExit(f'{label} logo checksum changed: {digest}')
+          if runtime_png != asset_png:
+              raise SystemExit('runtime and static exact-logo bytes differ')
           PY
 
+          echo 'Checking retired deal behavior.'
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${base}/deal/walmart-shark-navigator-vacuum/?preview=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
           grep -Fq 'Only confirmed offers belong here.' retired.html
           ! grep -Eiq 'Shark Navigator|\$89\.00|Launch example|sample item' retired.html
 
+          echo 'Checking sitemap safety.'
           curl --silent --show-error --max-time 25 "${base}/sitemap.xml?preview=${COMMIT_SHA}" > sitemap.xml
           grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
           ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
 
-          echo 'Affiliate-ready Cloudflare preview, public theme, and exact owner-approved logo passed.'
+          echo 'Affiliate-ready Cloudflare preview and the full unified visual route surface passed.'
