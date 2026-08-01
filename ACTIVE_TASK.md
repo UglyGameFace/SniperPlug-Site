@@ -8,7 +8,7 @@ Required path:
 Whop OAuth/session → live Experience discovery → exact content scan → import → D1 draft → media/video → owner review → reject/remove → restore or re-import → publish to owner-only library → authenticated guide/media access.
 
 ## Status
-Active and code-clean. Owner routing, source-access truth, recovery-media truth, anonymous guide isolation, and the full Node 22 regression suite pass. The task is not complete until the owner-only production UI is visually accepted and a real authorized Course source is available for the live end-to-end lifecycle.
+Active and code-clean. Owner routing, source-access truth, recovery-media truth, anonymous guide isolation, cleanup, and the complete Node 22 regression suite pass. Completion is blocked only by authenticated owner-browser acceptance and the lack of a currently readable Whop Course source for a real end-to-end lifecycle.
 
 ## Scope
 - Reuse the existing Control Center password/session; no second owner credential system.
@@ -26,7 +26,7 @@ Active and code-clean. Owner routing, source-access truth, recovery-media truth,
 - Older imported guide text survived in D1, but private/expiring Whop videos imported before the R2 binding were never copied permanently.
 - `/course-video/...` was previously labeled durable while still re-fetching Whop/Mux on every open.
 - Failed recovery could produce a false generic 500 when an unchanged rejected snapshot was already restored.
-- A crawler-visible historical `/guides/` page proved route-level gates alone were insufficient evidence. Global middleware previously called `context.next()` before applying privacy classification.
+- A historical crawler result exposed the old public guide HTML, proving route-level gates alone were not enough. Global middleware previously called `context.next()` before applying the guide privacy decision.
 - The current 50 MB per-object hard-free cap cannot archive many full course videos. Large-video storage remains deliberately deferred by the owner.
 
 ## Implemented changes
@@ -37,20 +37,28 @@ Active and code-clean. Owner routing, source-access truth, recovery-media truth,
 - Separated currently readable approved sources from inactive saved approval history.
 - Added recovery-media classification for permanent R2 media, live Whop-backed video, missing media copies, and text-only imports.
 - Permanent R2 copies restore/play without Whop; live-only items clearly require current source access.
-- Recovery now returns explicit reconnect/lost-access/missing-source errors and uses idempotent rollback.
-- Global Pages middleware now authenticates `/guides` and every `/guides/*` URL before `context.next()`, preventing static assets or nested routes from resolving first.
+- Recovery returns explicit reconnect/lost-access/missing-source errors and uses idempotent rollback.
+- Global Pages middleware authenticates `/guides` and every `/guides/*` URL before `context.next()`, preventing static assets or nested routes from resolving first.
 - Added `_routes.json` with `/*` Function coverage while excluding only public static assets.
 - Added executable routing tests proving anonymous/customer requests never reach asset/function resolution, owners continue normally, and public pages remain unaffected.
-- Added a permanent production smoke workflow. Every push to `main` anonymously probes the real custom domain and fails if known private guide text becomes readable.
+- Added a permanent production privacy workflow that checks both the raw Pages production hostname and the real custom domain on every push to `main`.
 
 ## Validation completed
-- `ci/sniperplug-node22: success` on commit `9b06e240f9dbf541528c3560fb6a44b212254f57`.
+- `ci/sniperplug-node22: success` on commit `3c6344507fc66e955232e1a540fe6ea2edb29fb1`.
 - `ci/sniperplug-production-guide-privacy: success` on the same commit.
-- The production probe received HTTP 403 before any private content was readable; known private guide markers were absent.
+- `sniperplug.pages.dev/guides/` returned HTTP 401 with the real owner lock page.
+- `sniperplug.com/guides/` returned HTTP 403 before private content could be read; known private-guide markers were absent.
 - Existing homepage, authorization, discovery/import, quality, network, decision, scan, concurrency, versioning, recovery, paid-access, hard-free media, course-video, and resilience tests continue to pass.
 - New tests prove the owner gate executes before Pages routing/static resolution, permanent R2 media is independent of Whop, live-backed media is labeled honestly, and unchanged rollback cannot become a false 500.
 - Repository search found no public `/guides/` links outside protected owner templates/Control Center and no service worker or browser cache layer capable of resurrecting an old guide page.
 - All relevant pull requests are merged. Remaining old branches are historical only and are not deployment targets.
+
+## Cleanup status
+- Temporary deployment diagnostics and challenge-prone one-off checks are absent.
+- The legacy recovery URL remains a thin alias rather than a second implementation.
+- No duplicate private-guide login system exists.
+- No static private-guide path is excluded from Pages Functions.
+- Main-branch build, security, route, and conflict inspections pass.
 
 ## Current blockers
 - Owner-browser verification after the current deployment must show:
@@ -67,7 +75,8 @@ Active and code-clean. Owner routing, source-access truth, recovery-media truth,
 - [x] Owner access remains visible on narrow Samsung Internet layouts.
 - [x] Existing owner password opens the Control Center and private library.
 - [x] Private guide routing fails closed before Pages static/function resolution.
-- [x] Anonymous production probe cannot read private guide content.
+- [x] Raw Pages production returns the owner lock to anonymous guide requests.
+- [x] The custom domain prevents anonymous private-guide reads.
 - [x] Full Node 22 build/regression suite passes.
 - [x] Main-branch conflict, obsolete diagnostic workflow, duplicate route, and public-link inspection passes.
 - [ ] Production owner UI shows 0 current approvals and 34 inactive historical approvals.
