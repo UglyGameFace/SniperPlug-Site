@@ -32,26 +32,23 @@ jobs:
           for attempt in $(seq 1 36); do
             nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
             code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${pages}/deals/?production=${nonce}" || true)"
-            logo_code="$(curl --silent --show-error --max-time 25 --output sniperplug-logo.svg --write-out '%{http_code}' "${pages}/assets/sniperplug-logo.svg?production=${nonce}" || true)"
             runtime_code="$(curl --silent --show-error --max-time 25 --output site-runtime.js --write-out '%{http_code}' "${pages}/assets/js/site.js?production=${nonce}" || true)"
             if [ "$code" = '200' ] \
-              && [ "$logo_code" = '200' ] \
               && [ "$runtime_code" = '200' ] \
               && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
               && grep -Fq '/assets/css/homepage.css' deals-ready.html \
-              && grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg \
-              && grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js \
+              && grep -Fq 'data:image/png;base64,' site-runtime.js \
+              && grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js \
               && ! grep -Eiq "$banned" deals-ready.html; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: page=${code} logo=${logo_code} runtime=${runtime_code}; waiting for the branded main deployment."
+            echo "Attempt ${attempt}: page=${code} runtime=${runtime_code}; waiting for the exact-logo main deployment."
             sleep 20
           done
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Pages production never served the branded affiliate-ready deployment.'
+            echo '::error::Pages production never served the exact-logo affiliate-ready deployment.'
             sed -n '1,140p' deals-ready.html 2>/dev/null || true
-            sed -n '1,80p' sniperplug-logo.svg 2>/dev/null || true
             sed -n '1,100p' site-runtime.js 2>/dev/null || true
             exit 1
           fi
@@ -96,13 +93,30 @@ jobs:
           grep -Fq '.capability-card{' shared-theme.css
           grep -Fq '@media(max-width:700px)' shared-theme.css
 
-          grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg
-          grep -Fq '>SP</text>' sniperplug-logo.svg
-          grep -Fq '<linearGradient id="g"' sniperplug-logo.svg
-
-          grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js
           grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
+          grep -Fq "logo.style.objectFit = 'contain'" site-runtime.js
+          grep -Fq "logo.style.aspectRatio = '1 / 1'" site-runtime.js
+          grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js
           grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
+
+          python3 - <<'PY'
+          import base64, hashlib, re, struct
+          runtime = open('site-runtime.js', encoding='utf-8').read()
+          match = re.search(r"data:image/png;base64,([A-Za-z0-9+/='\",\s]+?)',\s*\]", runtime, re.S)
+          if not match:
+              raise SystemExit('embedded exact PNG not found')
+          encoded = re.sub(r"['\",\s]", '', match.group(1))
+          image = base64.b64decode(encoded, validate=True)
+          if image[:8] != b'\x89PNG\r\n\x1a\n':
+              raise SystemExit('embedded logo is not PNG')
+          width, height = struct.unpack('>II', image[16:24])
+          if (width, height) != (96, 96):
+              raise SystemExit(f'embedded logo is {width}x{height}, expected 96x96')
+          digest = hashlib.sha256(image).hexdigest()
+          expected = '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86'
+          if digest != expected:
+              raise SystemExit(f'embedded logo checksum changed: {digest}')
+          PY
 
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${pages}/deal/walmart-shark-navigator-vacuum/?production=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
@@ -130,7 +144,7 @@ jobs:
             exit 1
           fi
 
-          echo 'reason=Pages production passed affiliate content, public theme, shared logo, and custom-domain safety checks.' >> "$GITHUB_OUTPUT"
+          echo 'reason=Pages production passed affiliate content, public theme, exact owner-approved logo, and custom-domain safety checks.' >> "$GITHUB_OUTPUT"
 
       - name: Publish production readiness status
         if: always()
@@ -141,7 +155,7 @@ jobs:
           set -euo pipefail
           if [ "$JOB_STATUS" = 'success' ]; then
             state='success'
-            description='Affiliate-ready production branding passed'
+            description='Exact-logo affiliate production passed'
           else
             state='failure'
             description='Affiliate reviewer production checks failed'
