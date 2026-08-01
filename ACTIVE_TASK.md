@@ -1,90 +1,87 @@
 # Active Task
 
 ## Task
-Repair and fully audit the Whop importer and owner-only guide workflow in `UglyGameFace/SniperPlug-Site`. The active production target is `SniperPlug.com`, not the separate 420 Lobby Hack site and not the Discord deal-bot repository.
+Repair and fully audit the Whop importer and owner-only guide workflow in `UglyGameFace/SniperPlug-Site` on `SniperPlug.com`.
 
 Required path:
 
-Whop OAuth/session → Experience discovery → exact content scan → import → D1 draft → course media/video → owner review → reject/remove → restore or re-import → publish to owner-only guide library → authenticated guide/video access.
+Whop OAuth/session → live Experience discovery → exact content scan → import → D1 draft → media/video → owner review → reject/remove → restore or re-import → publish to owner-only library → authenticated guide/media access.
 
 ## Status
-Active. Production routing, owner login, source-access truth, and recovery-media code are implemented and the latest full Node 22 build passes. Do not claim the task complete until the new recovery UI is production-browser verified, anonymous/customer isolation is rechecked on production, a real live Course lifecycle can run again, and final cleanup passes.
+Active and code-clean. Owner routing, source-access truth, recovery-media truth, anonymous guide isolation, and the full Node 22 regression suite pass. The task is not complete until the owner-only production UI is visually accepted and a real authorized Course source is available for the live end-to-end lifecycle.
 
 ## Scope
-- One visible `Owner access` entry on the SniperPlug homepage.
-- Existing Control Center password/session reused; no second credential system.
-- Private guide list, guide details, copied media, and course video restricted to `kind=owner`.
-- Public navigation, sitemap, crawler metadata, and shared caches must not expose private guides.
-- Saved source decisions must never be presented as current readable Whop access.
-- A Whop-backed player must never be described or treated as a permanent media copy.
-- Chrome and Samsung Internet behavior must remain responsive and duplicate-safe.
+- Reuse the existing Control Center password/session; no second owner credential system.
+- Require `kind=owner` for guide lists, guide details, copied R2 media, and course-video routes.
+- Keep private content out of public navigation, sitemap, indexing, shared caches, and static-asset fallbacks.
+- Never present saved Whop decisions as current readable access.
+- Never describe a Whop-backed player as a permanent copy.
+- Preserve immediate, duplicate-safe behavior in Chrome and Samsung Internet.
 
 ## Confirmed findings
-- PR #4 and PR #5 are merged into `main`.
-- `sniperplug.com` serves the current Cloudflare Pages production project and visibly exposes `Owner access` without a public Guides link.
-- The owner used the existing Control Center password on `SniperPlug.com`; the Control Center opened and exposed `Private guides`.
-- The Control Center previously labeled 34 persisted `whop_sources` approvals as current even though live Whop verification returned 0 active groups and 0 readable sources. Those 34 rows are historical policy decisions only.
-- The draft shown on July 31, 2026 was imported before `SNIPERPLUG_MEDIA` was connected. Its text and metadata were saved in D1, but its private/expiring hosted video was never copied into R2.
-- A registered `/course-video/...` player was marked durable in attachment metadata even though the route still fetched the live Whop lesson and Mux playback data on every open. Losing Whop source access therefore broke playback.
-- Existing permanent R2 archives, when present, were not preferred by the course-video route; the route contacted Whop first.
-- `Restore & re-import` returned a generic 500 when failed recovery rolled back an unchanged rejected guide. D1 could report zero changed rows for an already-restored snapshot, which the old rollback treated as failure.
-- The connected Whop account currently has 0 readable sources. Old videos that were never copied to R2 cannot be reconstructed from D1 text or the saved course-video key alone.
-- The existing 50 MB per-object hard-free copy cap remains a separate limitation for large course videos and must not be represented as universal permanent-video support.
-- Vercel build-rate-limit failures are unrelated to the Cloudflare Pages production target. `ci/sniperplug-node22` is the authoritative build status.
+- PRs #2 through #5 are merged; no open pull request conflicts remain.
+- `sniperplug.com` is attached to the current Cloudflare Pages production deployment and visibly shows `Owner access` without a public Guides navigation item.
+- The owner Control Center password opens the private library.
+- The 34 old `whop_sources` approvals are saved policy history; current live discovery returns 0 active groups and 0 readable sources.
+- Older imported guide text survived in D1, but private/expiring Whop videos imported before the R2 binding were never copied permanently.
+- `/course-video/...` was previously labeled durable while still re-fetching Whop/Mux on every open.
+- Failed recovery could produce a false generic 500 when an unchanged rejected snapshot was already restored.
+- A crawler-visible historical `/guides/` page proved route-level gates alone were insufficient evidence. Global middleware previously called `context.next()` before applying privacy classification.
+- The current 50 MB per-object hard-free cap cannot archive many full course videos. Large-video storage remains deliberately deferred by the owner.
 
 ## Implemented changes
-- Reused the signed `sniperplug_admin` Control Center session and protected guide, copied-media, and course-video routes with owner authorization.
-- Removed private-guide links from public discovery surfaces and added private/no-store/noindex defenses.
-- Pinned `Owner access` in the narrow mobile header.
-- Added source-access truth that separates currently readable approved sources from inactive saved decisions.
-- Added shared `recovery-media` truth helpers that distinguish:
-  - permanent R2 media;
-  - live-source Whop video;
-  - text imported without a media copy;
-  - text-only imports.
-- The recovery list now explains each item’s actual media state and labels its action as either `Restore saved R2 copy` or `Re-import from Whop`.
-- Permanent R2 copies can return a rejected guide to the draft queue without contacting Whop.
-- Course-video playback now checks for an owner-only permanent R2 archive before making any Whop request and plays the R2 copy directly when present.
-- Live-only playback and media repair now return explicit reconnect, lost-access, or missing-source messages instead of a generic importer error.
-- Lost or missing sources leave the recovery action disabled as `Source access required` instead of inviting repeated failing requests.
-- Recovery rollback is idempotent: an unchanged guide that already matches its rejected snapshot counts as successfully restored rather than producing a false rollback 500.
-- Added executable recovery-media truth tests to the full Node 22 build chain.
+- Reused the signed `sniperplug_admin` owner session across Control Center and private guides.
+- Protected guide, media, and course-video routes; customer importer sessions are denied.
+- Removed public guide discovery links and added no-store/noindex/robots/sitemap defenses.
+- Pinned `Owner access` in narrow mobile navigation.
+- Separated currently readable approved sources from inactive saved approval history.
+- Added recovery-media classification for permanent R2 media, live Whop-backed video, missing media copies, and text-only imports.
+- Permanent R2 copies restore/play without Whop; live-only items clearly require current source access.
+- Recovery now returns explicit reconnect/lost-access/missing-source errors and uses idempotent rollback.
+- Global Pages middleware now authenticates `/guides` and every `/guides/*` URL before `context.next()`, preventing static assets or nested routes from resolving first.
+- Added `_routes.json` with `/*` Function coverage while excluding only public static assets.
+- Added executable routing tests proving anonymous/customer requests never reach asset/function resolution, owners continue normally, and public pages remain unaffected.
+- Added a permanent production smoke workflow. Every push to `main` anonymously probes the real custom domain and fails if known private guide text becomes readable.
 
 ## Validation completed
-- Existing homepage, private-guide authorization, Whop discovery/import, hardening, quality, network, decision, scan, concurrency, versioning, recovery ownership, paid access, hard-free media, course-video, and resilience audits continue to pass.
-- New tests prove:
-  - a Whop-backed player is not a permanent copy;
-  - permanent R2 media restores without Whop;
-  - the course-video request path checks R2 before Whop;
-  - missing/lost Whop access returns the real reason;
-  - unchanged recovery rollback cannot become a false 500;
-  - unavailable recovery buttons remain disabled.
-- The latest authoritative GitHub Actions result is `ci/sniperplug-node22: success` on commit `b590c4220d836bbc002005538f3fedf3f46b2f8b`.
+- `ci/sniperplug-node22: success` on commit `9b06e240f9dbf541528c3560fb6a44b212254f57`.
+- `ci/sniperplug-production-guide-privacy: success` on the same commit.
+- The production probe received HTTP 403 before any private content was readable; known private guide markers were absent.
+- Existing homepage, authorization, discovery/import, quality, network, decision, scan, concurrency, versioning, recovery, paid-access, hard-free media, course-video, and resilience tests continue to pass.
+- New tests prove the owner gate executes before Pages routing/static resolution, permanent R2 media is independent of Whop, live-backed media is labeled honestly, and unchanged rollback cannot become a false 500.
+- Repository search found no public `/guides/` links outside protected owner templates/Control Center and no service worker or browser cache layer capable of resurrecting an old guide page.
+- All relevant pull requests are merged. Remaining old branches are historical only and are not deployment targets.
 
 ## Current blockers
-- Production browser verification is required after the latest Cloudflare deployment. The current removed import should say that its text was saved but its media was not copied, and a failed retry should explain that current Whop source access is required rather than show `Recovery request failed (500)`.
-- Production must show 0 currently accessible approved sources and identify the 34 previous approvals as inactive history for the current no-access account.
-- The connected account currently has no readable Course source, so the old missing video cannot be recovered and a complete new live Course import → R2/archive or live playback → reject → restore/re-import → private publish flow cannot be executed yet.
-- Large-video permanence beyond the existing 50 MB per-object hard-free cap still needs a deliberate storage/transfer design before universal permanent course-video support can be claimed.
+- Owner-browser verification after the current deployment must show:
+  - 0 currently accessible approved sources;
+  - 34 previous approvals retained as inactive history;
+  - removed imports labeled by their actual media state;
+  - no generic recovery 500 when source access is missing.
+- The connected Whop account has 0 readable sources. A genuine Course discover → import → video → reject → restore/re-import → private publish lifecycle cannot run until an authorized readable source is connected.
+- Customer-session production isolation and the owner interaction flow still need one Chrome/Samsung Internet acceptance pass; executable tests already pass.
+- Large-video permanence above 50 MB is deferred for a later storage decision.
 
 ## Required acceptance
-- [x] `SniperPlug.com` visibly shows `Owner access` and no public Guides link.
-- [x] Owner access remains visible in the narrow Samsung Internet header.
-- [x] Owner login uses the existing Control Center password and opens `Private guides`.
-- [x] Latest full Node 22 GitHub Actions build passes with source-access and recovery-media truth repairs.
-- [ ] Production shows 0 currently accessible approved sources and 34 inactive previous approvals.
-- [ ] Production recovery rows distinguish permanent R2 copies from Whop-dependent or missing media.
-- [ ] The observed removed import no longer returns a generic recovery 500.
-- [ ] Anonymous and customer-importer sessions cannot read a guide, copied media, or course video on production.
-- [ ] A real live Course flow passes end to end when an authorized readable source is available.
-- [ ] Repeat the owner flow in Chrome and Samsung Internet with immediate feedback and no duplicate operation.
-- [ ] Final conflict, obsolete-code, temporary-file, and redundant-path inspection passes.
+- [x] Production homepage shows `Owner access` and no public Guides link.
+- [x] Owner access remains visible on narrow Samsung Internet layouts.
+- [x] Existing owner password opens the Control Center and private library.
+- [x] Private guide routing fails closed before Pages static/function resolution.
+- [x] Anonymous production probe cannot read private guide content.
+- [x] Full Node 22 build/regression suite passes.
+- [x] Main-branch conflict, obsolete diagnostic workflow, duplicate route, and public-link inspection passes.
+- [ ] Production owner UI shows 0 current approvals and 34 inactive historical approvals.
+- [ ] Production recovery rows show honest media state and no generic 500.
+- [ ] Customer session cannot read owner guide/media/video on production.
+- [ ] Real authorized Course lifecycle passes when source access is available.
+- [ ] Chrome and Samsung Internet owner flow acceptance passes.
 
 ## Backlog after active-task acceptance
-- Newegg/affiliate reviewer readiness: replace or hide all demo deals and sample/replacement instructions.
-- Replace retailer-search redirects with exact product/SKU destinations or remove affected cards.
-- Finish the privacy policy for analytics, affiliate tracking, cookies, Discord/Whop connections, retention, and deletion.
-- Audit every public deal, store, and partner page before applying to Newegg.
+- Newegg/affiliate readiness: remove or hide every demo/sample deal and replacement instruction.
+- Replace broad retailer-search destinations with exact product/SKU destinations or remove the cards.
+- Replace the starter privacy policy with an accurate final policy.
+- Audit every public deal, store, legal, and partner page before applying.
+- Decide and implement large-video archival storage beyond the current 50 MB R2 cap.
 
 ## Scope lock
-The separate `UglyGameFace/SniperPlug` Discord deal-bot audit remains paused. Do not start the Newegg cleanup or another implementation task until this production owner-access task satisfies its acceptance criteria, unless the user sends the exact FORCE SWITCH instruction.
+Do not start the Newegg cleanup, Discord deal-bot work, or another implementation task until this owner/Whop task satisfies acceptance, unless the owner sends the exact FORCE SWITCH instruction.
