@@ -50,7 +50,7 @@ const requiredShellTokens = [
 
 for (const path of staticShellPages) {
   const content = read(path);
-  assert.match(content, baseStylesheetPattern, `${path} does not load the base SniperPlug visual system.`);
+  assert.match(content, baseStylesheetPattern, `${path} does not load the SniperPlug visual aggregator.`);
   for (const token of requiredShellTokens) {
     assert.ok(content.includes(token), `${path} is missing shared shell token: ${token}`);
   }
@@ -64,9 +64,12 @@ for (const path of marketingPages) {
   assert.equal(content.indexOf(marketingStylesheet, first + 1), -1, `${path} loads the marketing stylesheet more than once.`);
 }
 
-const baseCss = read('assets/css/styles.css');
-assert.ok(baseCss.startsWith("@import url('/assets/css/site-shell.css');"), 'styles.css must load the global shell before base rules.');
-assert.doesNotMatch(baseCss, /@import url\('\/assets\/css\/homepage\.css'\)/, 'styles.css must not duplicate the page-specific marketing stylesheet.');
+const aggregatorCss = read('assets/css/styles.css').trim();
+const expectedAggregator = "@import url('/assets/css/site-base.css');\n@import url('/assets/css/site-shell.css');";
+assert.equal(aggregatorCss, expectedAggregator, 'styles.css must load base first and the global shell second, with no duplicate rule set.');
+assert.doesNotMatch(aggregatorCss, /homepage\.css/, 'The visual aggregator must not duplicate the page-specific marketing stylesheet.');
+
+const baseCss = read('assets/css/site-base.css');
 for (const requirement of [
   /--brand:#68e384/,
   /--brand2:#35c2ff/,
@@ -75,9 +78,11 @@ for (const requirement of [
   /\.site-footer/,
   /\.legal-card/,
   /\.notice/,
+  /@media \(max-width:620px\)/,
 ]) {
-  assert.match(baseCss, requirement, `Base theme is missing ${requirement}.`);
+  assert.match(baseCss, requirement, `Foundational theme is missing ${requirement}.`);
 }
+assert.doesNotMatch(baseCss, /sniperplug-logo-exact\.svg/, 'Exact global branding must not be duplicated in the foundational stylesheet.');
 
 const shellCss = read('assets/css/site-shell.css');
 for (const requirement of [
@@ -153,5 +158,6 @@ for (const token of ['class="error-shell"', 'class="error-card"', 'src="/assets/
 console.log('\nSNIPERPLUG FULL VISUAL CONSISTENCY AUDIT PASSED\n');
 console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, and global visual foundation.`);
 console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
+console.log('✓ Ordered base, global shell, and page-specific layers cannot override one another accidentally.');
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
 console.log('✓ Exact approved logo bytes, proportional rendering, and revalidation headers are enforced.');
