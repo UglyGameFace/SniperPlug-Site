@@ -1,0 +1,119 @@
+name: Verify affiliate-ready production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: affiliate-production-readiness
+  cancel-in-progress: true
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Pages production and verify reviewer pages
+        id: verify
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          pages='https://sniperplug.pages.dev'
+          custom='https://sniperplug.com'
+          banned='Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00'
+
+          ready=0
+          for attempt in $(seq 1 36); do
+            nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
+            code="$(curl --silent --show-error --max-time 25 --output homepage.html --write-out '%{http_code}' "${pages}/?production=${nonce}" || true)"
+            if [ "$code" = '200' ] && grep -Fq 'No exact destination means no public deal card.' homepage.html && ! grep -Eiq "$banned" homepage.html; then
+              ready=1
+              break
+            fi
+            echo "Attempt ${attempt}: Pages production HTTP ${code}; waiting for the main deployment."
+            sleep 20
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo '::error::Pages production never served the affiliate-ready homepage.'
+            sed -n '1,120p' homepage.html 2>/dev/null || true
+            exit 1
+          fi
+
+          check_page() {
+            path="$1"
+            marker="$2"
+            output="$3"
+            code="$(curl --silent --show-error --location --max-time 25 --output "$output" --write-out '%{http_code}' "${pages}${path}?production=${COMMIT_SHA}" || true)"
+            test "$code" = '200'
+            grep -Fiq "$marker" "$output"
+            ! grep -Eiq "$banned" "$output"
+          }
+
+          check_page '/deals/' 'No verified public deal cards are active.' deals.html
+          check_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
+          check_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
+          check_page '/partners/' 'Exact deep links' partners.html
+          check_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
+          check_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
+          check_page '/terms/' 'Authorized private tools' terms.html
+
+          retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${pages}/deal/walmart-shark-navigator-vacuum/?production=${COMMIT_SHA}" || true)"
+          test "$retired_code" = '200'
+          grep -Fq 'Only confirmed offers belong here.' retired.html
+          ! grep -Eiq 'Shark Navigator|\$89\.00|Launch example|sample item' retired.html
+
+          curl --silent --show-error --max-time 25 "${pages}/sitemap.xml?production=${COMMIT_SHA}" > sitemap.xml
+          grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
+          ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
+
+          custom_code="$(curl --silent --show-error --location --max-time 25 \
+            --user-agent 'Mozilla/5.0 (compatible; SniperPlug-Affiliate-Readiness/1.0)' \
+            --output custom.html --write-out '%{http_code}' \
+            "${custom}/?production=${COMMIT_SHA}" || true)"
+          ! grep -Eiq "$banned" custom.html 2>/dev/null
+          if [ "$custom_code" = '200' ]; then
+            grep -Fq 'No exact destination means no public deal card.' custom.html
+            echo 'Custom domain served the affiliate-ready homepage.'
+          elif [ "$custom_code" = '403' ]; then
+            echo 'Custom domain applied a Cloudflare bot challenge; no retired public content was returned.'
+          else
+            echo "::error::Custom domain returned unexpected HTTP ${custom_code}."
+            sed -n '1,120p' custom.html 2>/dev/null || true
+            exit 1
+          fi
+
+          echo 'reason=Pages production passed all reviewer checks and the custom domain returned no retired content.' >> "$GITHUB_OUTPUT"
+
+      - name: Publish production readiness status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = 'success' ]; then
+            state='success'
+            description='Affiliate-ready production pages passed'
+          else
+            state='failure'
+            description='Affiliate reviewer production checks failed'
+          fi
+          payload="$(jq -nc \
+            --arg state "$state" \
+            --arg context 'ci/sniperplug-production-affiliate-readiness' \
+            --arg description "$description" \
+            --arg target_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "$payload" >/dev/null

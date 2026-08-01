@@ -2,10 +2,6 @@ const STATIC_PATHS = [
   '/', '/deals/', '/about/', '/partners/', '/contact/',
   '/affiliate-disclosure/', '/privacy/', '/terms/',
   '/deals/walmart/', '/deals/lowes/', '/deals/best-buy/', '/deals/home-depot/', '/deals/amazon/',
-  '/deal/walmart-shark-navigator-vacuum/', '/deal/lowes-blackstone-36-griddle/',
-  '/deal/bestbuy-samsung-odyssey-monitor/', '/deal/homedepot-dewalt-drill-kit/',
-  '/deal/amazon-ninja-air-fryer/', '/deal/walmart-lg-55-4k-tv/',
-  '/deal/amazon-ring-video-doorbell/', '/deal/lowes-kobalt-tool-storage/',
 ];
 
 function xml(value) {

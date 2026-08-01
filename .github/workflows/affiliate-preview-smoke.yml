@@ -1,0 +1,89 @@
+name: Verify affiliate-ready preview
+
+on:
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'deals/**'
+      - 'deal/**'
+      - 'about/**'
+      - 'partners/**'
+      - 'contact/**'
+      - 'privacy/**'
+      - 'terms/**'
+      - 'affiliate-disclosure/**'
+      - 'data/deals.json'
+      - 'functions/deal/**'
+      - 'functions/go/**'
+      - 'functions/sitemap.xml.js'
+      - '.github/workflows/affiliate-preview-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: affiliate-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Cloudflare preview and inspect public pages
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          alias="$(printf '%s' "$HEAD_REF" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')"
+          alias="${alias:0:28}"
+          base="https://${alias}.sniperplug.pages.dev"
+          echo "Checking ${base}"
+
+          ready=0
+          for attempt in $(seq 1 36); do
+            code="$(curl --silent --show-error --max-time 25 --output homepage.html --write-out '%{http_code}' "${base}/?preview=${COMMIT_SHA}-${attempt}" || true)"
+            if [ "$code" = '200' ] && grep -Fq 'No exact destination means no public deal card.' homepage.html; then
+              ready=1
+              break
+            fi
+            echo "Attempt ${attempt}: preview returned HTTP ${code}; waiting for deployment."
+            sleep 20
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo '::error::Cloudflare branch preview did not deploy the affiliate-ready homepage before timeout.'
+            sed -n '1,100p' homepage.html 2>/dev/null || true
+            exit 1
+          fi
+
+          check_page() {
+            path="$1"
+            marker="$2"
+            output="$3"
+            code="$(curl --silent --show-error --location --max-time 25 --output "$output" --write-out '%{http_code}' "${base}${path}?preview=${COMMIT_SHA}" || true)"
+            test "$code" = '200'
+            grep -Fiq "$marker" "$output"
+            ! grep -Eiq 'Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00' "$output"
+          }
+
+          check_page '/' 'No exact destination means no public deal card.' homepage.html
+          check_page '/deals/' 'No verified public deal cards are active.' deals.html
+          check_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
+          check_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
+          check_page '/partners/' 'Exact deep links' partners.html
+          check_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
+          check_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
+          check_page '/terms/' 'Authorized private tools' terms.html
+
+          retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${base}/deal/walmart-shark-navigator-vacuum/?preview=${COMMIT_SHA}" || true)"
+          test "$retired_code" = '200'
+          grep -Fq 'Only confirmed offers belong here.' retired.html
+          ! grep -Eiq 'Shark Navigator|\$89\.00|Launch example|sample item' retired.html
+
+          curl --silent --show-error --max-time 25 "${base}/sitemap.xml?preview=${COMMIT_SHA}" > sitemap.xml
+          grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
+          ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
+
+          echo 'Affiliate-ready Cloudflare preview passed.'
