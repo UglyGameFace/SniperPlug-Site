@@ -1,0 +1,102 @@
+name: Verify production guide privacy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: production-guide-privacy
+  cancel-in-progress: true
+
+jobs:
+  anonymous-guide-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Cloudflare and verify private routes
+        id: probe
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          safe=0
+          reason='Production did not return an owner lock or a Cloudflare access block before timeout.'
+          for attempt in $(seq 1 36); do
+            nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
+            rm -f headers.txt body.txt
+            status="$(curl --silent --show-error --location \
+              --max-time 25 \
+              --user-agent 'Mozilla/5.0 (compatible; SniperPlug-Privacy-Audit/1.0)' \
+              --header 'Accept: text/html,application/xhtml+xml' \
+              --dump-header headers.txt \
+              --output body.txt \
+              --write-out '%{http_code}' \
+              "https://sniperplug.com/guides/?privacy_audit=${nonce}" || true)"
+
+            if grep -Eiq 'HIDDEN FILES SELLER ERRORS|Seller Errors allow you|Sports Betting|Auto Checkout|Bots & Automation' body.txt 2>/dev/null; then
+              reason="Private guide text was readable anonymously with HTTP ${status}."
+              echo "Attempt ${attempt}: unsafe guide content is still visible; waiting for deployment propagation."
+              sleep 20
+              continue
+            fi
+
+            if [ "$status" = '401' ] && grep -Eiq 'Unlock the private guides|Owner-only library' body.txt; then
+              safe=1
+              reason='Anonymous guide request received the owner lock page.'
+              break
+            fi
+
+            if [ "$status" = '403' ]; then
+              safe=1
+              reason='Anonymous guide request was blocked before private content could be read.'
+              break
+            fi
+
+            echo "Attempt ${attempt}: HTTP ${status}; private lock not confirmed yet."
+            sleep 20
+          done
+
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          if [ "$safe" -ne 1 ]; then
+            echo "::error::${reason}"
+            echo '--- response headers ---'
+            cat headers.txt 2>/dev/null || true
+            echo '--- response body (first 120 lines) ---'
+            sed -n '1,120p' body.txt 2>/dev/null || true
+            exit 1
+          fi
+          echo "$reason"
+
+      - name: Publish production privacy status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+          RESULT_REASON: ${{ steps.probe.outputs.reason }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = 'success' ]; then
+            state='success'
+            description='Anonymous production guide access is blocked'
+          else
+            state='failure'
+            description='Production may expose private guide content'
+          fi
+          payload="$(jq -nc \
+            --arg state "$state" \
+            --arg context 'ci/sniperplug-production-guide-privacy' \
+            --arg description "$description" \
+            --arg target_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{state:$state,context:$context,description:$description,target_url:$target_url}')"
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "$payload" >/dev/null
