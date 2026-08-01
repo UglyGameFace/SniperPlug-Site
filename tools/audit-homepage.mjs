@@ -73,23 +73,29 @@ if (fs.existsSync(path.join(root, 'assets/sniperplug-logo.svg'))) {
   fail('obsolete substitute SVG remains in the repository');
 }
 
-const dataUriMatch = runtime.match(/data:image\/png;base64,([A-Za-z0-9+/=\s]+?)',\s*\]/s);
-if (!dataUriMatch) {
-  fail('the exact embedded PNG logo is missing from the shared runtime');
+const logoArrayMatch = runtime.match(/const logoAsset = \[([\s\S]*?)\]\.join\(''\);/);
+if (!logoArrayMatch) {
+  fail('the embedded exact-logo array is missing from the shared runtime');
 } else {
-  const encoded = dataUriMatch[1].replace(/['",\s]/g, '');
-  const logo = Buffer.from(encoded, 'base64');
-  const pngSignature = '89504e470d0a1a0a';
-  if (logo.subarray(0, 8).toString('hex') !== pngSignature) fail('embedded logo is not a valid PNG');
-  if (logo.length < 24) fail('embedded logo is truncated');
-  else {
-    const width = logo.readUInt32BE(16);
-    const height = logo.readUInt32BE(20);
-    if (width !== 96 || height !== 96) fail(`embedded logo must be 96×96, received ${width}×${height}`);
-  }
-  const digest = crypto.createHash('sha256').update(logo).digest('hex');
-  if (digest !== '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86') {
-    fail(`embedded logo checksum changed: ${digest}`);
+  const parts = [...logoArrayMatch[1].matchAll(/'([^']*)'/g)].map((match) => match[1]);
+  const dataUri = parts.join('');
+  const prefix = 'data:image/png;base64,';
+  if (!dataUri.startsWith(prefix)) {
+    fail('the exact embedded PNG logo is missing from the shared runtime');
+  } else {
+    const logo = Buffer.from(dataUri.slice(prefix.length), 'base64');
+    const pngSignature = '89504e470d0a1a0a';
+    if (logo.subarray(0, 8).toString('hex') !== pngSignature) fail('embedded logo is not a valid PNG');
+    if (logo.length < 24) fail('embedded logo is truncated');
+    else {
+      const width = logo.readUInt32BE(16);
+      const height = logo.readUInt32BE(20);
+      if (width !== 96 || height !== 96) fail(`embedded logo must be 96×96, received ${width}×${height}`);
+    }
+    const digest = crypto.createHash('sha256').update(logo).digest('hex');
+    if (digest !== '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86') {
+      fail(`embedded logo checksum changed: ${digest}`);
+    }
   }
 }
 
