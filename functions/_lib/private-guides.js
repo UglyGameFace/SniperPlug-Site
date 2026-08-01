@@ -27,7 +27,7 @@ function privateGuideLockPage(message) {
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a>
-      <nav class="nav" aria-label="Private guide navigation"><a href="/">Home</a><a href="/deals/">Deals</a><a href="/control-center/">Control Center</a></nav>
+      <nav class="nav" aria-label="Private guide navigation"><a href="/">Home</a><a href="/deals/">Deals</a><a href="/guides/" aria-current="page">Private guides</a><a href="/control-center/">Control Center</a></nav>
     </div>
   </header>
   <main id="main" class="control-shell" data-private-guide-login>
@@ -44,6 +44,8 @@ function privateGuideLockPage(message) {
       <p><a class="btn ghost" href="/control-center/">Open the full Control Center</a></p>
     </section>
   </main>
+  <footer class="site-footer"><div class="container footer-grid"><div><a class="brand footer-brand" href="/"><span class="brand-mark">SP</span><span>SniperPlug</span></a><p>Owner-only guide review and reference library.</p><p class="mini">This area is excluded from public navigation, search indexing, and shared caching.</p></div><div><h4>Private tools</h4><a href="/guides/">Guide library</a><a href="/control-center/">Control Center</a></div><div><h4>Public site</h4><a href="/">Home</a><a href="/deals/">Deals</a><a href="/partners/">Partners</a></div><div><h4>Account</h4><a href="/control-center/">Lock or manage access</a></div></div><div class="container footer-bottom">© 2026 SniperPlug. Private owner workspace.</div></footer>
+  <script src="/assets/js/site.js" defer></script>
   <script src="/assets/js/private-guides-login.js" defer></script>
 </body>
 </html>`;
