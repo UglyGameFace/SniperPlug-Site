@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -11,7 +12,6 @@ const fail = (message) => {
 const html = read('index.html');
 const css = read('assets/css/homepage.css');
 const runtime = read('assets/js/site.js');
-const logoPath = 'assets/sniperplug-logo.svg';
 
 const requiredHtml = [
   '<meta name="viewport"',
@@ -69,11 +69,27 @@ for (const route of requiredRoutes) {
   if (!fs.existsSync(path.join(root, route))) fail(`linked route does not exist: ${route}`);
 }
 
-if (!fs.existsSync(path.join(root, logoPath))) fail('the shared SniperPlug logo asset is missing');
-else {
-  const logo = read(logoPath);
-  for (const token of ['<svg', 'SniperPlug logo', 'linearGradient', '>SP</text>', '<rect', '<path']) {
-    if (!logo.includes(token)) fail(`the shared logo asset is incomplete: ${token}`);
+if (fs.existsSync(path.join(root, 'assets/sniperplug-logo.svg'))) {
+  fail('obsolete substitute SVG remains in the repository');
+}
+
+const dataUriMatch = runtime.match(/data:image\/png;base64,([A-Za-z0-9+/=\s]+?)',\s*\]/s);
+if (!dataUriMatch) {
+  fail('the exact embedded PNG logo is missing from the shared runtime');
+} else {
+  const encoded = dataUriMatch[1].replace(/['",\s]/g, '');
+  const logo = Buffer.from(encoded, 'base64');
+  const pngSignature = '89504e470d0a1a0a';
+  if (logo.subarray(0, 8).toString('hex') !== pngSignature) fail('embedded logo is not a valid PNG');
+  if (logo.length < 24) fail('embedded logo is truncated');
+  else {
+    const width = logo.readUInt32BE(16);
+    const height = logo.readUInt32BE(20);
+    if (width !== 96 || height !== 96) fail(`embedded logo must be 96×96, received ${width}×${height}`);
+  }
+  const digest = crypto.createHash('sha256').update(logo).digest('hex');
+  if (digest !== '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86') {
+    fail(`embedded logo checksum changed: ${digest}`);
   }
 }
 
@@ -83,14 +99,18 @@ if (!css.includes('minmax(0,1fr)')) fail('responsive grid overflow protection is
 if (/min-width\s*:\s*[7-9]\d{2,}px/i.test(css)) fail('large fixed min-width may cause horizontal overflow');
 
 const requiredBrandRuntime = [
-  "const logoAsset = '/assets/sniperplug-logo.svg'",
+  'data:image/png;base64,',
   "document.querySelectorAll('.brand-mark')",
+  "logo.style.objectFit = 'contain'",
+  "logo.style.aspectRatio = '1 / 1'",
+  "mark.style.overflow = 'hidden'",
   "mark.replaceChildren(logo)",
   "mark.dataset.brandLogo = 'true'",
+  "mark.dataset.brandArtwork = 'owner-approved-exact'",
   "mark.setAttribute('aria-hidden', 'true')",
 ];
 for (const token of requiredBrandRuntime) {
-  if (!runtime.includes(token)) fail(`shared brand-logo rendering is missing: ${token}`);
+  if (!runtime.includes(token)) fail(`exact brand-logo rendering is missing: ${token}`);
 }
 
 const requiredMobileOwnerRuntime = [
