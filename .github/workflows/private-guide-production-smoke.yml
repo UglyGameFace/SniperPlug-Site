@@ -24,65 +24,73 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          safe=0
-          reason='Production did not return an owner lock or a Cloudflare access block before timeout.'
-          for attempt in $(seq 1 36); do
-            nonce="${COMMIT_SHA}-${attempt}-$(date +%s)"
-            rm -f headers.txt body.txt
-            status="$(curl --silent --show-error --location \
-              --max-time 25 \
-              --user-agent 'Mozilla/5.0 (compatible; SniperPlug-Privacy-Audit/1.0)' \
-              --header 'Accept: text/html,application/xhtml+xml' \
-              --dump-header headers.txt \
-              --output body.txt \
-              --write-out '%{http_code}' \
-              "https://sniperplug.com/guides/?privacy_audit=${nonce}" || true)"
+          private_markers='HIDDEN FILES SELLER ERRORS|Seller Errors allow you|Sports Betting|Auto Checkout|Bots & Automation'
 
-            if grep -Eiq 'HIDDEN FILES SELLER ERRORS|Seller Errors allow you|Sports Betting|Auto Checkout|Bots & Automation' body.txt 2>/dev/null; then
-              reason="Private guide text was readable anonymously with HTTP ${status}."
-              echo "Attempt ${attempt}: unsafe guide content is still visible; waiting for deployment propagation."
+          request_page() {
+            local base_url="$1"
+            local label="$2"
+            local allow_challenge="$3"
+            local attempt nonce status
+            for attempt in $(seq 1 36); do
+              nonce="${COMMIT_SHA}-${label}-${attempt}-$(date +%s)"
+              rm -f "${label}-headers.txt" "${label}-body.txt"
+              status="$(curl --silent --show-error --location \
+                --max-time 25 \
+                --user-agent 'Mozilla/5.0 (compatible; SniperPlug-Privacy-Audit/1.0)' \
+                --header 'Accept: text/html,application/xhtml+xml' \
+                --dump-header "${label}-headers.txt" \
+                --output "${label}-body.txt" \
+                --write-out '%{http_code}' \
+                "${base_url}/guides/?privacy_audit=${nonce}" || true)"
+
+              if grep -Eiq "$private_markers" "${label}-body.txt" 2>/dev/null; then
+                echo "${label} attempt ${attempt}: private guide text is still readable with HTTP ${status}."
+                sleep 20
+                continue
+              fi
+
+              if [ "$status" = '401' ] && grep -Eiq 'Unlock the private guides|Owner-only library' "${label}-body.txt"; then
+                echo "${label}: anonymous request received the owner lock page."
+                return 0
+              fi
+
+              if [ "$allow_challenge" = 'yes' ] && [ "$status" = '403' ]; then
+                echo "${label}: anonymous request was blocked by Cloudflare before private content could be read."
+                return 0
+              fi
+
+              echo "${label} attempt ${attempt}: HTTP ${status}; private lock not confirmed yet."
               sleep 20
-              continue
-            fi
+            done
 
-            if [ "$status" = '401' ] && grep -Eiq 'Unlock the private guides|Owner-only library' body.txt; then
-              safe=1
-              reason='Anonymous guide request received the owner lock page.'
-              break
-            fi
+            echo "::error::${label} did not return the owner lock before timeout."
+            echo "--- ${label} response headers ---"
+            cat "${label}-headers.txt" 2>/dev/null || true
+            echo "--- ${label} response body (first 120 lines) ---"
+            sed -n '1,120p' "${label}-body.txt" 2>/dev/null || true
+            return 1
+          }
 
-            if [ "$status" = '403' ]; then
-              safe=1
-              reason='Anonymous guide request was blocked before private content could be read.'
-              break
-            fi
+          # The pages.dev hostname is outside the custom-zone bot challenge and
+          # must prove the deployed Pages Function itself returns the owner lock.
+          request_page 'https://sniperplug.pages.dev' 'pages' 'no'
 
-            echo "Attempt ${attempt}: HTTP ${status}; private lock not confirmed yet."
-            sleep 20
-          done
+          # The real custom domain may receive a Super Bot Fight challenge. Both
+          # the owner lock and a Cloudflare 403 are safe, but private text is not.
+          request_page 'https://sniperplug.com' 'custom' 'yes'
 
-          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-          if [ "$safe" -ne 1 ]; then
-            echo "::error::${reason}"
-            echo '--- response headers ---'
-            cat headers.txt 2>/dev/null || true
-            echo '--- response body (first 120 lines) ---'
-            sed -n '1,120p' body.txt 2>/dev/null || true
-            exit 1
-          fi
-          echo "$reason"
+          echo 'reason=Pages returned the owner lock and the custom domain blocked anonymous guide access.' >> "$GITHUB_OUTPUT"
 
       - name: Publish production privacy status
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           JOB_STATUS: ${{ job.status }}
-          RESULT_REASON: ${{ steps.probe.outputs.reason }}
         run: |
           set -euo pipefail
           if [ "$JOB_STATUS" = 'success' ]; then
             state='success'
-            description='Anonymous production guide access is blocked'
+            description='Pages and custom-domain guide privacy passed'
           else
             state='failure'
             description='Production may expose private guide content'
