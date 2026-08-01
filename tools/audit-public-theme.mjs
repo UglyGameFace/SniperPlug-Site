@@ -82,11 +82,12 @@ for (const requirement of [
 ]) {
   assert.match(baseCss, requirement, `Foundational theme is missing ${requirement}.`);
 }
-assert.doesNotMatch(baseCss, /sniperplug-logo-exact\.svg/, 'Exact global branding must not be duplicated in the foundational stylesheet.');
+assert.doesNotMatch(baseCss, /sniperplug-logo-exact\.png/, 'Exact global branding must not be duplicated in the foundational stylesheet.');
 
 const shellCss = read('assets/css/site-shell.css');
 for (const requirement of [
-  /\.brand-mark\{[^}]*sniperplug-logo-exact\.svg/s,
+  /\.brand-mark\{[^}]*sniperplug-logo-exact\.png/s,
+  /center\/contain no-repeat!important/,
   /object-fit:contain!important/,
   /aspect-ratio:1\/1/,
   /body\{min-height:100vh;display:flex;flex-direction:column\}/,
@@ -109,19 +110,14 @@ for (const requirement of [
 ]) {
   assert.match(marketingCss, requirement, `Marketing visual layer is missing ${requirement}.`);
 }
-assert.doesNotMatch(marketingCss, /sniperplug-logo-exact\.svg/, 'Exact global branding must not be duplicated in the marketing stylesheet.');
+assert.doesNotMatch(marketingCss, /sniperplug-logo-exact\.png/, 'Exact global branding must not be duplicated in the marketing stylesheet.');
 
-const exactLogo = read('assets/sniperplug-logo-exact.svg');
-assert.match(exactLogo, /<title id="title">SniperPlug logo<\/title>/, 'Exact shared logo is missing its accessible title.');
-assert.match(exactLogo, /<image width="96" height="96" preserveAspectRatio="xMidYMid meet"/, 'Exact shared logo does not preserve square proportional rendering.');
-const embeddedPng = exactLogo.match(/href="data:image\/png;base64,([A-Za-z0-9+/=]+)"/);
-assert.ok(embeddedPng, 'Exact shared logo does not embed the approved PNG.');
-const png = Buffer.from(embeddedPng[1], 'base64');
-assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'Exact shared logo does not contain a valid PNG.');
-assert.equal(png.readUInt32BE(16), 96, 'Exact shared logo PNG width changed.');
-assert.equal(png.readUInt32BE(20), 96, 'Exact shared logo PNG height changed.');
+const exactLogo = readFileSync(join(root, 'assets/sniperplug-logo-exact.png'));
+assert.equal(exactLogo.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'Exact shared logo is not a valid PNG.');
+assert.equal(exactLogo.readUInt32BE(16), 96, 'Exact shared logo PNG width changed.');
+assert.equal(exactLogo.readUInt32BE(20), 96, 'Exact shared logo PNG height changed.');
 assert.equal(
-  createHash('sha256').update(png).digest('hex'),
+  createHash('sha256').update(exactLogo).digest('hex'),
   '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86',
   'Exact shared logo artwork changed.',
 );
@@ -146,7 +142,7 @@ assert.ok(
 );
 
 const headers = read('_headers');
-for (const token of ['/assets/css/*', '/assets/js/*', '/assets/sniperplug-logo-exact.svg', 'max-age=0, must-revalidate']) {
+for (const token of ['/assets/css/*', '/assets/js/*', '/assets/sniperplug-logo-exact.png', 'max-age=0, must-revalidate']) {
   assert.ok(headers.includes(token), `Shared asset revalidation is missing ${token}.`);
 }
 
@@ -160,4 +156,4 @@ console.log(`✓ ${staticShellPages.length} static routes use the same header, f
 console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
 console.log('✓ Ordered base, global shell, and page-specific layers cannot override one another accidentally.');
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
-console.log('✓ Exact approved logo bytes, proportional rendering, and revalidation headers are enforced.');
+console.log('✓ Exact approved PNG bytes, proportional rendering, and revalidation headers are enforced.');
