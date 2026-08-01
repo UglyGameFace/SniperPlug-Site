@@ -12,10 +12,13 @@ on:
       - 'privacy/**'
       - 'terms/**'
       - 'affiliate-disclosure/**'
+      - 'assets/css/**'
       - 'data/deals.json'
       - 'functions/deal/**'
       - 'functions/go/**'
       - 'functions/sitemap.xml.js'
+      - 'package.json'
+      - 'tools/audit-public-theme.mjs'
       - '.github/workflows/affiliate-preview-smoke.yml'
 
 permissions:
@@ -43,18 +46,20 @@ jobs:
 
           ready=0
           for attempt in $(seq 1 36); do
-            code="$(curl --silent --show-error --max-time 25 --output homepage.html --write-out '%{http_code}' "${base}/?preview=${COMMIT_SHA}-${attempt}" || true)"
-            if [ "$code" = '200' ] && grep -Fq 'No exact destination means no public deal card.' homepage.html; then
+            code="$(curl --silent --show-error --max-time 25 --output deals-ready.html --write-out '%{http_code}' "${base}/deals/?preview=${COMMIT_SHA}-${attempt}" || true)"
+            if [ "$code" = '200' ] \
+              && grep -Fq 'No verified public deal cards are active.' deals-ready.html \
+              && grep -Fq '/assets/css/homepage.css' deals-ready.html; then
               ready=1
               break
             fi
-            echo "Attempt ${attempt}: preview returned HTTP ${code}; waiting for deployment."
+            echo "Attempt ${attempt}: preview returned HTTP ${code}; waiting for the themed deployment."
             sleep 20
           done
 
           if [ "$ready" -ne 1 ]; then
-            echo '::error::Cloudflare branch preview did not deploy the affiliate-ready homepage before timeout.'
-            sed -n '1,100p' homepage.html 2>/dev/null || true
+            echo '::error::Cloudflare branch preview did not deploy the themed affiliate-ready deal board before timeout.'
+            sed -n '1,120p' deals-ready.html 2>/dev/null || true
             exit 1
           fi
 
@@ -68,14 +73,35 @@ jobs:
             ! grep -Eiq 'Launch example|Seed example|sample item|starter policy|replace .*before public launch|\$89\.00|\$179\.00|\$297\.00|\$399\.00' "$output"
           }
 
+          check_themed_page() {
+            path="$1"
+            marker="$2"
+            output="$3"
+            check_page "$path" "$marker" "$output"
+            grep -Fq '<link rel="stylesheet" href="/assets/css/styles.css">' "$output"
+            grep -Fq '<link rel="stylesheet" href="/assets/css/homepage.css">' "$output"
+            test "$(grep -Fc '/assets/css/homepage.css' "$output")" = '1'
+          }
+
           check_page '/' 'No exact destination means no public deal card.' homepage.html
-          check_page '/deals/' 'No verified public deal cards are active.' deals.html
-          check_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
-          check_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
-          check_page '/partners/' 'Exact deep links' partners.html
+          check_themed_page '/deals/' 'No verified public deal cards are active.' deals.html
+          check_themed_page '/deals/walmart/' 'No verified Walmart deal cards are currently published.' walmart.html
+          check_themed_page '/deals/lowes/' 'No verified Lowe’s deal cards are active.' lowes.html
+          check_themed_page '/deals/best-buy/' 'No verified Best Buy deal cards are active.' bestbuy.html
+          check_themed_page '/deals/home-depot/' 'No verified Home Depot deal cards are active.' homedepot.html
+          check_themed_page '/deals/amazon/' 'No verified Amazon deal cards are active.' amazon.html
+          check_themed_page '/about/' 'Deal discovery with exact-offer discipline.' about.html
+          check_themed_page '/partners/' 'Exact deep links' partners.html
+          check_themed_page '/contact/' 'Reach SniperPlug directly.' contact.html
           check_page '/privacy/' 'Sessions, cookies, and local storage' privacy.html
           check_page '/affiliate-disclosure/' 'Editorial and verification independence' disclosure.html
           check_page '/terms/' 'Authorized private tools' terms.html
+
+          curl --silent --show-error --max-time 25 "${base}/assets/css/homepage.css?preview=${COMMIT_SHA}" > shared-theme.css
+          grep -Fq '.section-soft{' shared-theme.css
+          grep -Fq '.capability-grid{' shared-theme.css
+          grep -Fq '.capability-card{' shared-theme.css
+          grep -Fq '@media(max-width:700px)' shared-theme.css
 
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${base}/deal/walmart-shark-navigator-vacuum/?preview=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
@@ -86,4 +112,4 @@ jobs:
           grep -Fq '<loc>https://sniperplug.com/deals/</loc>' sitemap.xml
           ! grep -Fq '<loc>https://sniperplug.com/deal/' sitemap.xml
 
-          echo 'Affiliate-ready Cloudflare preview passed.'
+          echo 'Affiliate-ready Cloudflare preview and public theme passed.'
