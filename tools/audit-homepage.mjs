@@ -11,6 +11,7 @@ const fail = (message) => {
 const html = read('index.html');
 const css = read('assets/css/homepage.css');
 const runtime = read('assets/js/site.js');
+const logoPath = 'assets/sniperplug-logo.svg';
 
 const requiredHtml = [
   '<meta name="viewport"',
@@ -68,10 +69,29 @@ for (const route of requiredRoutes) {
   if (!fs.existsSync(path.join(root, route))) fail(`linked route does not exist: ${route}`);
 }
 
+if (!fs.existsSync(path.join(root, logoPath))) fail('the shared SniperPlug logo asset is missing');
+else {
+  const logo = read(logoPath);
+  for (const token of ['<svg', 'SniperPlug logo', 'linearGradient', '>SP</text>', '<rect', '<path']) {
+    if (!logo.includes(token)) fail(`the shared logo asset is incomplete: ${token}`);
+  }
+}
+
 if (!/@media\s*\(max-width\s*:\s*9(?:40|39)px\)/i.test(css)) fail('tablet breakpoint is missing');
 if (!/@media\s*\(max-width\s*:\s*(?:6\d{2}|700)px\)/i.test(css)) fail('mobile breakpoint is missing');
 if (!css.includes('minmax(0,1fr)')) fail('responsive grid overflow protection is missing');
 if (/min-width\s*:\s*[7-9]\d{2,}px/i.test(css)) fail('large fixed min-width may cause horizontal overflow');
+
+const requiredBrandRuntime = [
+  "const logoAsset = '/assets/sniperplug-logo.svg'",
+  "document.querySelectorAll('.brand-mark')",
+  "mark.replaceChildren(logo)",
+  "mark.dataset.brandLogo = 'true'",
+  "mark.setAttribute('aria-hidden', 'true')",
+];
+for (const token of requiredBrandRuntime) {
+  if (!runtime.includes(token)) fail(`shared brand-logo rendering is missing: ${token}`);
+}
 
 const requiredMobileOwnerRuntime = [
   'querySelector(\'a[href="/control-center/"]\')',
