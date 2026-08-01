@@ -1,4 +1,22 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const logoAsset = '/assets/sniperplug-logo.svg';
+  for (const mark of document.querySelectorAll('.brand-mark')) {
+    if (mark.dataset.brandLogo === 'true') continue;
+    const logo = document.createElement('img');
+    logo.src = logoAsset;
+    logo.alt = '';
+    logo.width = 42;
+    logo.height = 42;
+    logo.decoding = 'async';
+    logo.style.display = 'block';
+    logo.style.width = '100%';
+    logo.style.height = '100%';
+    logo.style.borderRadius = 'inherit';
+    mark.replaceChildren(logo);
+    mark.dataset.brandLogo = 'true';
+    mark.setAttribute('aria-hidden', 'true');
+  }
+
   const nav = document.querySelector('.nav');
   const ownerLink = nav?.querySelector('a[href="/control-center/"]');
   const mobileNavigation = window.matchMedia('(max-width: 620px)');

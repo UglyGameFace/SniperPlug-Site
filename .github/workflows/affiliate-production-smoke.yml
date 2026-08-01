@@ -88,6 +88,16 @@ jobs:
           grep -Fq '.capability-card{' shared-theme.css
           grep -Fq '@media(max-width:700px)' shared-theme.css
 
+          curl --silent --show-error --max-time 25 "${pages}/assets/sniperplug-logo.svg?production=${COMMIT_SHA}" > sniperplug-logo.svg
+          grep -Fq '<title id="title">SniperPlug logo</title>' sniperplug-logo.svg
+          grep -Fq '>SP</text>' sniperplug-logo.svg
+          grep -Fq '<linearGradient id="g"' sniperplug-logo.svg
+
+          curl --silent --show-error --max-time 25 "${pages}/assets/js/site.js?production=${COMMIT_SHA}" > site-runtime.js
+          grep -Fq "const logoAsset = '/assets/sniperplug-logo.svg'" site-runtime.js
+          grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
+          grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
+
           retired_code="$(curl --silent --show-error --location --max-time 25 --output retired.html --write-out '%{http_code}' "${pages}/deal/walmart-shark-navigator-vacuum/?production=${COMMIT_SHA}" || true)"
           test "$retired_code" = '200'
           grep -Fq 'Only confirmed offers belong here.' retired.html
@@ -114,7 +124,7 @@ jobs:
             exit 1
           fi
 
-          echo 'reason=Pages production passed affiliate content, public theme, and custom-domain safety checks.' >> "$GITHUB_OUTPUT"
+          echo 'reason=Pages production passed affiliate content, public theme, shared logo, and custom-domain safety checks.' >> "$GITHUB_OUTPUT"
 
       - name: Publish production readiness status
         if: always()
@@ -125,7 +135,7 @@ jobs:
           set -euo pipefail
           if [ "$JOB_STATUS" = 'success' ]; then
             state='success'
-            description='Affiliate-ready production theme passed'
+            description='Affiliate-ready production branding passed'
           else
             state='failure'
             description='Affiliate reviewer production checks failed'

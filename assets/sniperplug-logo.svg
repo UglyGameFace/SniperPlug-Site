@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">SniperPlug logo</title>
+  <desc id="desc">Neon green and cyan SP monogram with an electrical plug on a dark rounded square.</desc>
+  <defs>
+    <linearGradient id="g" x1="18" y1="18" x2="110" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#68e384"/>
+      <stop offset="1" stop-color="#35c2ff"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#07111a"/>
+      <stop offset="1" stop-color="#02070c"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2.3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)" stroke="#182b35" stroke-width="3"/>
+  <rect x="16" y="17" width="96" height="94" rx="23" fill="none" stroke="url(#g)" stroke-width="3.5" opacity=".9" filter="url(#glow)"/>
+  <text x="20" y="79" fill="url(#g)" font-family="Arial Black, Arial, sans-serif" font-size="60" font-weight="900" letter-spacing="-6" filter="url(#glow)">SP</text>
+  <path d="M45 99c18 0 28 0 38-8" fill="none" stroke="url(#g)" stroke-width="4" stroke-linecap="round"/>
+  <g transform="translate(81 79) rotate(-42 15 15)" fill="url(#g)" stroke="#baffef" stroke-width="1.2" stroke-linejoin="round" filter="url(#glow)">
+    <rect x="3" y="8" width="23" height="20" rx="6"/>
+    <rect x="8" y="1" width="3.5" height="10" rx="1.5"/>
+    <rect x="18" y="1" width="3.5" height="10" rx="1.5"/>
+    <path d="M9 28v8h11v-8" fill="none" stroke="url(#g)" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
