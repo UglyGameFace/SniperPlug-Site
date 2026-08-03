@@ -92,6 +92,7 @@ assert.equal(guideSnapshotMatches({ ...snapshot, title: 'Changed' }, snapshot), 
 const route = read('functions/course-video/[key].js');
 const repair = read('functions/api/guide-repair.js');
 const mediaRepair = read('functions/api/guide-media-repair.js');
+const mediaRepairClient = read('assets/js/control-center-integrity-fix.js');
 const client = read('assets/js/control-center-recovery.js');
 const snapshots = read('functions/_lib/guide-snapshots.js');
 const routeHandler = route.slice(route.indexOf('export async function onRequest'));
@@ -102,6 +103,12 @@ assert.ok(repair.includes('mediaTruth.canRestoreSavedCopy') && repair.includes("
 assert.ok(repair.includes('whopRecoveryError') && mediaRepair.includes('whopRecoveryError'), 'Recovery endpoints do not explain expired or lost Whop access consistently.');
 assert.ok(mediaRepair.includes("if (!context.env?.SNIPERPLUG_MEDIA)") && mediaRepair.includes("code: 'media_storage_not_connected'"), 'Media repair still retries a guaranteed no-op when the R2 binding is absent.');
 assert.ok(mediaRepair.includes('mediaRepairReview(repaired)') && mediaRepair.includes("code: 'media_repair_incomplete'"), 'Media repair can still report success while review warnings remain.');
+assert.ok(mediaRepair.includes('CF_PAGES_COMMIT_SHA') && mediaRepair.includes('CF_PAGES_BRANCH'), 'Media repair errors do not identify the exact Cloudflare deployment that handled the request.');
+assert.ok(mediaRepair.includes('guide: repaired'), 'An incomplete repair does not return the newest server-confirmed guide state.');
+assert.ok(mediaRepairClient.includes('data.mediaRepairStatus') || mediaRepairClient.includes("dataset.mediaRepairStatus = ''"), 'Media repair feedback is not rendered beside the guide controls.');
+assert.ok(mediaRepairClient.includes('error.details = data.details') && mediaRepairClient.includes('Active Pages deployment:'), 'The browser drops the server repair reason or deployment identity.');
+assert.ok(mediaRepairClient.includes('applyGuide(error?.details?.guide)'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');
+assert.ok(mediaRepairClient.includes('/(?:Media|Attachment) review required/i'), 'The repair action disappears after a non-storage media failure.');
 assert.ok(snapshots.includes('guideSnapshotMatches(current, row)'), 'No-op recovery rollback can still become a false 500.');
 assert.ok(client.includes('Permanent R2 copies can be restored directly') && client.includes('error.details = body.details'), 'Recovery UI does not expose media truth or server recovery codes.');
 assert.ok(client.includes('Source access required'), 'Lost source access still leaves a misleading re-import button.');
@@ -114,6 +121,7 @@ for (const file of [
   'functions/api/guide-media-repair.js',
   'functions/course-video/[key].js',
   'assets/js/control-center-recovery.js',
+  'assets/js/control-center-integrity-fix.js',
 ]) {
   const result = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
@@ -123,5 +131,6 @@ console.log('\nRECOVERY MEDIA TRUTH TEST PASSED\n');
 console.log('✓ Saved Whop-backed players are never confused with permanent R2 video copies.');
 console.log('✓ Permanent R2 media restores and plays without current Whop access.');
 console.log('✓ Missing R2 storage and unresolved review warnings cannot report a successful media repair.');
+console.log('✓ Repair failures appear beside the guide with the exact Pages deployment and newest server state.');
 console.log('✓ Lost or missing Whop access returns the real recovery reason instead of a generic 500.');
 console.log('✓ An unchanged rejected guide is a successful idempotent rollback, not a rollback failure.');
