@@ -4,7 +4,7 @@ import { HttpError, requireDatabase } from './http.js';
 
 export const WHOP_BACKUP_SCHEMA_VERSION = 1;
 const MAX_BACKUP_ROWS = 100_000;
-const MAX_BACKUP_BYTES = 80_000_000;
+const MAX_BACKUP_BYTES = 30_000_000;
 const RESET_TOKEN_TTL_MS = 15 * 60_000;
 const SQL_BATCH_SIZE = 60;
 const ENTITY_ORDER = Object.freeze(['source', 'post', 'category', 'guide', 'course-video', 'media-object']);
@@ -291,7 +291,7 @@ async function snapshotFromRows(scope, rows) {
 
   if (entityRows.length > MAX_BACKUP_ROWS) throw new HttpError(413, 'This importer contains too many records for one backup. Back up one source at a time.');
   const payloadBytes = entityRows.reduce((sum, row) => sum + new TextEncoder().encode(row.payloadJson).byteLength, 0);
-  if (payloadBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This importer backup is larger than 80 MB. Back up one source at a time.');
+  if (payloadBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This importer backup is larger than 30 MB. Back up one source at a time.');
 
   const contentRows = entityRows.filter((row) => ['source', 'post', 'guide', 'course-video'].includes(row.entityType));
   const checksumInput = entityRows.map((row) => [row.entityType, row.entityKey, row.payloadChecksum]);
@@ -328,7 +328,7 @@ function backupLabel(scope, rows) {
 }
 
 function backupSignatureValue(row) {
-  return [row.backup_id, row.checksum, row.created_at, row.scope, row.experience_id || '', row.schema_version].join('.');
+  return [row.backup_id, row.owner_session_id || '', row.checksum, row.created_at, row.scope, row.experience_id || '', row.schema_version].join('.');
 }
 
 function manifestFor(backupId, ownerSessionId, snapshot, createdAt) {
@@ -532,6 +532,7 @@ export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
   const manifest = manifestFor(backupId, String(ownerSessionId || 'sniperplug-owner'), snapshot, createdAt);
   const unsigned = {
     backup_id: backupId,
+    owner_session_id: String(ownerSessionId || 'sniperplug-owner'),
     checksum: snapshot.checksum,
     created_at: createdAt,
     scope: snapshot.scope.scope,
@@ -545,6 +546,13 @@ export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
     const creating = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first();
     if (!creating) throw new HttpError(500, 'SniperPlug could not read back the new Whop backup manifest.');
     await verifyBackup(env, backupId, { includePayload: false, allowCreating: true });
+    const stableScope = await snapshotScope(env, snapshot.scope);
+    if (stableScope.contentChecksum !== snapshot.contentChecksum) {
+      throw new HttpError(409, 'The importer changed while SniperPlug was creating this backup. The incomplete snapshot was not verified; create it again.', {
+        code: 'backup_scope_changed_during_create',
+        backupId,
+      });
+    }
     const verifiedUpdate = await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)
       .bind(nowIso(), backupId).run();
     if (changes(verifiedUpdate) !== 1) throw new HttpError(409, 'The Whop backup changed before verification could be finalized.');
@@ -569,6 +577,25 @@ export async function listWhopImportBackups(env, { limit = 30 } = {}) {
     ORDER BY created_at DESC LIMIT ?
   `).bind(safeLimit).all();
   return (rows.results || []).map(backupSummary);
+}
+
+export async function verifiedWhopResetContext(env, backupId) {
+  const verified = await verifyBackup(env, backupId, { includePayload: false });
+  const options = safeJson(verified.row.reset_options_json, {}) || {};
+  return {
+    backupId: verified.row.backup_id,
+    scope: verified.row.scope,
+    experienceId: verified.row.experience_id || null,
+    options: {
+      deletePublished: options.deletePublished === true,
+      resync: options.resync === true,
+      disconnectWhop: options.disconnectWhop === true,
+    },
+    confirmationPhrase: resetConfirmationPhrase({
+      scope: verified.row.scope,
+      experienceId: verified.row.experience_id,
+    }, options.deletePublished === true),
+  };
 }
 
 export async function authorizeWhopReset(env, backupId, options = {}) {

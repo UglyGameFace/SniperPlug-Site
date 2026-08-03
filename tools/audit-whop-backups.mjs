@@ -44,6 +44,10 @@ assert.ok(service.indexOf('verifyBackup(env, backupId') < service.indexOf('reset
 assert.ok(service.includes("status = 'verified'") && service.includes('reset_token_hash'), 'Destructive reset is not tied to a verified one-time authorization.');
 assert.ok(service.includes("AND status != 'published'") && service.includes('deletePublished'), 'Published guides are not preserved by default with a separate opt-in delete path.');
 assert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'), 'Reset can delete work added after the backup.');
+assert.ok(service.includes('stableScope.contentChecksum !== snapshot.contentChecksum') && service.includes("backup_scope_changed_during_create"), 'A backup can become verified after its source changes during snapshot creation.');
+assert.ok(service.includes("row.owner_session_id || ''") && service.includes('owner_session_id: String(ownerSessionId'), 'Backup signatures are not bound to the owner session.');
+assert.ok(service.includes('const MAX_BACKUP_BYTES = 30_000_000'), 'Backup exports can exceed a safe in-memory Workers payload.');
+assert.ok(service.includes('export async function verifiedWhopResetContext'), 'The reset endpoint cannot preflight stored resync options before deletion.');
 assert.ok(service.includes('conflicts.push') && service.includes('guideEquivalent'), 'Restore can overwrite newer guide state silently.');
 assert.ok(service.includes("entities['course-video']") && service.includes("entities['media-object']"), 'Backup restore omits course video or R2 media state.');
 
@@ -51,6 +55,10 @@ assert.ok(mediaStorage.includes('whop_import_backup_media') && mediaStorage.incl
 assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'), 'Backup mutations are not owner authenticated and same-origin protected.');
 assert.ok(endpoint.includes("currentAction === 'download'") && endpoint.includes('content-disposition'), 'Owner backup download is missing.');
 assert.ok(endpoint.includes("currentAction === 'restore'") && endpoint.includes('restoreWhopImportBackup'), 'Offline restore endpoint is missing.');
+assert.ok(endpoint.indexOf('verifiedWhopResetContext(env, id)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'Reset does not preflight its stored resync scope before deletion.');
+assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'The exact resync source is not proven readable before deletion.');
+assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"), 'Interrupted restore does not explain that the verified backup is safe to retry.');
+assert.ok(endpoint.includes('JSON.stringify(payload)') && !endpoint.includes('JSON.stringify(payload, null, 2)'), 'Backup download wastes Workers memory on pretty-printed JSON.');
 assert.ok(endpoint.indexOf("currentAction === 'restore'") < endpoint.indexOf("currentAction === 'reset'"), 'Restore routing is unexpectedly coupled to Whop resync.');
 
 assert.ok(html.includes('data-whop-backup-panel') && html.includes('data-backup-dialog'), 'Control Center backup/reset panel is missing.');
@@ -59,6 +67,7 @@ assert.equal((html.match(/whop-backups\.css/g) || []).length, 1, 'Whop backup st
 assert.ok(client.includes("root.dataset.whopBackupMounted === 'true'") && client.includes("root.dataset.whopBackupMounted = 'true'"), 'Backup controls can mount duplicate handlers.');
 assert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"), 'The UI can reset before creating and verifying a backup.');
 assert.ok(client.includes('Download JSON') && client.includes('Restore verified backup'), 'Backup history lacks download or restore actions.');
+assert.ok(client.includes("backup.status === 'verified'") && client.includes('incomplete backup cannot be downloaded'), 'Failed backups still expose destructive or recovery actions.');
 assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'), 'Backup workflow is not styled for desktop and mobile.');
 
 assert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'), 'Whop backup deployment and owner workflow are not documented.');

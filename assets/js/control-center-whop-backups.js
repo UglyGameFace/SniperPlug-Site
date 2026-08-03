@@ -157,11 +157,12 @@
           <span>${Number(backup.counts?.guides || 0)} guides</span>
           <span>${Number(backup.counts?.mediaReferences || 0)} media refs</span>
         </div>
-        <div class="button-row">
-          <a class="btn ghost" href="${escapeHtml(backup.downloadUrl)}" data-backup-download>Download JSON</a>
-          <button class="btn ghost" type="button" data-backup-restore="${escapeHtml(backup.backupId)}">Restore</button>
-          <button class="decision disapprove" type="button" data-backup-delete="${escapeHtml(backup.backupId)}">Delete backup</button>
-        </div>
+        ${backup.status === 'verified' ? `
+          <div class="button-row">
+            <a class="btn ghost" href="${escapeHtml(backup.downloadUrl)}" data-backup-download>Download JSON</a>
+            <button class="btn ghost" type="button" data-backup-restore="${escapeHtml(backup.backupId)}">Restore</button>
+            <button class="decision disapprove" type="button" data-backup-delete="${escapeHtml(backup.backupId)}">Delete backup</button>
+          </div>` : '<small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>'}
         ${backup.restoredAt ? `<small>Last restored ${escapeHtml(formatDate(backup.restoredAt))} · ${Number(backup.restoreCount || 0)} restore(s)</small>` : ''}
       </article>
     `).join('');
@@ -194,7 +195,7 @@
       renderSources();
       renderHistory();
       syncControls();
-      if (!quiet) show(`Backup history ready. ${state.overview.backups.length} verified backup(s) available.`, 'ok');
+      if (!quiet) show(`Backup history ready. ${state.overview.backups.filter((backup) => backup.status === 'verified').length} verified backup(s) available.`, 'ok');
     } catch (error) {
       if (error.status === 401) return;
       show(error.message, 'error');

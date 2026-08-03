@@ -19,6 +19,9 @@ Issue #19 — Back up Whop imports before clear-and-resync.
 - Read-back checksum and HMAC signature verification before a backup becomes verified.
 - Short-lived one-time reset authorization bound to the verified scope and destructive options.
 - Current-state checksum comparison immediately before deletion so newer work forces a fresh backup.
+- Re-check the scope after snapshot persistence so concurrent changes prevent the backup from becoming verified.
+- Resolve and authorize the exact Whop source before any clear-and-resync deletion begins.
+- Bind backup signatures to the owner session, keep incomplete backups actionless, cap in-memory exports at 30 MB, and make interrupted restore explicitly retry-safe.
 - Published guides preserved by default; published deletion requires explicit opt-in and stronger typed confirmation.
 - Offline JSON download and restore without a Whop session; newer guides remain conflicts instead of being overwritten.
 - Current scans revive returned rows, mark missing rows stale, and hide stale rows from normal review.

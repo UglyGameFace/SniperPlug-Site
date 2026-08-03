@@ -18,6 +18,7 @@ import {
   previewWhopReset,
   resetWhopImporter,
   restoreWhopImportBackup,
+  verifiedWhopResetContext,
 } from '../_lib/whop-backups.js';
 import { disconnectWhop, requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
@@ -31,7 +32,7 @@ function backupId(request, body = {}) {
 
 function downloadResponse(backupIdValue, payload) {
   const filename = `sniperplug-whop-backup-${backupIdValue}.json`;
-  return new Response(JSON.stringify(payload, null, 2), {
+  return new Response(JSON.stringify(payload), {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
@@ -70,22 +71,36 @@ async function postAction(request, env, admin, currentAction) {
     return json({ authorization: await authorizeWhopReset(env, backupId(request, body), body) });
   }
   if (currentAction === 'restore') {
-    return json(await restoreWhopImportBackup(env, backupId(request, body), body));
+    const id = backupId(request, body);
+    try {
+      return json(await restoreWhopImportBackup(env, id, body));
+    } catch (error) {
+      if (error instanceof HttpError && [400, 401, 403, 404, 422].includes(error.status)) throw error;
+      throw new HttpError(409, 'The restore did not finish. Any rows already restored are preserved, the verified backup is unchanged, and retrying the same restore is safe.', {
+        code: 'backup_restore_retry_safe',
+        backupId: id,
+        cause: String(error?.message || 'Unknown restore interruption.').slice(0, 300),
+      });
+    }
   }
   if (currentAction === 'delete') {
     return json(await deleteWhopImportBackup(env, backupId(request, body), body.confirmation));
   }
   if (currentAction === 'reset') {
+    const id = backupId(request, body);
+    const resetContext = await verifiedWhopResetContext(env, id);
     let whop = null;
-    if (body.resync === true) whop = await requireWhopSession(request, env, admin);
-    const result = await resetWhopImporter(env, backupId(request, body), body);
-    let resync = null;
-    if (result.options.resync === true) {
-      if (result.scope !== 'source' || !result.experienceId) {
+    let experience = null;
+    if (resetContext.options.resync === true) {
+      if (resetContext.scope !== 'source' || !resetContext.experienceId) {
         throw new HttpError(422, 'Automatic resync is available only when clearing one exact Whop source.');
       }
-      if (!whop) whop = await requireWhopSession(request, env, admin);
-      const experience = await retrieveExperience(whop, result.experienceId);
+      whop = await requireWhopSession(request, env, admin);
+      experience = await retrieveExperience(whop, resetContext.experienceId);
+    }
+    const result = await resetWhopImporter(env, id, body);
+    let resync = null;
+    if (result.options.resync === true) {
       await saveSourceDecision(env, experience, result.experienceId, 'approved');
       const posts = await scanApprovedSource(env, whop, experience);
       resync = {
