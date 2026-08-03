@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active — merge and production retest pending.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. PR #16 now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, normal PR CI, review, conflict inspection, and temporary-workflow cleanup are complete.
+**Active — review repairs and production retest pending.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. PR #16 now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, normal PR CI, review, conflict inspection, and temporary-workflow cleanup are complete.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -15,6 +15,8 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.
 - PR #15's `applyGuide()` dispatched an artificial `input` event after mutating fields directly, which made draft safety report unsaved changes even though the server had already saved the guide.
 - The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.
+- The first PR #16 implementation allowed the fallback reload warning to be overwritten by an unconditional success message.
+- The first PR #16 event listener marked incomplete guide payloads handled even when `renderGuideEditor()` returned without applying them.
 
 ## Implemented changes
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
@@ -28,6 +30,8 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - Route every server-confirmed repair result through `updateGuideListItem()` and `renderGuideEditor(guide, 'saved')`, reusing the canonical list, derived-control, `sniperplug:guide-loaded`, and clean-snapshot path.
 - Remove the direct field mutation and synthetic `input` event that falsely dirtied the editor.
 - Fail visibly instead of silently applying a partial client state if the canonical renderer is unavailable.
+- Make `renderGuideEditor()` return explicit applied/not-applied truth and acknowledge the event only after a successful render and list refresh.
+- Preserve the reload-safety error instead of overwriting it with success, including incomplete-repair responses that return a newer guide.
 
 ## Validation
 - [x] Real editor placement and event path inspected.
@@ -43,7 +47,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Normal PR #16 `Verify SniperPlug` build and full regression suite pass (workflow run #820).
 - [x] Script load order proves the canonical renderer and draft lifecycle listeners load before the repair client.
 - [x] Final changed-file scope is limited to four task files; no duplicate listener or conflicting implementation path remains.
-- [x] PR #16 is mergeable, zero commits behind `main`, and Qodo recommends the event-bridge approach with no action-required finding.
+- [x] PR #16 was mergeable and zero commits behind `main` before the final review pass.
+- [ ] Qodo review findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.
+- [ ] Focused regression, JavaScript syntax, and full Node 22 build pass after the review repairs.
 - [ ] PR #16 is squash-merged.
 - [ ] Cloudflare production deployment contains the merged repair commit.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.

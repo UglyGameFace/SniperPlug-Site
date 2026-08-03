@@ -111,6 +111,10 @@ assert.ok(mediaRepairClient.includes('error.details = data.details') && mediaRep
 assert.ok(mediaRepairClient.includes('applyGuide(error?.details?.guide)'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');
 assert.ok(mediaRepairClient.includes("const detail = { guide, handled: false }") && !mediaRepairClient.includes("bodyField.dispatchEvent(new Event('input'"), 'Media repair still bypasses the canonical saved-guide renderer and dirties the editor.');
 assert.ok(controlCenterClient.includes("root.addEventListener('sniperplug:guide-media-repaired'") && controlCenterClient.includes("renderGuideEditor(guide, 'saved')") && controlCenterClient.includes('updateGuideListItem(guide)'), 'Repaired guides do not refresh canonical editor, list, publish, attachment, and clean-snapshot state.');
+assert.ok(mediaRepairClient.includes('const applied = applyGuide(output.guide)') && mediaRepairClient.includes('if (applied) show(`Media repaired.'), 'A failed client refresh can still be overwritten by a false media-repair success message.');
+assert.ok(mediaRepairClient.includes('const reloadSuffix = applied === false') && mediaRepairClient.includes('could not refresh it safely'), 'Incomplete repair errors do not preserve the reload-safety warning when the newest guide cannot be rendered.');
+assert.ok(controlCenterClient.includes("typeof guide?.body !== 'string') return false") && controlCenterClient.includes('return true;'), 'The canonical guide renderer does not report whether it actually applied the guide.');
+assert.ok(controlCenterClient.includes("if (!renderGuideEditor(guide, 'saved')) return;") && controlCenterClient.indexOf("if (!renderGuideEditor(guide, 'saved')) return;") < controlCenterClient.indexOf('event.detail.handled = true'), 'The repair bridge can acknowledge an incomplete or rejected guide render.');
 assert.ok(mediaRepairClient.includes('/(?:Media|Attachment) review required/i'), 'The repair action disappears after a non-storage media failure.');
 assert.ok(snapshots.includes('guideSnapshotMatches(current, row)'), 'No-op recovery rollback can still become a false 500.');
 assert.ok(client.includes('Permanent R2 copies can be restored directly') && client.includes('error.details = body.details'), 'Recovery UI does not expose media truth or server recovery codes.');
@@ -137,5 +141,6 @@ console.log('✓ Permanent R2 media restores and plays without current Whop acce
 console.log('✓ Missing R2 storage and unresolved review warnings cannot report a successful media repair.');
 console.log('✓ Repair failures appear beside the guide with the exact Pages deployment and newest server state.');
 console.log('✓ Repaired guides re-enter the canonical saved-guide renderer, refresh derived controls, and remain clean.');
+console.log('✓ Reload warnings survive failed client refreshes and incomplete guides cannot be acknowledged as handled.');
 console.log('✓ Lost or missing Whop access returns the real recovery reason instead of a generic 500.');
 console.log('✓ An unchanged rejected guide is a successful idempotent rollback, not a rollback failure.');

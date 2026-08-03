@@ -235,13 +235,17 @@
     try {
       const output = await request({ guideId: id, rightsConfirmed: true });
       if (!output?.guide) throw new Error('SniperPlug repaired the source but could not reload the guide.');
-      applyGuide(output.guide);
+      const applied = applyGuide(output.guide);
       const suffix = deploymentSuffix({ deployment: output.deployment });
-      show(`Media repaired. The guide now contains the server-confirmed media copy.${suffix}`, 'ok');
+      if (applied) show(`Media repaired. The guide now contains the server-confirmed media copy.${suffix}`, 'ok');
       finish();
     } catch (error) {
-      applyGuide(error?.details?.guide);
-      show(errorMessage(error), 'error');
+      const newestGuide = error?.details?.guide;
+      const applied = newestGuide ? applyGuide(newestGuide) : null;
+      const reloadSuffix = applied === false
+        ? ' The server returned a newer guide, but this page could not refresh it safely. Reload before making more changes.'
+        : '';
+      show(`${errorMessage(error)}${reloadSuffix}`, 'error');
       finish();
     }
   });
