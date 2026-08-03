@@ -44,6 +44,20 @@ jobs:
               raise SystemExit('generated audit quote anchor missing')
           path.write_text(text.replace(bad, good, 1))
           PY
+      - name: Sync existing performance assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/audit-control-performance-media.mjs')
+          text = path.read_text()
+          old_posts = "assert.ok(runtime.includes('POST_PAGE_SIZE = 10') && runtime.includes(\"dataset.action = 'post-load-more'\") && runtime.includes('state.postRenderLimit'), 'Large content scans do not stay behind explicit bounded pagination.');"
+          new_posts = "assert.ok(runtime.includes('POST_PAGE_SIZE = MOBILE_QUERY.matches ? 4 : 10') && runtime.includes(\"dataset.action = 'post-load-more'\") && runtime.includes('state.postRenderLimit'), 'Large content scans do not stay behind explicit bounded pagination.');"
+          old_guides = "assert.ok(runtime.includes('GUIDE_PAGE_SIZE = 24') && runtime.includes('filteredGuideIds') && runtime.includes('guide-load-more'), 'The review queue still renders every guide at once.');"
+          new_guides = "assert.ok(runtime.includes('GUIDE_PAGE_SIZE = MOBILE_QUERY.matches ? 8 : 24') && runtime.includes('filteredGuideIds') && runtime.includes('guide-load-more'), 'The review queue still renders every guide at once.');"
+          if old_posts not in text or old_guides not in text:
+              raise SystemExit('performance pagination assertion anchor missing')
+          path.write_text(text.replace(old_posts, new_posts, 1).replace(old_guides, new_guides, 1))
+          PY
       - name: Validate streamed mobile data repair
         run: |
           node --check assets/js/control-center-v2.js
@@ -55,7 +69,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ACTIVE_TASK.md assets/js/control-center-v2.js control-center/index.html functions/api/control.js functions/_lib/posts.js tools/audit-control-mobile-flow.mjs
+          git add ACTIVE_TASK.md assets/js/control-center-v2.js control-center/index.html functions/api/control.js functions/_lib/posts.js tools/audit-control-mobile-flow.mjs tools/audit-control-performance-media.mjs
           if git diff --cached --quiet; then
             echo "No streamed mobile data changes required"
             exit 0
