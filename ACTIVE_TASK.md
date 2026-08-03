@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active — actual R2 uploader fix merged and deployed; exact owner retest pending.** PR #16 fixed repair-result visibility and editor synchronization. The owner’s production screenshots then proved the underlying uploader still stripped response-body length metadata before R2. PR #17 fixes that actual media-write path and is squash-merged at `ee4dc0fc2f882a733bc0b8e16392f4bab6beba5c`. Focused media tests, the full Node 22 suite, review, cleanup, merge, and post-merge production checks are complete. The task remains locked until the exact Whop guide repairs successfully or returns a new concrete blocker from the live uploader.
+**Active — OAuth repair merged and deployed; owner reconnect and exact media retest pending.** PR #16 fixed repair-result visibility and editor synchronization. PR #17 fixed the actual R2 media-write path. The owner’s production reconnect then exposed a stale redirect override that sent Whop an invalid callback. PR #18 now pins production OAuth to the canonical registered callback and is squash-merged at `bc96d9a8a02c0388fd56c40a971cdb8bb0fdc9a7`. Focused OAuth tests, the full Node 22 suite, review, cleanup, merge, and post-merge Cloudflare checks are complete. The task remains locked until Connect Whop succeeds and the exact guide repairs or reports a new concrete blocker.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -63,13 +63,17 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Focused R2 hard-free/media upload regression passes on the uploader-fix branch.
 - [x] Known-length response identity, unknown-length Blob fallback, and both oversize paths are covered.
 - [x] Recovery-media regression and full Node 22 build pass on PR #17 (workflow run #834).
-- [x] Temporary patch workflows and triggers are removed from the final branch.
+- [x] Temporary patch workflows and triggers are removed from the final branches.
 - [x] Final PR #17 changed-file scope is limited to three task files with no competing PR or duplicate uploader path.
 - [x] Qodo recommends the split known-length/Blob strategy and raised no review thread.
-- [x] PR #17 was mergeable, zero commits behind `main`, and squash-merged.
-- [x] Actual uploader merge commit: `ee4dc0fc2f882a733bc0b8e16392f4bab6beba5c`.
-- [x] Post-merge production privacy workflow passed after Cloudflare propagation.
-- [ ] Live repair result reports the active Pages branch/commit containing `ee4dc0fc`.
+- [x] PR #17 was mergeable, zero commits behind `main`, and squash-merged at `ee4dc0fc2f882a733bc0b8e16392f4bab6beba5c`.
+- [x] Canonical OAuth redirect regression and full Node 22 build pass for PR #18 (workflow run #837).
+- [x] Production, www, stable preview, localhost, stale override, hostile override, and unknown-host OAuth cases are covered.
+- [x] Qodo recommends the explicit callback allowlist and raised no review thread.
+- [x] PR #18 changed-file scope is limited to five OAuth-task files and was squash-merged at `bc96d9a8a02c0388fd56c40a971cdb8bb0fdc9a7`.
+- [x] Post-merge Cloudflare production privacy workflow passed after propagation for PR #18.
+- [ ] Production Connect Whop opens consent/callback without `redirect_uri is invalid`.
+- [ ] Live repair result reports the active Pages branch/commit containing the repaired uploader and OAuth commits.
 - [ ] Owner retest replaces the saved media warning with a durable `/media/...` Markdown URL.
 - [ ] Any remaining source, permission, size, timeout, or storage blocker is identified from the exact live result and addressed.
 
@@ -80,16 +84,13 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - An incomplete repair shows the exact reason and newest saved guide state; it never reports success or appears inert.
 - Repaired server state refreshes the guide list, editor status, preview, publish controls, attachment resolution, and draft clean snapshot through the canonical renderer.
 - Known-length and chunked Whop media both reach R2 through payload types Cloudflare accepts.
+- Production OAuth always sends an exact registered callback and never trusts stale Cloudflare redirect overrides.
 - Targeted tests, full build, deployment validation, cleanup, and conflict inspection pass.
 
 ## Backlog
+- Universal owner-authorized proxy/play/download support for non-Course Whop videos remains required after this active reconnect/media repair reaches Definition of Done.
 - Large-video archival storage remains deferred unless the exact repair result proves this file exceeds the current 50 MB automatic-copy ceiling.
 - Newegg affiliate application work remains paused until this active media repair task reaches Definition of Done.
 
 ## Scope lock
 No unrelated implementation begins until this media repair task is production-validated, unless the user explicitly sends the required FORCE SWITCH instruction.
-
-## OAuth reconnect validation
-- [ ] Canonical OAuth redirect regression and full Node 22 build pass.
-- [ ] OAuth repair PR review, cleanup, merge, and Cloudflare deployment pass.
-- [ ] Production Connect Whop opens consent/callback without `redirect_uri is invalid`.
