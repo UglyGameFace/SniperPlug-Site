@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const control = readFileSync('assets/js/control-center-v2.js', 'utf8');
 const backups = readFileSync('assets/js/control-center-whop-backups.js', 'utf8');
 const css = readFileSync('assets/css/control-center-hardening.css', 'utf8');
+const page = readFileSync('control-center/index.html', 'utf8');
 
 assert.ok(control.includes('const POST_PAGE_SIZE = 10'));
 assert.ok(control.includes('const SOURCE_PAGE_SIZE = 12'));
@@ -23,4 +24,7 @@ assert.ok(backups.includes('elements.continue = continueButton') && backups.incl
 assert.ok(!backups.includes('new MutationObserver'));
 assert.ok(css.includes('.whop-recovery-workflow'));
 assert.ok(css.includes('@media(max-width:720px)'));
+for (const asset of ['control-center-hardening.css', 'control-center-v2.js', 'control-center-whop-backups.js']) {
+  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260803.2`), `${asset} cache version was not bumped with the mobile repair.`);
+}
 console.log('CONTROL CENTER MOBILE FLOW AUDIT PASSED');
