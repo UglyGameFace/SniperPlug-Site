@@ -190,3 +190,15 @@
     display: none;
   }
 }
+
+.whop-backup-incomplete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .75rem;
+  flex-wrap: wrap;
+}
+
+.whop-backup-incomplete small {
+  flex: 1 1 260px;
+}

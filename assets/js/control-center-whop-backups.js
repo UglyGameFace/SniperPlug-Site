@@ -162,7 +162,11 @@
             <a class="btn ghost" href="${escapeHtml(backup.downloadUrl)}" data-backup-download>Download JSON</a>
             <button class="btn ghost" type="button" data-backup-restore="${escapeHtml(backup.backupId)}">Restore</button>
             <button class="decision disapprove" type="button" data-backup-delete="${escapeHtml(backup.backupId)}">Delete backup</button>
-          </div>` : '<small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>'}
+          </div>` : `
+          <div class="whop-backup-incomplete">
+            <small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>
+            <button class="decision disapprove" type="button" data-backup-delete="${escapeHtml(backup.backupId)}">Delete incomplete backup</button>
+          </div>`}
         ${backup.restoredAt ? `<small>Last restored ${escapeHtml(formatDate(backup.restoredAt))} · ${Number(backup.restoreCount || 0)} restore(s)</small>` : ''}
       </article>
     `).join('');

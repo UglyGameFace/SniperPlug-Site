@@ -968,14 +968,20 @@ export async function resetWhopImporter(env, backupId, input = {}) {
 }
 
 export async function deleteWhopImportBackup(env, backupId, confirmation) {
-  const verified = await verifyBackup(env, backupId);
+  const db = await ensureWhopBackupSchema(env);
+  const row = await backupRow(db, backupId);
   const expected = deleteBackupConfirmationPhrase(backupId);
   if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);
-  const result = await verified.db.prepare(`
+  const result = await db.prepare(`
     UPDATE whop_import_backups
     SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL
-    WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL
+    WHERE backup_id = ? AND deleted_at IS NULL
   `).bind(nowIso(), backupId).run();
   if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');
-  return { deleted: true, backupId, archiveCleanup: 'grace-period' };
+  return {
+    deleted: true,
+    backupId,
+    previousStatus: row.status,
+    archiveCleanup: row.archive_key ? 'grace-period' : 'none',
+  };
 }

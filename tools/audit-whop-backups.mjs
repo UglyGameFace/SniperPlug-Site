@@ -52,7 +52,12 @@ assert.ok(!service.includes('whop_import_backup_rows') && !service.includes('who
 assert.ok(service.includes("AND status != 'published'") && service.includes('deletePublished'));
 assert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'));
 assert.ok(service.includes('guideEquivalent(before, snapshot)') && service.includes('current-guide-differs'));
-assert.ok(service.includes('SET deleted_at = ?') && service.includes("archiveCleanup: 'grace-period'"));
+assert.ok(service.includes('SET deleted_at = ?') && service.includes("row.archive_key ? 'grace-period' : 'none'"));
+const deleteStart = service.indexOf('export async function deleteWhopImportBackup');
+assert.ok(deleteStart >= 0, 'Backup deletion service is missing.');
+const deleteBody = service.slice(deleteStart);
+assert.ok(deleteBody.includes('const row = await backupRow(db, backupId)'));
+assert.ok(!deleteBody.includes('const verified = await verifyBackup'));
 
 assert.ok(mediaStorage.includes('SELECT archive_key, manifest_json') && mediaStorage.includes('manifest?.mediaKeys'));
 assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'));
@@ -67,6 +72,7 @@ assert.equal((html.match(/whop-backups\.css/g) || []).length, 1);
 assert.ok(client.includes("root.dataset.whopBackupMounted === 'true'"));
 assert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"));
 assert.ok(client.includes("backup.status === 'verified'") && client.includes('quiet: true, force: true'));
+assert.ok(client.includes('Delete incomplete backup') && client.includes('whop-backup-incomplete'));
 assert.ok(client.includes("warning ? 'warning' : 'ok'"));
 assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'));
 
