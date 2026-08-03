@@ -35,7 +35,9 @@ assert.equal(batches.length, 2, 'JSON restore batches can exceed the D1 2 MB val
 
 for (const column of ['archive_key', 'archive_checksum', 'archive_bytes']) assert.ok(migration.includes(column), `Migration is missing ${column}.`);
 assert.ok(!migration.includes('whop_import_backup_rows') && !migration.includes('whop_import_backup_media'), 'Backups still create one D1 row per imported method or media item.');
-assert.ok(migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'));
+assert.ok(!migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'), 'Migration can fail after runtime already added stale_at.');
+assert.ok(service.includes("addColumn(db, 'whop_posts', 'stale_at', 'TEXT')"), 'Runtime does not add stale_at idempotently.');
+assert.ok(service.includes('CREATE INDEX IF NOT EXISTS idx_whop_posts_current'), 'Runtime does not create the stale-post index after ensuring the column.');
 assert.ok(posts.includes('stale_at = NULL') && posts.includes('SET stale_at = ?') && posts.includes('AND stale_at IS NULL'));
 assert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'));
 
