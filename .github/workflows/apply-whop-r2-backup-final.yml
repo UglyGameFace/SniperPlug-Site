@@ -61,7 +61,7 @@ jobs:
           audit_path = Path('tools/audit-whop-backups.mjs')
           audit = audit_path.read_text()
           anchor = "assert.ok(service.includes('SET deleted_at = ?') && service.includes(\"archiveCleanup: 'grace-period'\"));\n"
-          replacement = """assert.ok(service.includes('SET deleted_at = ?') && service.includes("row.archive_key ? 'grace-period' : 'none'"));\nassert.ok(service.includes('const row = await backupRow(db, backupId)'));\nassert.ok(!service.includes("WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL"));\n"""
+          replacement = """assert.ok(service.includes('SET deleted_at = ?') && service.includes("row.archive_key ? 'grace-period' : 'none'"));\nconst deleteStart = service.indexOf('export async function deleteWhopImportBackup');\nassert.ok(deleteStart >= 0, 'Backup deletion service is missing.');\nconst deleteBody = service.slice(deleteStart);\nassert.ok(deleteBody.includes('const row = await backupRow(db, backupId)'));\nassert.ok(!deleteBody.includes('const verified = await verifyBackup'));\n"""
           if replacement not in audit:
               if anchor not in audit:
                   raise SystemExit('audit service anchor missing')
