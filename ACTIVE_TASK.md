@@ -1,60 +1,51 @@
 # Active Task
 
 ## Task
-Remove every fake, demonstration, or broad-search deal path from the public SniperPlug site and make retired deal URLs fail closed before the Newegg affiliate application.
+Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Complete and production-validated on 2026-08-01.** PR #13 is merged. The public board is empty, known demonstration pages are absent, retired deal and click-out paths are intercepted before Pages resolution, and the dedicated Cloudflare production check passes.
+**Active.** The first false-success guard from PR #14 is merged, but production retesting showed the editor still displayed the same old warning after the action. The current branch adds exact deployment/runtime diagnostics and puts the result beside the repair button instead of only at the top of the Control Center.
 
 ## Confirmed findings
-- `data/deals.json` contains zero records and no generation timestamp.
-- `/deals/` displays only the verified-empty state and explicitly prohibits generic retailer searches.
-- The eight known demonstration detail files are absent from `main`.
-- `functions/deal/[slug].js` and `functions/go/[id].js` redirect to `/deals/` and contain no retailer destinations.
-- The prior custom-domain check could receive a Cloudflare challenge, so retired-route safety is now enforced in the shared runtime rather than depending on crawler visibility.
+- The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
+- The warning inside Guide Markdown is saved guide content from the original failed import, not a live binding-status widget.
+- Repair errors were rendered only in `[data-global-status]` near the top of the Control Center while the repair button and guide editor are far below it. On mobile, a failed request therefore looked like the button did nothing.
+- The browser discarded structured API error details, including the exact unresolved media reason.
+- The repair action was restricted to old storage-related warning text and could disappear after the server replaced that warning with another media-copy failure.
+- The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.
 
-## Implemented changes
-- Added a global middleware gate for every `/deal`, `/deal/*`, `/go`, and `/go/*` request before `context.next()` or nested route resolution.
-- Retired paths permanently redirect to `/deals/` with `retired-deal` or `retired-link` context.
-- Retired paths receive `private, no-store` and `noindex, nofollow, noarchive` protections.
-- Added matching top-priority `_redirects` rules as a second Cloudflare Pages safety layer.
-- Added explicit retired-route `_headers` rules.
-- Added `tools/test-retired-public-deals.mjs`, which executes middleware, proves stale content cannot reach `context.next()`, scans public HTML for known demo products and retailer search URLs, confirms the feed is empty, and verifies nested routes contain no retailer destinations.
-- Added the new regression to every Node 22 build.
-- Added a dedicated Cloudflare preview/production smoke for raw 308 behavior, final safe-board content, banned search destinations, and custom-domain safety.
+## Implemented changes on the active branch
+- Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
+- Missing-binding errors now say the active Function cannot see the binding, rather than incorrectly claiming the dashboard has no binding.
+- Incomplete repairs return the newest server-confirmed guide state and the exact unresolved reasons.
+- Added an inline live status directly above the guide action buttons.
+- Preserved API error details in the browser and displayed the exact deployment identity beside the guide.
+- Updated the editor immediately from the newest server guide on both success and incomplete repair, preventing obsolete warning text from remaining on screen.
+- Kept Repair media available for any generated Media or Attachment review warning.
+- Added targeted regression and syntax checks for the server and browser repair paths.
 
 ## Validation
-- PR #13 merged as `b325edbb05557187fbed55829c42232266c0a371`.
-- Branch preview returned raw HTTP 308 responses for both retired `/deal/*` and `/go/*` probes on the first deployment attempt.
-- Following either redirect returned the verified empty board.
-- Full Node 22 regression passed.
-- Existing affiliate-ready preview passed.
-- Dedicated retired-route Cloudflare preview passed.
-- Production `ci/sniperplug-node22` passed.
-- Production `ci/sniperplug-production-guide-privacy` passed.
-- Production `ci/sniperplug-production-affiliate-readiness` passed.
-- Production `ci/sniperplug-production-retired-deals` passed.
-- Changed-file scope, mergeability, duplicate paths, and review threads were clean before merge.
+- [x] Real editor placement and event path inspected.
+- [x] Existing repair endpoint, import path, media mirror path, binding guard, callers, and tests inspected.
+- [x] Inline status and structured diagnostics implemented.
+- [x] Regression assertions added.
+- [ ] Full Node 22 build passes on the branch.
+- [ ] Cloudflare branch preview deploys successfully.
+- [ ] Branch preview repair returns the exact runtime result beside the selected guide.
+- [ ] Changed-file, conflict, duplicate-path, and cleanup inspection passes.
+- [ ] PR merged.
+- [ ] Production deployment and owner retest confirmed.
 
 ## Definition of Done
-- [x] Current public deal data and known static pages inspected.
-- [x] Existing nested deal and click-out functions inspected.
-- [x] Fail-closed global runtime gate implemented.
-- [x] Pages redirect and header fallback implemented.
-- [x] Full public-surface regression test added to the Node build.
-- [x] Dedicated Cloudflare deployment smoke added.
-- [x] Full Node 22 regression suite passes.
-- [x] Cloudflare branch preview proves raw retired routes cannot expose content.
-- [x] Changed-file, conflict, and duplicate-path inspection passes.
-- [x] PR is merged.
-- [x] Main production passes Node, affiliate, private-guide, and retired-deal safety checks.
-- [x] Custom-domain automation either reaches the safe board or exposes only a Cloudflare challenge with no deal content.
+- Pressing Repair media always produces a visible result beside the button on mobile and desktop.
+- The result identifies whether the active Function sees R2 and which Pages commit/branch handled the request.
+- A successful repair replaces the warning with the server-confirmed media Markdown immediately.
+- An incomplete repair shows the exact reason and newest saved guide state; it never reports success or appears inert.
+- Targeted tests, full build, deployment validation, cleanup, and conflict inspection pass.
 
 ## Backlog
-- Submit the Newegg affiliate application through its Rakuten partnership flow.
-- Publish future deal cards only from verified records with exact official product destinations.
-- Add Newegg deal cards only after approval.
-- Large-video archival storage remains deferred.
+- Large-video archival storage remains deferred unless the exact repair result proves this file exceeds the current 50 MB automatic-copy ceiling.
+- Newegg affiliate application work remains paused until this active media repair task reaches Definition of Done.
 
 ## Scope lock
-This task is complete. The next active task may be the Newegg application process or another explicitly selected item.
+No unrelated implementation begins until this media repair task is production-validated, unless the user explicitly sends the required FORCE SWITCH instruction.
