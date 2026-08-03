@@ -212,6 +212,6 @@ button[aria-busy=true]::after,.btn[aria-busy=true]::after{content:'';display:inl
   .whop-recovery-workflow>summary{align-items:flex-start}
 }
 @media(prefers-reduced-motion:reduce),(max-width:720px){
-  .control-operation-track span,button[aria-busy=true]::after,.btn[aria-busy=true]::after{animation-duration:1.4s}
+  .control-operation-track span,button[aria-busy=true]::after,.btn[aria-busy=true]::after{animation:none!important}
   *{scroll-behavior:auto!important}
 }

@@ -147,6 +147,7 @@
     bulkRunning: false,
     recent: null,
     recentSelection: new Set(),
+    deferredHistoryLoaded: false,
     previewPostKey: null,
     activeOperations: 0,
     activeOperationKeys: new Set(),
@@ -159,6 +160,8 @@
   operationBar.setAttribute('aria-live', 'polite');
   operationBar.innerHTML = '<div class="control-operation-track"><span></span></div><strong>Working…</strong>';
   document.body.append(operationBar);
+  const discoveryIntro = elements.discoverySummary?.closest('.control-panel')?.querySelector('.panel-head p');
+  if (discoveryIntro) discoveryIntro.textContent = 'Nothing scans automatically. Press Load sources, open one group, then review only the source you choose.';
 
   async function requestJson(url, options = {}) {
     let response;
@@ -744,6 +747,7 @@
 
   function renderDiscovery() {
     state.sourceCards.clear();
+    if (elements.refreshGroups) elements.refreshGroups.textContent = state.discovery ? 'Refresh sources' : 'Load sources';
     const whop = state.dashboard?.whop || {};
     const connected = Boolean(whop.connected && whop.verified);
     if (!connected) {
@@ -1605,7 +1609,7 @@
       const session = await api('session', { method: 'GET' });
       if (!session.authenticated) return lock();
       const dashboard = await loadDashboard({ discovery: false });
-      const background = [loadBulkJob(), loadRecentActions()];
+      const background = [];
       if (dashboard.whop?.verified) {
         elements.discoverySummary.textContent = 'Whop connected. Press Load sources when you are ready.';
         elements.discoveryMessage.textContent = 'Nothing scans automatically on page load.';
@@ -1639,7 +1643,7 @@
         await api('session', { method: 'POST', body: JSON.stringify({ password: new FormData(form).get('password') }) });
         form.reset();
         const dashboard = await loadDashboard({ discovery: false });
-        const background = [loadBulkJob(), loadRecentActions()];
+        const background = [];
         if (dashboard.whop?.verified) {
           elements.discoverySummary.textContent = 'Whop connected. Press Load sources when you are ready.';
           elements.discoveryMessage.textContent = 'Nothing scans automatically after unlock.';
@@ -1921,6 +1925,12 @@
     if (button === elements.undoSelected) return undoActions({ all: false, button });
     if (button === elements.undoAll) return undoActions({ all: true, button });
     if (button?.matches('[data-close-preview]')) return closePreview();
+  });
+
+  elements.bulkWorkflow?.addEventListener('toggle', () => {
+    if (!elements.bulkWorkflow.open || state.deferredHistoryLoaded) return;
+    state.deferredHistoryLoaded = true;
+    Promise.allSettled([loadBulkJob(), loadRecentActions()]).catch(() => null);
   });
 
   elements.preview.addEventListener('click', (event) => {

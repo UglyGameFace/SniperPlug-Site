@@ -76,7 +76,9 @@
     continueButton.type = 'button';
     continueButton.className = 'btn primary';
     continueButton.dataset.backupContinue = 'true';
-    continueButton.textContent = 'Continue';
+    continueButton.textContent = 'Create backup';
+    elements.action = select;
+    elements.continue = continueButton;
     actionRow.append(label, continueButton);
 
     const resetOptions = panel.querySelector('.whop-reset-options');
@@ -145,7 +147,7 @@
 
   function setBusy(busy, label = '') {
     state.busy = busy;
-    for (const button of [elements.create, elements.reset, elements.refresh, elements.confirm]) {
+    for (const button of [elements.create, elements.reset, elements.refresh, elements.confirm, elements.continue]) {
       if (!(button instanceof HTMLButtonElement)) continue;
       if (busy) {
         if (!button.dataset.idleLabel) button.dataset.idleLabel = button.textContent;
@@ -257,6 +259,8 @@
     if (elements.create instanceof HTMLButtonElement) elements.create.disabled = state.busy || !valid;
     if (elements.reset instanceof HTMLButtonElement) elements.reset.disabled = state.busy || !valid;
     if (elements.refresh instanceof HTMLButtonElement) elements.refresh.disabled = state.busy;
+    if (elements.continue instanceof HTMLButtonElement) elements.continue.disabled = state.busy || !valid;
+    if (elements.action instanceof HTMLSelectElement) elements.action.disabled = state.busy;
     if (elements.confirm instanceof HTMLButtonElement) {
       const phrase = String(elements.phrase?.textContent || '');
       elements.confirm.disabled = state.busy || !state.pending || String(elements.confirmation?.value || '').trim() !== phrase;
