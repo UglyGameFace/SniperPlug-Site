@@ -32,6 +32,18 @@ jobs:
           lines = [line[10:] if line.startswith('          ') else line for line in body.splitlines()]
           exec(compile('\n'.join(lines) + '\n', 'embedded-streamed-mobile-patch.py', 'exec'))
           PY
+      - name: Repair generated audit quote escaping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/audit-control-mobile-flow.mjs')
+          text = path.read_text()
+          bad = "assert.ok(control.includes('action=post-detail') && control.includes('typeof exact.body !== 'string''));"
+          good = "assert.ok(control.includes('action=post-detail') && control.includes(\"typeof exact.body !== 'string'\"));"
+          if bad not in text:
+              raise SystemExit('generated audit quote anchor missing')
+          path.write_text(text.replace(bad, good, 1))
+          PY
       - name: Validate streamed mobile data repair
         run: |
           node --check assets/js/control-center-v2.js
