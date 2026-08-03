@@ -4,7 +4,7 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — backup engine and mobile workflow repair merged/deployed; live Samsung and recovery validation pending.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`. PR #22 merged as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`. Production Node 22, private-guide privacy, affiliate-readiness, and retired-route checks passed after both deployments. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
+**Active — backup engine, mobile workflow repair, and cache bust merged/deployed; live Samsung and recovery validation pending.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`, PR #22 as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`, and PR #23 as `95078f2eb1e802dae4255cbf8d1e11d06fa3f2ac`. Production Node 22, private-guide privacy, and affiliate-readiness checks passed after the final deployment. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
 
 ## Confirmed findings
 - Reconnecting Whop replaces OAuth access but does not clear saved source/post/guide/video/media state.
@@ -15,6 +15,7 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - Opening an approved source immediately started a content scan.
 - Source and post views eventually rendered every card, producing a large control wall and freezing Samsung Internet.
 - Mobile blur, shadows, animation, and smooth scrolling increased paint work during the same heavy operations.
+- The original Control Center HTML kept old asset-version query strings, so Samsung Internet could continue serving the frozen pre-repair runtime after deployment.
 
 ## Implemented and merged in PR #21
 - Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
@@ -42,6 +43,11 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - Mobile removes expensive blur/shadow/smooth-scroll work and disables busy animations.
 - Permanent regressions enforce bounded pagination, manual scanning, lazy history, one recovery center, filtered pagination, and mobile action locks.
 
+## Implemented and merged in PR #23
+- `control-center-hardening.css`, `control-center-v2.js`, and `control-center-whop-backups.js` now share the forced cache key `v=20260803.2`.
+- A permanent regression requires all three repaired runtime assets to move together on future changes.
+- The production HTML can no longer silently point Samsung Internet at the old frozen runtime after the repair deployment.
+
 ## Validation
 - [x] PR #21 focused backup/reset/restore audit passed.
 - [x] PR #21 clean-head full Node 22 suite passed and both Qodo findings were resolved.
@@ -52,6 +58,9 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - [x] PR #22 cleanup left only seven permanent runtime/UI/task/regression files.
 - [x] PR #22 clean-head CI #869, affiliate checks, retired-route checks, Cloudflare preview, and review passed.
 - [x] PR #22 squash-merged and production post-merge Node 22/privacy/affiliate/retired-route checks passed.
+- [x] PR #23 focused cache-version audit and clean-head full Node 22 suite #875 passed.
+- [x] PR #23 final scope was exactly two files; Cloudflare preview deployed and no review threads remained.
+- [x] PR #23 squash-merged and production HTML/Node 22/privacy/affiliate checks passed.
 - [ ] Samsung Internet opens/unlocks without freezing and performs no automatic source/content scan.
 - [ ] Production backup creation and JSON download succeed on real imported content.
 - [ ] Production clear-and-resync preserves published guides and removes stale state.
