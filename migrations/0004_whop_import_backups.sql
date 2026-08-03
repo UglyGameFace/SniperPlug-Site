@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS whop_import_backups (
   checksum TEXT NOT NULL DEFAULT '',
   signature TEXT NOT NULL DEFAULT '',
   payload_bytes INTEGER NOT NULL DEFAULT 0,
+  archive_key TEXT NOT NULL DEFAULT '',
+  archive_checksum TEXT NOT NULL DEFAULT '',
+  archive_bytes INTEGER NOT NULL DEFAULT 0,
   reset_token_hash TEXT,
   reset_token_expires_at TEXT,
   reset_options_json TEXT,
@@ -33,31 +36,3 @@ CREATE INDEX IF NOT EXISTS idx_whop_import_backups_created
 
 CREATE INDEX IF NOT EXISTS idx_whop_import_backups_scope
   ON whop_import_backups (scope, experience_id, deleted_at, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS whop_import_backup_rows (
-  backup_id TEXT NOT NULL,
-  entity_type TEXT NOT NULL,
-  entity_key TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
-  payload_checksum TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (backup_id, entity_type, entity_key),
-  FOREIGN KEY (backup_id) REFERENCES whop_import_backups(backup_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_whop_import_backup_rows_type
-  ON whop_import_backup_rows (backup_id, entity_type, entity_key);
-
-CREATE TABLE IF NOT EXISTS whop_import_backup_media (
-  backup_id TEXT NOT NULL,
-  storage_key TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL DEFAULT 0,
-  content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-  source_key TEXT,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (backup_id, storage_key),
-  FOREIGN KEY (backup_id) REFERENCES whop_import_backups(backup_id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_whop_import_backup_media_key
-  ON whop_import_backup_media (storage_key, backup_id);
