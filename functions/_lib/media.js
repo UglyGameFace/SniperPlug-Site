@@ -59,19 +59,43 @@ export function mediaMarkdown(file) {
   return `- [${label}](${url})`;
 }
 
-function boundedStream(body) {
-  let bytes = 0;
-  const stream = body.pipeThrough(new TransformStream({
-    transform(chunk, controller) {
-      bytes += Number(chunk?.byteLength || 0);
-      if (bytes > MAX_MEDIA_OBJECT_BYTES) {
-        controller.error(new Error('This media file is larger than the 50 MB automatic-copy limit.'));
-        return;
+function parsedContentLength(value) {
+  const length = Number(value);
+  return Number.isSafeInteger(length) && length > 0 ? length : 0;
+}
+
+async function boundedBlob(body, contentType, maxBytes) {
+  const reader = body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+      size += chunk.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel('Media exceeds SniperPlug automatic-copy limit.').catch(() => null);
+        throw new Error('This media file is larger than the 50 MB automatic-copy limit.');
       }
-      controller.enqueue(chunk);
-    },
-  }));
-  return { stream, bytes: () => bytes };
+      chunks.push(chunk);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch {}
+  }
+  return { value: new Blob(chunks, { type: contentType }), size, mode: 'buffered-blob' };
+}
+
+export async function r2UploadValue(response, contentType = 'application/octet-stream', maxBytes = MAX_MEDIA_OBJECT_BYTES) {
+  if (!response?.body || typeof response.body.getReader !== 'function') {
+    throw new Error('Whop media download returned no readable body.');
+  }
+  const limit = Math.min(MAX_MEDIA_OBJECT_BYTES, Math.max(1, Number(maxBytes || MAX_MEDIA_OBJECT_BYTES)));
+  const length = parsedContentLength(response.headers?.get?.('content-length'));
+  if (length > limit) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');
+  if (length > 0) return { value: response.body, size: length, mode: 'response-body' };
+  return boundedBlob(response.body, contentType, limit);
 }
 
 function heldForReview(file, reason) {
@@ -146,11 +170,11 @@ export async function mirrorWhopMedia(env, file, sourceKey) {
     });
     if (!response.ok || !response.body) throw new Error(`Whop media download failed (${response.status}).`);
     if (!safeRemoteMediaUrl(response.url)) throw new Error('Whop media redirected to an unsafe destination.');
-    const length = Math.max(0, Number(response.headers.get('content-length') || declaredSize || 0));
-    if (length > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');
+    const responseLength = parsedContentLength(response.headers.get('content-length'));
+    if (responseLength > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');
     const contentType = String(response.headers.get('content-type') || file?.contentType || 'application/octet-stream').split(';')[0].trim();
-    const bounded = boundedStream(response.body);
-    await env.SNIPERPLUG_MEDIA.put(key, bounded.stream, {
+    const upload = await r2UploadValue(response, contentType);
+    const storedObject = await env.SNIPERPLUG_MEDIA.put(key, upload.value, {
       storageClass: 'Standard',
       httpMetadata: {
         contentType,
@@ -163,11 +187,14 @@ export async function mirrorWhopMedia(env, file, sourceKey) {
         source: 'whop-authorized-import',
         sourceId: String(file?.id || '').slice(0, 120),
         sourceKey: String(sourceKey || '').slice(0, 180),
+        uploadMode: upload.mode,
         hardFreeMode: '8GB-50MB-25Kobjects-2Kdaily-50Kmonthly-10Kreads',
       },
     });
+    if (!storedObject) throw new Error('R2 did not confirm the permanent media object write.');
     stored = true;
-    const actualSize = Math.max(length, bounded.bytes());
+    const actualSize = Math.max(0, Number(storedObject.size || upload.size || 0));
+    if (actualSize > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');
     await completeMediaCopy(env, reservation, { sizeBytes: actualSize, contentType, sourceKey });
     return {
       ...file,
