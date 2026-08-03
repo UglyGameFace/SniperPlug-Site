@@ -21,7 +21,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply deterministic repair
-        run: python tools/apply-control-center-mobile-flow.py
+        run: |
+          python tools/apply-control-center-mobile-flow.py
+          python tools/patch-control-mobile-audits.py
       - name: Validate focused and full suite
         run: |
           node --check assets/js/control-center-v2.js
@@ -32,6 +34,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add assets/js/control-center-v2.js assets/js/control-center-whop-backups.js assets/css/control-center-hardening.css tools/audit-control-mobile-flow.mjs package.json
+          git add assets/js/control-center-v2.js assets/js/control-center-whop-backups.js assets/css/control-center-hardening.css tools/audit-control-mobile-flow.mjs tools/audit-control-performance-media.mjs package.json
           git commit -m "Make the Control Center ordered and responsive on mobile"
           git push origin HEAD:fix/control-center-mobile-flow
