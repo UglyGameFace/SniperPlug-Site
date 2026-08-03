@@ -1,0 +1,35 @@
+name: Apply Control Center mobile cache bust
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/control-center-mobile-cache-bust
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Bump repaired Control Center asset versions
+        run: python tools/patch-control-center-mobile-cache-bust.py
+      - name: Validate focused and full suite
+        run: |
+          node tools/audit-control-mobile-flow.mjs
+          npm run build
+      - name: Commit validated cache bust
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add control-center/index.html tools/audit-control-mobile-flow.mjs
+          git commit -m "Force browsers onto the repaired Control Center runtime"
+          git push origin HEAD:fix/control-center-mobile-cache-bust
