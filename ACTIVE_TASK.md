@@ -4,7 +4,7 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — backup engine, mobile workflow repair, and cache bust merged/deployed; live Samsung and recovery validation pending.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`, PR #22 as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`, and PR #23 as `95078f2eb1e802dae4255cbf8d1e11d06fa3f2ac`. Production Node 22, private-guide privacy, and affiliate-readiness checks passed after the final deployment. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
+**Active — live Samsung retest found a remaining scan-payload pause; streamed-summary repair in progress.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`, PR #22 as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`, and PR #23 as `95078f2eb1e802dae4255cbf8d1e11d06fa3f2ac`. Production Node 22, private-guide privacy, and affiliate-readiness checks passed after the final deployment. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
 
 ## Confirmed findings
 - Reconnecting Whop replaces OAuth access but does not clear saved source/post/guide/video/media state.
@@ -16,6 +16,8 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - Source and post views eventually rendered every card, producing a large control wall and freezing Samsung Internet.
 - Mobile blur, shadows, animation, and smooth scrolling increased paint work during the same heavy operations.
 - The original Control Center HTML kept old asset-version query strings, so Samsung Internet could continue serving the frozen pre-repair runtime after deployment.
+- Even after bounded card rendering, the scan API still returned every post with its complete Markdown body and full attachment payload, forcing Samsung Internet to parse and map all hidden content before showing the first page.
+- Unlock still mapped all guide summaries and rendered Whop, categories, and guide cards in one synchronous burst.
 
 ## Implemented and merged in PR #21
 - Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
@@ -47,6 +49,10 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - `control-center-hardening.css`, `control-center-v2.js`, and `control-center-whop-backups.js` now share the forced cache key `v=20260803.2`.
 - A permanent regression requires all three repaired runtime assets to move together on future changes.
 - The production HTML can no longer silently point Samsung Internet at the old frozen runtime after the repair deployment.
+- Scan and saved-post list responses now expose lightweight review summaries; the exact body is fetched only when one preview is opened.
+- Mobile source, post, and guide pages are reduced to 6, 4, and 8 items respectively.
+- Large post/guide collections are indexed in frame-bounded chunks, and dashboard sections render across separate frames.
+- The repaired runtime assets move together to cache key `v=20260803.3`.
 
 ## Validation
 - [x] PR #21 focused backup/reset/restore audit passed.

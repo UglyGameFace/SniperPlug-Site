@@ -7,10 +7,10 @@
   const idle = window.requestIdleCallback
     ? (callback) => window.requestIdleCallback(callback, { timeout: 120 })
     : (callback) => setTimeout(() => callback({ timeRemaining: () => 8, didTimeout: true }), 0);
-  const GUIDE_PAGE_SIZE = 24;
-  const POST_PAGE_SIZE = 10;
-  const SOURCE_PAGE_SIZE = 12;
   const MOBILE_QUERY = window.matchMedia('(max-width: 720px), (pointer: coarse)');
+  const GUIDE_PAGE_SIZE = MOBILE_QUERY.matches ? 8 : 24;
+  const POST_PAGE_SIZE = MOBILE_QUERY.matches ? 4 : 10;
+  const SOURCE_PAGE_SIZE = MOBILE_QUERY.matches ? 6 : 12;
 
   const elements = {
     loginPanel: $('[data-login-panel]'),
@@ -199,6 +199,7 @@
   }
 
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const nextRenderFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
 
   function isTransientClientError(error) {
     return Boolean(error?.retryable || [0, 408, 425, 429, 500, 502, 503, 504].includes(Number(error?.status || 0)));
@@ -969,7 +970,10 @@ ${filter}`;
   function policyText(post) {
     const policy = post.integrity?.policy || post.integrity?.sourceMeta?.importPolicy;
     if (post.integrity?.blocked) return `Blocked · ${post.integrity.code || 'content policy'} · ${post.integrity.error || ''}`;
-    if (post.integrity?.autoPublishEligible === true) return `Ready for automatic publishing · ${typeLabel(post.contentType)} · ${(post.attachments || []).length} file${(post.attachments || []).length === 1 ? '' : 's'}`;
+    if (post.integrity?.autoPublishEligible === true) {
+      const count = Number(post.attachmentCount ?? (post.attachments || []).length);
+      return `Ready for automatic publishing · ${typeLabel(post.contentType)} · ${count} file${count === 1 ? '' : 's'}`;
+    }
     return `Manual review only · ${policy?.reason || 'This item was not automatically classified as a durable guide.'}`;
   }
 
@@ -1103,6 +1107,21 @@ ${filter}`;
     }).catch((error) => showStatus(error.message, 'error'));
   }
 
+  async function replacePostsForReview(posts) {
+    state.posts = new Map();
+    state.postOrder = [];
+    state.postRenderLimit = POST_PAGE_SIZE;
+    const items = Array.isArray(posts) ? posts : [];
+    const chunkSize = MOBILE_QUERY.matches ? 40 : 200;
+    for (let index = 0; index < items.length; index += chunkSize) {
+      for (const post of items.slice(index, index + chunkSize)) {
+        state.posts.set(post.sourceKey, post);
+        state.postOrder.push(post.sourceKey);
+      }
+      if (index + chunkSize < items.length) await nextRenderFrame();
+    }
+  }
+
   async function scanCurrent(button = null) {
     if (!state.experience?.id) return;
     await withButton(button, 'Scanning current content…', async () => {
@@ -1111,9 +1130,7 @@ ${filter}`;
         body: JSON.stringify({ experienceId: state.experience.id }),
       });
       state.source = output.source;
-      state.posts = new Map((output.posts || []).map((post) => [post.sourceKey, post]));
-      state.postOrder = (output.posts || []).map((post) => post.sourceKey);
-      state.postRenderLimit = POST_PAGE_SIZE;
+      await replacePostsForReview(output.posts || []);
       renderSourceReview();
       elements.postPanel.hidden = false;
       elements.postTitle.textContent = `${state.experience.name || 'Whop source'} · ${typeLabel(output.sourceType)} content`;
@@ -1143,12 +1160,18 @@ ${filter}`;
     }).replace(/\n/g, '<br>');
   }
 
-  function openPreview(post) {
+  async function openPreview(post) {
     if (!post) return;
-    state.previewPostKey = post.sourceKey;
-    elements.previewTitle.textContent = post.title;
-    elements.previewMeta.textContent = `${typeLabel(post.contentType)} · ${post.author?.username || post.author?.name || 'No named author'} · ${post.sourceUpdatedAt ? new Date(post.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;
-    elements.previewBody.innerHTML = linkifyPreview(post.body || 'The exact body is loaded again during import.');
+    let exact = post;
+    if (typeof exact.body !== 'string') {
+      const output = await requestJson(`/api/control?action=post-detail&sourceKey=${encodeURIComponent(post.sourceKey)}`, { method: 'GET' });
+      exact = { ...post, ...output.post };
+      state.posts.set(post.sourceKey, exact);
+    }
+    state.previewPostKey = exact.sourceKey;
+    elements.previewTitle.textContent = exact.title;
+    elements.previewMeta.textContent = `${typeLabel(exact.contentType)} · ${exact.author?.username || exact.author?.name || 'No named author'} · ${exact.sourceUpdatedAt ? new Date(exact.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;
+    elements.previewBody.innerHTML = linkifyPreview(exact.body || 'No exact body was returned for this item.');
     elements.preview.hidden = false;
     document.body.style.overflow = 'hidden';
   }
@@ -1306,27 +1329,37 @@ ${filter}`;
     renderGuides({ reset: true });
   }
 
-  function ingestDashboard(data) {
+  async function ingestDashboard(data) {
     state.dashboard = data;
     const summaries = data.guides || [];
-    state.guides = new Map(summaries.map((summary) => {
-      const cached = state.guideDetails.get(Number(summary.id));
-      const guide = cached?.updatedAt === summary.updatedAt ? { ...summary, ...cached } : summary;
-      if (cached && cached.updatedAt !== summary.updatedAt) state.guideDetails.delete(Number(summary.id));
-      return [Number(summary.id), guide];
-    }));
-    state.guideOrder = summaries.map((guide) => Number(guide.id));
+    state.guides = new Map();
+    state.guideOrder = [];
+    const chunkSize = MOBILE_QUERY.matches ? 60 : 250;
+    for (let index = 0; index < summaries.length; index += chunkSize) {
+      for (const summary of summaries.slice(index, index + chunkSize)) {
+        const numericId = Number(summary.id);
+        const cached = state.guideDetails.get(numericId);
+        const guide = cached?.updatedAt === summary.updatedAt ? { ...summary, ...cached } : summary;
+        if (cached && cached.updatedAt !== summary.updatedAt) state.guideDetails.delete(numericId);
+        state.guides.set(numericId, guide);
+        state.guideOrder.push(numericId);
+      }
+      if (index + chunkSize < summaries.length) await nextRenderFrame();
+    }
     unlock();
     renderWhop();
+    await nextRenderFrame();
     renderSourceSummary();
     renderCategories();
+    await nextRenderFrame();
     renderGuides({ reset: true });
     root.dispatchEvent(new CustomEvent('sniperplug:dashboard-refreshed'));
   }
 
   async function loadDashboard({ discovery = false } = {}) {
     const data = await api('dashboard', { method: 'GET' });
-    ingestDashboard(data);
+    await ingestDashboard(data);
+    await nextRenderFrame();
     renderDiscovery();
     if (discovery && data.whop?.connected && data.whop?.verified) await loadDiscovery();
     return data;
@@ -1843,7 +1876,9 @@ ${filter}`;
       const key = button.closest('.post-card')?.dataset.sourceKey;
       const post = state.posts.get(key);
       if (!post) return;
-      if (action === 'post-preview') return openPreview(post);
+      if (action === 'post-preview') {
+        return withButton(button, 'Loading preview…', () => openPreview(post)).catch((error) => showStatus(error.message, 'error'));
+      }
       const decision = action === 'post-approve' ? 'approved' : action === 'post-disapprove' ? 'disapproved' : 'pending';
       return decidePosts([key], decision, button);
     }
