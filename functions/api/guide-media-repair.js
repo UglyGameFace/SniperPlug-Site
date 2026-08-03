@@ -18,6 +18,14 @@ function guideId(value) {
   return id;
 }
 
+function deploymentInfo(env) {
+  return {
+    commit: String(env?.CF_PAGES_COMMIT_SHA || '').trim() || null,
+    branch: String(env?.CF_PAGES_BRANCH || '').trim() || null,
+    pagesUrl: String(env?.CF_PAGES_URL || '').trim() || null,
+  };
+}
+
 async function liveExperience(request, env, admin, row) {
   let whop;
   try {
@@ -66,11 +74,13 @@ export async function onRequest(context) {
       throw new HttpError(422, 'This guide is not linked to a recoverable Whop item.');
     }
     if (!context.env?.SNIPERPLUG_MEDIA) {
-      throw new HttpError(503, 'Repair media cannot run because this deployment does not have the SNIPERPLUG_MEDIA R2 binding. Bind the sniperplug-media bucket to both Production and Preview, redeploy SniperPlug, then retry.', {
+      throw new HttpError(503, 'The active Pages Function cannot see the SNIPERPLUG_MEDIA binding. The dashboard binding may exist, but this exact deployment or environment is not receiving it.', {
         code: 'media_storage_not_connected',
         binding: 'SNIPERPLUG_MEDIA',
         bucket: 'sniperplug-media',
+        storageConnected: false,
         guideId: id,
+        deployment: deploymentInfo(context.env),
       });
     }
 
@@ -86,7 +96,13 @@ export async function onRequest(context) {
 
     const result = (output.results || []).find((item) => String(item.sourceKey) === String(row.source_key));
     if (!result || !['created-draft', 'updated-draft', 'unchanged'].includes(result.action)) {
-      throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild its media section.');
+      throw new HttpError(409, result?.holdReason || 'Whop returned the item, but SniperPlug could not rebuild its media section.', {
+        code: 'media_repair_import_rejected',
+        guideId: id,
+        storageConnected: true,
+        action: result?.action || null,
+        deployment: deploymentInfo(context.env),
+      });
     }
 
     const repaired = await adminGuide(context.env, id);
@@ -96,16 +112,27 @@ export async function onRequest(context) {
     if (!review.complete) {
       const count = Math.max(1, review.reviewCount);
       const reason = review.reasons[0] || 'The source still did not provide a permanent copy that SniperPlug can safely publish.';
-      throw new HttpError(409, `Whop was re-fetched, but ${count} media ${count === 1 ? 'item is' : 'items are'} still unresolved. ${reason}`, {
+      throw new HttpError(409, `Whop was re-fetched and R2 is connected, but ${count} media ${count === 1 ? 'item is' : 'items are'} still unresolved. ${reason}`, {
         code: 'media_repair_incomplete',
         guideId: id,
+        storageConnected: true,
         reviewCount: count,
         reasons: review.reasons,
         action: result.action,
+        deployment: deploymentInfo(context.env),
+        guide: repaired,
       });
     }
 
-    return json({ repaired: true, complete: true, action: result.action, guide: repaired, import: output });
+    return json({
+      repaired: true,
+      complete: true,
+      storageConnected: true,
+      action: result.action,
+      deployment: deploymentInfo(context.env),
+      guide: repaired,
+      import: output,
+    });
   } catch (error) {
     return handleError(error);
   }
