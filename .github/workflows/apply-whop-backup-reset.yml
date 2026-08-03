@@ -1,0 +1,175 @@
+name: Apply Whop backup reset integration
+
+on:
+  push:
+    branches:
+      - feat/whop-backup-reset-restore
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Integrate backup reset runtime and UI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # Keep current scans current: revive returned rows, mark disappeared rows stale,
+          # and hide stale rows from normal source review.
+          posts_path = Path('functions/_lib/posts.js')
+          posts = posts_path.read_text()
+          import_anchor = "import { requireApprovedSource } from './source-policy.js';\n"
+          import_line = import_anchor + "import { ensureWhopBackupSchema } from './whop-backups.js';\n"
+          if "ensureWhopBackupSchema" not in posts:
+              if import_anchor not in posts: raise SystemExit('posts import anchor missing')
+              posts = posts.replace(import_anchor, import_line, 1)
+          scan_anchor = "export async function scanApprovedSource(env, whopSession, experience) {\n  const db = requireDatabase(env);\n"
+          scan_replacement = "export async function scanApprovedSource(env, whopSession, experience) {\n  await ensureWhopBackupSchema(env);\n  const db = requireDatabase(env);\n"
+          if scan_replacement not in posts:
+              if scan_anchor not in posts: raise SystemExit('scan schema anchor missing')
+              posts = posts.replace(scan_anchor, scan_replacement, 1)
+          old_insert = """        source_created_at, source_updated_at, source_fingerprint, integrity_json,\n        decision, decision_updated_at, last_scanned_at\n      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)\n"""
+          new_insert = """        source_created_at, source_updated_at, source_fingerprint, integrity_json,\n        decision, decision_updated_at, last_scanned_at, stale_at\n      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)\n"""
+          if new_insert not in posts:
+              if old_insert not in posts: raise SystemExit('post insert anchor missing')
+              posts = posts.replace(old_insert, new_insert, 1)
+          old_upsert = """        decision_updated_at = CASE\n          WHEN whop_posts.source_fingerprint IS NOT excluded.source_fingerprint THEN NULL\n          ELSE whop_posts.decision_updated_at\n        END,\n        last_scanned_at = excluded.last_scanned_at\n"""
+          new_upsert = """        decision_updated_at = CASE\n          WHEN whop_posts.source_fingerprint IS NOT excluded.source_fingerprint THEN NULL\n          ELSE whop_posts.decision_updated_at\n        END,\n        last_scanned_at = excluded.last_scanned_at,\n        stale_at = NULL\n"""
+          if new_upsert not in posts:
+              if old_upsert not in posts: raise SystemExit('post upsert anchor missing')
+              posts = posts.replace(old_upsert, new_upsert, 1)
+          save_anchor = """    if (statements.length) await runStatementBatches(db, statements);\n    return verifySavedScan(db, experienceId, scanMarker, posts);\n"""
+          save_replacement = """    if (statements.length) await runStatementBatches(db, statements);\n    await db.prepare(`\n      UPDATE whop_posts\n      SET stale_at = ?\n      WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL\n    `).bind(scanMarker, experienceId, scanMarker).run();\n    return verifySavedScan(db, experienceId, scanMarker, posts);\n"""
+          if save_replacement not in posts:
+              if save_anchor not in posts: raise SystemExit('post stale marker anchor missing')
+              posts = posts.replace(save_anchor, save_replacement, 1)
+          list_anchor = """export async function listSavedPosts(env, experienceId) {\n  const db = requireDatabase(env);\n  const rows = await db.prepare(`\n    SELECT * FROM whop_posts WHERE experience_id = ?\n"""
+          list_replacement = """export async function listSavedPosts(env, experienceId) {\n  await ensureWhopBackupSchema(env);\n  const db = requireDatabase(env);\n  const rows = await db.prepare(`\n    SELECT * FROM whop_posts WHERE experience_id = ? AND stale_at IS NULL\n"""
+          if list_replacement not in posts:
+              if list_anchor not in posts: raise SystemExit('saved-post filter anchor missing')
+              posts = posts.replace(list_anchor, list_replacement, 1)
+          posts_path.write_text(posts)
+
+          # Verified backups pin R2 objects so reset never starts a cleanup countdown.
+          media_path = Path('functions/_lib/media-storage.js')
+          media = media_path.read_text()
+          old_refs = """async function guideReferenceKeys(db) {\n  const rows = await db.prepare(\"SELECT body_markdown, attachment_json FROM guides WHERE status IN ('draft', 'published')\").all();\n  const keys = new Set();\n  for (const row of rows.results || []) {\n    const attachments = safeJson(row.attachment_json, {});\n    for (const key of extractMediaStorageKeys(row.body_markdown, attachments)) keys.add(key);\n  }\n  return keys;\n}\n"""
+          new_refs = """async function guideReferenceKeys(db) {\n  const rows = await db.prepare(\"SELECT body_markdown, attachment_json FROM guides WHERE status IN ('draft', 'published')\").all();\n  const keys = new Set();\n  for (const row of rows.results || []) {\n    const attachments = safeJson(row.attachment_json, {});\n    for (const key of extractMediaStorageKeys(row.body_markdown, attachments)) keys.add(key);\n  }\n  try {\n    const backupRows = await db.prepare(`\n      SELECT DISTINCT media.storage_key\n      FROM whop_import_backup_media AS media\n      JOIN whop_import_backups AS backup ON backup.backup_id = media.backup_id\n      WHERE backup.status = 'verified' AND backup.deleted_at IS NULL\n    `).all();\n    for (const row of backupRows.results || []) {\n      const key = validMediaStorageKey(row.storage_key);\n      if (key) keys.add(key);\n    }\n  } catch (error) {\n    if (!/no such table/i.test(String(error?.message || ''))) throw error;\n  }\n  return keys;\n}\n"""
+          if new_refs not in media:
+              if old_refs not in media: raise SystemExit('media reference anchor missing')
+              media = media.replace(old_refs, new_refs, 1)
+              media_path.write_text(media)
+
+          # Correct the backup verification order, destructive checksum scope, and
+          # published-guide source reattachment.
+          backup_path = Path('functions/_lib/whop-backups.js')
+          backup = backup_path.read_text()
+          backup = backup.replace(
+              "const contentRows = entityRows.filter((row) => row.entityType !== 'media-object');",
+              "const contentRows = entityRows.filter((row) => ['source', 'post', 'guide', 'course-video'].includes(row.entityType));",
+          )
+          backup = backup.replace(
+              "async function verifyBackup(env, backupId, { includePayload = true } = {}) {",
+              "async function verifyBackup(env, backupId, { includePayload = true, allowCreating = false } = {}) {",
+          )
+          backup = backup.replace(
+              "if (row.status !== 'verified') throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');",
+              "if (row.status !== 'verified' && !(allowCreating && row.status === 'creating')) throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');",
+          )
+          dummy = """  const expectedRows = Object.values(manifest.counts || {}).reduce((sum, _value, index) => sum + (index < 0 ? 0 : 0), 0);\n  void expectedRows;\n"""
+          count_check = """  const actualCounts = Object.fromEntries(ENTITY_ORDER.map((type) => [type, entities.filter((entity) => entity.entity_type === type).length]));\n  const expectedCounts = {\n    source: Number(manifest.counts?.sources || 0),\n    post: Number(manifest.counts?.posts || 0),\n    category: Number(manifest.counts?.categories || 0),\n    guide: Number(manifest.counts?.guides || 0),\n    'course-video': Number(manifest.counts?.courseVideos || 0),\n    'media-object': Number(manifest.counts?.mediaObjects || 0),\n  };\n  for (const [type, expected] of Object.entries(expectedCounts)) {\n    if (actualCounts[type] !== expected) throw new HttpError(409, `Whop backup ${type} count does not match its manifest.`);\n  }\n"""
+          if count_check not in backup:
+              if dummy not in backup: raise SystemExit('backup count verification anchor missing')
+              backup = backup.replace(dummy, count_check, 1)
+          old_create = """    const creating = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first();\n    if (!creating) throw new HttpError(500, 'SniperPlug could not read back the new Whop backup manifest.');\n    await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)\n      .bind(nowIso(), backupId).run();\n    const verified = await verifyBackup(env, backupId, { includePayload: false });\n    const authorization = input.authorizeReset === true\n      ? await issueResetToken(env, verified.row, input)\n      : null;\n"""
+          new_create = """    const creating = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first();\n    if (!creating) throw new HttpError(500, 'SniperPlug could not read back the new Whop backup manifest.');\n    await verifyBackup(env, backupId, { includePayload: false, allowCreating: true });\n    const verifiedUpdate = await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)\n      .bind(nowIso(), backupId).run();\n    if (changes(verifiedUpdate) !== 1) throw new HttpError(409, 'The Whop backup changed before verification could be finalized.');\n    const verified = await verifyBackup(env, backupId, { includePayload: false });\n    const authorization = input.authorizeReset === true\n      ? await issueResetToken(env, verified.row, input)\n      : null;\n"""
+          if new_create not in backup:
+              if old_create not in backup: raise SystemExit('backup verification order anchor missing')
+              backup = backup.replace(old_create, new_create, 1)
+          backup = backup.replace(
+              "await db.prepare(`UPDATE whop_import_backups SET status = 'failed' WHERE backup_id = ? AND status = 'creating'`).bind(backupId).run().catch(() => null);",
+              "await db.prepare(`UPDATE whop_import_backups SET status = 'failed' WHERE backup_id = ? AND status = 'creating'`).bind(backupId).run().catch(() => null);",
+          )
+          lookup_old = """    let current = snapshot.source_key\n      ? await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(snapshot.source_key).first()\n      : await db.prepare('SELECT * FROM guides WHERE id = ?').bind(snapshot.id).first();\n    if (current && guideEquivalent(current, snapshot)) {\n      unchanged.push(Number(current.id));\n      guideIdMap.set(Number(snapshot.id), Number(current.id));\n      continue;\n    }\n"""
+          lookup_new = """    let current = snapshot.source_key\n      ? await db.prepare(`\n          SELECT * FROM guides\n          WHERE source_key = ?\n             OR (source_key IS NULL AND source_experience_id = ? AND source_post_id = ?)\n          ORDER BY CASE WHEN source_key = ? THEN 0 ELSE 1 END\n          LIMIT 1\n        `).bind(snapshot.source_key, snapshot.source_experience_id, snapshot.source_post_id, snapshot.source_key).first()\n      : await db.prepare('SELECT * FROM guides WHERE id = ?').bind(snapshot.id).first();\n    if (current && guideEquivalent(current, snapshot)) {\n      unchanged.push(Number(current.id));\n      guideIdMap.set(Number(snapshot.id), Number(current.id));\n      continue;\n    }\n    if (current && !current.source_key && snapshot.source_key && GUIDE_COLUMNS\n      .filter((column) => column !== 'source_key')\n      .every((column) => (current[column] ?? null) === (snapshot[column] ?? null))) {\n      const reattached = await db.prepare('UPDATE guides SET source_key = ? WHERE id = ? AND source_key IS NULL')\n        .bind(snapshot.source_key, current.id).run();\n      if (changes(reattached) === 1) {\n        restored.push(Number(current.id));\n        guideIdMap.set(Number(snapshot.id), Number(current.id));\n        continue;\n      }\n    }\n"""
+          if lookup_new not in backup:
+              if lookup_old not in backup: raise SystemExit('published guide reattach anchor missing')
+              backup = backup.replace(lookup_old, lookup_new, 1)
+          backup_path.write_text(backup)
+
+          # Add the single canonical UI surface and load each asset exactly once.
+          html_path = Path('control-center/index.html')
+          html = html_path.read_text()
+          css_anchor = '  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">\n'
+          css_line = css_anchor + '  <link rel="stylesheet" href="/assets/css/whop-backups.css?v=20260803.1">\n'
+          if 'whop-backups.css' not in html:
+              if css_anchor not in html: raise SystemExit('backup CSS anchor missing')
+              html = html.replace(css_anchor, css_line, 1)
+          panel_anchor = """      </section>\n\n      <section class=\"control-panel\" id=\"source-browser\" data-discovery-panel>\n"""
+          panel = """      </section>\n\n      <section class=\"control-panel\" id=\"whop-backups\" data-whop-backup-panel>\n        <header class=\"panel-head\"><div><span class=\"eyebrow\">Backup & reset</span><h2>Keep every imported method recoverable</h2><p>Create signed recovery snapshots, clear stale importer state safely, and restore methods even after Whop access is gone.</p></div><button class=\"btn ghost panel-action\" type=\"button\" data-refresh-backups>Refresh backups</button></header>\n        <div class=\"whop-backup-tools\">\n          <label><span>Backup/reset scope</span><select data-backup-scope><option value=\"source\" selected>One saved Whop source</option><option value=\"all\">Entire Whop importer</option></select></label>\n          <label><span>Saved source</span><select data-backup-source><option value=\"\">Loading saved sources…</option></select></label>\n        </div>\n        <div class=\"whop-reset-options\">\n          <label class=\"rights-check\"><input type=\"checkbox\" data-reset-resync checked><span>After clearing one source, reconnect it and scan only the current Whop posts.</span></label>\n          <label class=\"rights-check\"><input type=\"checkbox\" data-reset-published><span>Also delete published guides in this scope. Leave this off to preserve the private library.</span></label>\n          <label class=\"rights-check\"><input type=\"checkbox\" data-reset-disconnect><span>Disconnect Whop after an entire-importer reset.</span></label>\n          <div class=\"button-row\"><button class=\"btn ghost\" type=\"button\" data-create-whop-backup>Create verified backup</button><button class=\"decision disapprove\" type=\"button\" data-reset-whop-importer>Back up, clear & resync</button></div>\n        </div>\n        <p class=\"whop-backup-status\" data-backup-status role=\"status\" aria-live=\"polite\" hidden></p>\n        <div class=\"whop-backup-history-head\"><div><h3>Recovery history</h3><p>Server-held backups pin their R2 media. Download JSON for an offline copy.</p></div></div>\n        <p class=\"whop-backup-empty\" data-backup-empty>No verified Whop backups yet.</p>\n        <div class=\"whop-backup-history\" data-backup-history></div>\n        <dialog class=\"whop-backup-dialog\" data-backup-dialog>\n          <div class=\"whop-backup-dialog-inner\">\n            <header><span class=\"eyebrow\">Protected action</span><h3 data-backup-dialog-title>Confirm backup action</h3></header>\n            <p data-backup-dialog-copy></p>\n            <div class=\"whop-backup-dialog-counts\" data-backup-dialog-counts></div>\n            <label class=\"whop-backup-confirmation\"><span>Type this exact phrase</span><code data-backup-phrase></code><input type=\"text\" data-backup-confirmation autocomplete=\"off\" spellcheck=\"false\"></label>\n            <div class=\"button-row\"><button class=\"decision disapprove\" type=\"button\" data-backup-confirm disabled>Confirm</button><button class=\"btn ghost\" type=\"button\" data-backup-cancel>Cancel</button></div>\n          </div>\n        </dialog>\n      </section>\n\n      <section class=\"control-panel\" id=\"source-browser\" data-discovery-panel>\n"""
+          if 'data-whop-backup-panel' not in html:
+              if panel_anchor not in html: raise SystemExit('backup panel anchor missing')
+              html = html.replace(panel_anchor, panel, 1)
+          script_anchor = '  <script src="/assets/js/control-center-lifecycle.js?v=20260730.14" defer></script>\n'
+          script_line = script_anchor + '  <script src="/assets/js/control-center-whop-backups.js?v=20260803.1" defer></script>\n'
+          if 'control-center-whop-backups.js' not in html:
+              if script_anchor not in html: raise SystemExit('backup script anchor missing')
+              html = html.replace(script_anchor, script_line, 1)
+          html_path.write_text(html)
+
+          # Add the new regression to every build.
+          package_path = Path('package.json')
+          package_text = package_path.read_text()
+          package_anchor = 'node tools/test-recovery-media-truth.mjs && node tools/audit-paid-importer-access.mjs'
+          package_replacement = 'node tools/test-recovery-media-truth.mjs && node tools/audit-whop-backups.mjs && node tools/audit-paid-importer-access.mjs'
+          if 'audit-whop-backups.mjs' not in package_text:
+              if package_anchor not in package_text: raise SystemExit('package audit anchor missing')
+              package_text = package_text.replace(package_anchor, package_replacement, 1)
+              package_path.write_text(package_text)
+
+          docs_path = Path('docs/WHOP_IMPORTER.md')
+          docs = docs_path.read_text()
+          docs = docs.replace(
+              'Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, and `migrations/0003_media_hard_free.sql` in order.',
+              'Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, `migrations/0003_media_hard_free.sql`, and `migrations/0004_whop_import_backups.sql` in order.',
+          )
+          backup_docs = """## Backup, clear, and restore\n\nThe Control Center has one owner-only recovery panel for Whop imports. A destructive clear never runs directly. SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes every source/post/guide/course-video/media reference to D1, reads the snapshot back, verifies every checksum, and only then issues a short-lived reset authorization.\n\nBackups include saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and R2 media ledger references. Verified backups pin their R2 objects so normal detached-media cleanup cannot delete the only surviving copy. Published guides are preserved by default; deleting them requires a separate checkbox and a stronger typed confirmation phrase.\n\nBackup history supports owner-only JSON download, restore, and deletion. Restore does not call Whop, so it still works after membership or group access is lost. Existing newer guides are reported as conflicts and are never overwritten silently. Clearing one source can immediately reapprove and rescan it, while an entire-importer reset can optionally disconnect OAuth before rebuilding from zero.\n\nFresh source scans now mark posts missing from Whop as stale and hide them from ordinary review instead of letting old rows resurface forever. If a stale item returns in a later official scan, its row is revived automatically.\n\n"""
+          if '## Backup, clear, and restore' not in docs:
+              marker = '## Owner workflow\n'
+              if marker not in docs: raise SystemExit('backup docs anchor missing')
+              docs = docs.replace(marker, backup_docs + marker, 1)
+          docs_path.write_text(docs)
+
+          Path('ACTIVE_TASK.md').write_text("""# Active Task\n\n## Task\nIssue #19 — Back up Whop imports before clear-and-resync.\n\n## Status\n**Active — implementation branch under validation.** The previous OAuth/media repair is no longer blocking progress. Branch `feat/whop-backup-reset-restore` adds persistent signed backups, verified reset authorization, offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.\n\n## Confirmed findings\n- Reconnecting Whop replaces OAuth access but does not clear `whop_sources`, `whop_posts`, imported guides, course-video mappings, or R2 records.\n- Existing scans upsert current items but did not hide rows that disappeared from Whop.\n- Imported guides live separately from post snapshots, so clearing posts alone would leave old drafts visible.\n- The existing guide snapshot helper protects one in-flight save only; it is not persistent recovery and cannot survive lost Whop access.\n- Media cleanup previously considered only active draft/published guides, so a reset could eventually delete R2 objects unless backups pin them explicitly.\n\n## Implemented on branch\n- D1 migration/runtime schema for signed backup manifests, normalized backup rows, media pins, reset tokens, and stale post timestamps.\n- Exact snapshots of sources, posts, categories, guides, course-video mappings, and media ledger records.\n- Read-back checksum and HMAC signature verification before a backup becomes verified.\n- Short-lived one-time reset authorization bound to the verified scope and destructive options.\n- Current-state checksum comparison immediately before deletion so newer work forces a fresh backup.\n- Published guides preserved by default; published deletion requires explicit opt-in and stronger typed confirmation.\n- Offline JSON download and restore without a Whop session; newer guides remain conflicts instead of being overwritten.\n- Current scans revive returned rows, mark missing rows stale, and hide stale rows from normal review.\n- Verified backups pin R2 objects during media cleanup.\n- One guarded Control Center panel for backup history, download, restore, clear/resync, and backup deletion.\n\n## Validation\n- [ ] New backup/reset/restore regression passes.\n- [ ] Existing Whop scan/import/media/recovery regressions pass.\n- [ ] Full Node 22 build passes.\n- [ ] Changed-file, duplicate-handler, conflict, and cleanup inspection pass.\n- [ ] PR review and Cloudflare production validation pass.\n- [ ] Production backup download, source clear/resync, and restore are exercised with real imported content.\n\n## Definition of Done\n- No destructive Whop reset can start without a newly verified restorable backup.\n- Backup download and restore work after Whop access is removed.\n- Published guides remain by default and newer guides are never overwritten silently.\n- R2 objects referenced only by a verified backup remain protected.\n- Fresh scans stop showing disappeared old posts.\n- Targeted tests, full build, cleanup, review, deployment, and live validation pass.\n\n## Backlog\n- Issue #20 — full website duplication audit after this task reaches Definition of Done.\n- Universal owner-authorized proxy/play/download support for non-Course Whop videos.\n\n## Scope lock\nNo unrelated implementation begins until Issue #19 reaches Definition of Done unless the owner explicitly switches priorities.\n""")
+          PY
+      - name: Run focused backup regression
+        run: |
+          node --check functions/_lib/whop-backups.js
+          node --check functions/api/whop-backups.js
+          node --check functions/_lib/posts.js
+          node --check functions/_lib/media-storage.js
+          node --check assets/js/control-center-whop-backups.js
+          node tools/audit-whop-backups.mjs
+      - name: Run full Node 22 build
+        run: npm run build
+      - name: Commit validated implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md package.json docs/WHOP_IMPORTER.md control-center/index.html functions/_lib/posts.js functions/_lib/media-storage.js functions/_lib/whop-backups.js
+          if git diff --cached --quiet; then
+            echo "No integration changes required"
+            exit 0
+          fi
+          git commit -m "Integrate verified Whop backup reset and restore"
+          git push
