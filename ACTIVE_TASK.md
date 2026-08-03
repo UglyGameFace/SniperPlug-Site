@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active.** The first false-success guard from PR #14 is merged, but production retesting showed the editor still displayed the same old warning after the action. The current branch adds exact deployment/runtime diagnostics and puts the result beside the repair button instead of only at the top of the Control Center.
+**Active.** The first false-success guard from PR #14 is merged, but production retesting showed the editor still displayed the same old warning after the action. PR #15 adds exact deployment/runtime diagnostics and puts the result beside the repair button instead of only at the top of the Control Center. Branch validation is clean; production deployment and the owner’s exact-media retest remain.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -14,7 +14,7 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The repair action was restricted to old storage-related warning text and could disappear after the server replaced that warning with another media-copy failure.
 - The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.
 
-## Implemented changes on the active branch
+## Implemented changes on PR #15
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
 - Missing-binding errors now say the active Function cannot see the binding, rather than incorrectly claiming the dashboard has no binding.
 - Incomplete repairs return the newest server-confirmed guide state and the exact unresolved reasons.
@@ -29,12 +29,12 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Existing repair endpoint, import path, media mirror path, binding guard, callers, and tests inspected.
 - [x] Inline status and structured diagnostics implemented.
 - [x] Regression assertions added.
-- [ ] Full Node 22 build passes on the branch.
-- [ ] Cloudflare branch preview deploys successfully.
-- [ ] Branch preview repair returns the exact runtime result beside the selected guide.
-- [ ] Changed-file, conflict, duplicate-path, and cleanup inspection passes.
-- [ ] PR merged.
-- [ ] Production deployment and owner retest confirmed.
+- [x] Full Node 22 build and regression suite pass on the branch (workflow run #815).
+- [x] PR is mergeable with no review threads or conflicting duplicate implementation path.
+- [x] Changed-file scope and cleanup inspection pass.
+- [ ] Cloudflare production deployment contains the merged PR #15 commit.
+- [ ] Owner retest returns the exact runtime result beside the selected guide.
+- [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.
 
 ## Definition of Done
 - Pressing Repair media always produces a visible result beside the button on mobile and desktop.
