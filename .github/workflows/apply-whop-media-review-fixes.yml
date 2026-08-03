@@ -32,7 +32,7 @@ jobs:
               if old_success not in integrity:
                   raise SystemExit('repair result block anchor missing')
               integrity = integrity.replace(old_success, new_success, 1)
-              integrity_path.write_text(integrity)
+          integrity_path.write_text(integrity)
 
           v2_path = Path('assets/js/control-center-v2.js')
           v2 = v2_path.read_text()
@@ -52,26 +52,22 @@ jobs:
 
           test_path = Path('tools/test-recovery-media-truth.mjs')
           test = test_path.read_text()
-          old_assert = """assert.ok(mediaRepairClient.includes(\"const detail = { guide, handled: false }\") && !mediaRepairClient.includes(\"bodyField.dispatchEvent(new Event('input'\"), 'Media repair still bypasses the canonical saved-guide renderer and dirties the editor.');\nassert.ok(controlCenterClient.includes(\"root.addEventListener('sniperplug:guide-media-repaired'\") && controlCenterClient.includes(\"renderGuideEditor(guide, 'saved')\") && controlCenterClient.includes('updateGuideListItem(guide)'), 'Repaired guides do not refresh canonical editor, list, publish, attachment, and clean-snapshot state.');\n"""
-          new_assert = old_assert + """assert.ok(mediaRepairClient.includes('const applied = applyGuide(output.guide)') && mediaRepairClient.includes('if (applied) show(`Media repaired.'), 'A failed client refresh can still be overwritten by a false media-repair success message.');\nassert.ok(mediaRepairClient.includes('const reloadSuffix = applied === false') && mediaRepairClient.includes('could not refresh it safely'), 'Incomplete repair errors do not preserve the reload-safety warning when the newest guide cannot be rendered.');\nassert.ok(controlCenterClient.includes(\"typeof guide?.body !== 'string') return false\") && controlCenterClient.includes('return true;'), 'The canonical guide renderer does not report whether it actually applied the guide.');\nassert.ok(controlCenterClient.includes(\"if (!renderGuideEditor(guide, 'saved')) return;\") && controlCenterClient.indexOf(\"if (!renderGuideEditor(guide, 'saved')) return;\") < controlCenterClient.indexOf('event.detail.handled = true'), 'The repair bridge can acknowledge an incomplete or rejected guide render.');\n"""
+          anchor = """assert.ok(mediaRepairClient.includes(\"const detail = { guide, handled: false }\") && !mediaRepairClient.includes(\"bodyField.dispatchEvent(new Event('input'\"), 'Media repair still bypasses the canonical saved-guide renderer and dirties the editor.');\nassert.ok(controlCenterClient.includes(\"root.addEventListener('sniperplug:guide-media-repaired'\") && controlCenterClient.includes(\"renderGuideEditor(guide, 'saved')\") && controlCenterClient.includes('updateGuideListItem(guide)'), 'Repaired guides do not refresh canonical editor, list, publish, attachment, and clean-snapshot state.');\n"""
+          additions = """assert.ok(mediaRepairClient.includes('const applied = applyGuide(output.guide)') && mediaRepairClient.includes('if (applied) show(`Media repaired.'), 'A failed client refresh can still be overwritten by a false media-repair success message.');\nassert.ok(mediaRepairClient.includes('const reloadSuffix = applied === false') && mediaRepairClient.includes('could not refresh it safely'), 'Incomplete repair errors do not preserve the reload-safety warning when the newest guide cannot be rendered.');\nassert.ok(controlCenterClient.includes(\"typeof guide?.body !== 'string') return false\") && controlCenterClient.includes('return true;'), 'The canonical guide renderer does not report whether it actually applied the guide.');\nassert.ok(controlCenterClient.includes(\"if (!renderGuideEditor(guide, 'saved')) return;\") && controlCenterClient.indexOf(\"if (!renderGuideEditor(guide, 'saved')) return;\") < controlCenterClient.indexOf('event.detail.handled = true'), 'The repair bridge can acknowledge an incomplete or rejected guide render.');\n"""
           if 'false media-repair success message' not in test:
-              if old_assert not in test:
+              if anchor not in test:
                   raise SystemExit('review regression anchor missing')
-              test = test.replace(old_assert, new_assert, 1)
-          old_log = "console.log('✓ Repaired guides re-enter the canonical saved-guide renderer, refresh derived controls, and remain clean.');\n"
-          new_log = old_log + "console.log('✓ Reload warnings survive failed client refreshes and incomplete guides cannot be acknowledged as handled.');\n"
+              test = test.replace(anchor, anchor + additions, 1)
+          log_anchor = "console.log('✓ Repaired guides re-enter the canonical saved-guide renderer, refresh derived controls, and remain clean.');\n"
           if 'Reload warnings survive failed client refreshes' not in test:
-              if old_log not in test:
+              if log_anchor not in test:
                   raise SystemExit('review log anchor missing')
-              test = test.replace(old_log, new_log, 1)
+              test = test.replace(log_anchor, log_anchor + "console.log('✓ Reload warnings survive failed client refreshes and incomplete guides cannot be acknowledged as handled.');\n", 1)
           test_path.write_text(test)
 
           task_path = Path('ACTIVE_TASK.md')
           task = task_path.read_text()
-          task = task.replace(
-              '**Active — merge and production retest pending.**',
-              '**Active — review repairs and production retest pending.**'
-          )
+          task = task.replace('**Active — merge and production retest pending.**', '**Active — review repairs and production retest pending.**')
           finding_anchor = "- The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.\n"
           findings = "- The first PR #16 implementation allowed the fallback reload warning to be overwritten by an unconditional success message.\n- The first PR #16 event listener marked incomplete guide payloads handled even when `renderGuideEditor()` returned without applying them.\n"
           if 'fallback reload warning' not in task:
@@ -80,20 +76,18 @@ jobs:
           changes = "- Make `renderGuideEditor()` return explicit applied/not-applied truth and acknowledge the event only after a successful render and list refresh.\n- Preserve the reload-safety error instead of overwriting it with success, including incomplete-repair responses that return a newer guide.\n"
           if 'explicit applied/not-applied truth' not in task:
               task = task.replace(change_anchor, change_anchor + changes)
-          validation_anchor = "- [x] PR #16 is mergeable, zero commits behind `main`, and Qodo recommends the event-bridge approach with no action-required finding.\n"
-          replacement = "- [x] PR #16 was mergeable and zero commits behind `main` before the final review pass.\n- [ ] Qodo review findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.\n- [ ] Focused regression, JavaScript syntax, and full Node 22 build pass after the review repairs.\n"
-          if validation_anchor in task:
-              task = task.replace(validation_anchor, replacement)
+          old_validation = "- [x] PR #16 is mergeable, zero commits behind `main`, and Qodo recommends the event-bridge approach with no action-required finding.\n"
+          new_validation = "- [x] PR #16 was mergeable and zero commits behind `main` before the final review pass.\n- [ ] Qodo review findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.\n- [ ] Focused regression, JavaScript syntax, and full Node 22 build pass after the review repairs.\n"
+          if old_validation in task:
+              task = task.replace(old_validation, new_validation)
           task_path.write_text(task)
           PY
-      - name: Validate focused review repairs
+      - name: Syntax-check changed JavaScript
         run: |
           node --check assets/js/control-center-integrity-fix.js
           node --check assets/js/control-center-v2.js
-          node tools/test-recovery-media-truth.mjs
-      - name: Validate full Node 22 build
-        run: npm run build
-      - name: Commit validated review repairs
+          node --check tools/test-recovery-media-truth.mjs
+      - name: Commit review repairs for authoritative PR CI
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
