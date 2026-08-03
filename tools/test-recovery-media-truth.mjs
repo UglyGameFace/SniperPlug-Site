@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { HttpError } from '../functions/_lib/http.js';
 import { guideSnapshotMatches } from '../functions/_lib/guide-snapshots.js';
 import {
+  mediaRepairReview,
   permanentCourseArchive,
   recoveryMediaState,
   whopRecoveryError,
@@ -22,6 +23,22 @@ assert.equal(missingCopy.mediaState, 'missing-media-copy');
 assert.equal(missingCopy.canRestoreSavedCopy, false);
 assert.equal(missingCopy.requiresWhopReimport, true);
 
+const incompleteRepair = mediaRepairReview({
+  body: '> **Media review required — lesson.mp4:** SniperPlug media storage is not connected.',
+  attachments: {
+    reviewCount: 1,
+    files: [{
+      role: 'hosted-video-archive',
+      durable: false,
+      url: 'https://example.com/expiring-video.mp4',
+      reviewReason: 'SniperPlug media storage is not connected.',
+    }],
+  },
+});
+assert.equal(incompleteRepair.complete, false, 'A remaining media warning must not be reported as repaired.');
+assert.equal(incompleteRepair.reviewCount, 1);
+assert.deepEqual(incompleteRepair.reasons, ['SniperPlug media storage is not connected.']);
+
 const liveOnly = recoveryMediaState({
   attachment_json: JSON.stringify({
     reviewCount: 0,
@@ -30,6 +47,13 @@ const liveOnly = recoveryMediaState({
 });
 assert.equal(liveOnly.mediaState, 'live-source-video');
 assert.equal(liveOnly.canRestoreSavedCopy, false, 'A Whop-backed player must not be mistaken for a permanent copy.');
+assert.equal(mediaRepairReview({
+  body: 'Ready lesson',
+  attachments: {
+    reviewCount: 0,
+    files: [{ role: 'hosted-video-player', durable: true, sourceBacked: true, url: '/course-video/wcv-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }],
+  },
+}).complete, true, 'A working authorized source player without review warnings is a complete media refresh.');
 
 const archiveFile = {
   role: 'hosted-video-archive',
@@ -76,6 +100,8 @@ assert.ok(route.includes('permanentArchiveForSource') && route.includes("x-snipe
 assert.ok(routeHandler.indexOf('if (archive) return permanentArchiveResponse') < routeHandler.indexOf('retrieveLessonWithRefresh'), 'The request path contacts Whop before checking its permanent copy.');
 assert.ok(repair.includes('mediaTruth.canRestoreSavedCopy') && repair.includes("recoveryMode: 'saved-r2-copy'"), 'Removed imports with permanent media still require Whop.');
 assert.ok(repair.includes('whopRecoveryError') && mediaRepair.includes('whopRecoveryError'), 'Recovery endpoints do not explain expired or lost Whop access consistently.');
+assert.ok(mediaRepair.includes("if (!context.env?.SNIPERPLUG_MEDIA)") && mediaRepair.includes("code: 'media_storage_not_connected'"), 'Media repair still retries a guaranteed no-op when the R2 binding is absent.');
+assert.ok(mediaRepair.includes('mediaRepairReview(repaired)') && mediaRepair.includes("code: 'media_repair_incomplete'"), 'Media repair can still report success while review warnings remain.');
 assert.ok(snapshots.includes('guideSnapshotMatches(current, row)'), 'No-op recovery rollback can still become a false 500.');
 assert.ok(client.includes('Permanent R2 copies can be restored directly') && client.includes('error.details = body.details'), 'Recovery UI does not expose media truth or server recovery codes.');
 assert.ok(client.includes('Source access required'), 'Lost source access still leaves a misleading re-import button.');
@@ -96,5 +122,6 @@ for (const file of [
 console.log('\nRECOVERY MEDIA TRUTH TEST PASSED\n');
 console.log('✓ Saved Whop-backed players are never confused with permanent R2 video copies.');
 console.log('✓ Permanent R2 media restores and plays without current Whop access.');
+console.log('✓ Missing R2 storage and unresolved review warnings cannot report a successful media repair.');
 console.log('✓ Lost or missing Whop access returns the real recovery reason instead of a generic 500.');
 console.log('✓ An unchanged rejected guide is a successful idempotent rollback, not a rollback failure.');
