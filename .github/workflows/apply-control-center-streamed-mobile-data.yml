@@ -1,0 +1,168 @@
+name: Apply Control Center streamed mobile data
+
+on:
+  push:
+    branches:
+      - fix/control-center-streamed-mobile-data
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply mobile data repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          posts_path = Path('functions/_lib/posts.js')
+          posts = posts_path.read_text()
+          row_anchor = """function rowToItem(row) {\n  const integrity = JSON.parse(row.integrity_json || '{}');\n  return {\n    sourceKey: row.source_key,\n    experienceId: row.experience_id,\n    postId: row.post_id,\n    contentType: integrity.sourceType || sourceTypeFromKey(row.source_key),\n    title: row.title,\n    excerpt: row.excerpt,\n    body: row.body_markdown,\n    author: JSON.parse(row.author_json || '{}'),\n    attachments: JSON.parse(row.attachment_json || '[]'),\n    sourceCreatedAt: row.source_created_at,\n    sourceUpdatedAt: row.source_updated_at,\n    sourceFingerprint: row.source_fingerprint,\n    integrity,\n    decision: row.decision,\n  };\n}\n\n"""
+          summary_block = row_anchor + """export function summarizePostForClient(item) {\n  const integrity = item?.integrity || {};\n  const policy = integrity.policy || integrity.sourceMeta?.importPolicy || null;\n  const attachments = Array.isArray(item?.attachments) ? item.attachments : [];\n  return {\n    sourceKey: item?.sourceKey || '',\n    experienceId: item?.experienceId || '',\n    postId: item?.postId || '',\n    contentType: item?.contentType || 'forum',\n    title: item?.title || 'Untitled Whop item',\n    excerpt: item?.excerpt || '',\n    author: item?.author || null,\n    attachments: attachments\n      .filter((file) => ['course-thumbnail', 'hosted-video'].includes(file?.role))\n      .map((file) => ({\n        id: file.id || null,\n        filename: file.filename || null,\n        contentType: file.contentType || null,\n        url: file.url || null,\n        role: file.role || null,\n        durationSeconds: file.durationSeconds || null,\n        uploadStatus: file.uploadStatus || null,\n      })),\n    attachmentCount: attachments.length,\n    sourceCreatedAt: item?.sourceCreatedAt || null,\n    sourceUpdatedAt: item?.sourceUpdatedAt || null,\n    sourceFingerprint: item?.sourceFingerprint || null,\n    integrity: {\n      blocked: integrity.blocked === true,\n      code: integrity.code || null,\n      error: integrity.error || null,\n      autoPublishEligible: integrity.autoPublishEligible === true,\n      policy: policy ? { code: policy.code || null, reason: policy.reason || null } : null,\n    },\n    decision: item?.decision || 'pending',\n  };\n}\n\n"""
+          if 'export function summarizePostForClient' not in posts:
+              if row_anchor not in posts:
+                  raise SystemExit('posts rowToItem anchor missing')
+              posts = posts.replace(row_anchor, summary_block, 1)
+
+          detail_anchor = """export async function listSavedPosts(env, experienceId) {\n"""
+          detail_block = """export async function savedPostDetail(env, sourceKey) {\n  await ensureWhopBackupSchema(env);\n  const key = String(sourceKey || '').trim();\n  if (!key) throw new HttpError(422, 'Choose a valid Whop content item.');\n  const db = requireDatabase(env);\n  const row = await db.prepare('SELECT * FROM whop_posts WHERE source_key = ? AND stale_at IS NULL').bind(key).first();\n  if (!row) throw new HttpError(404, 'That Whop content item is no longer available in the current scan.');\n  return rowToItem(row);\n}\n\n""" + detail_anchor
+          if 'export async function savedPostDetail' not in posts:
+              if detail_anchor not in posts:
+                  raise SystemExit('listSavedPosts anchor missing')
+              posts = posts.replace(detail_anchor, detail_block, 1)
+          posts_path.write_text(posts)
+
+          control_api_path = Path('functions/api/control.js')
+          control_api = control_api_path.read_text()
+          old_import = """import {\n  listSavedPosts,\n  savePostDecision,\n  scanApprovedSource,\n} from '../_lib/posts.js';\n"""
+          new_import = """import {\n  listSavedPosts,\n  savePostDecision,\n  savedPostDetail,\n  scanApprovedSource,\n  summarizePostForClient,\n} from '../_lib/posts.js';\n"""
+          if new_import not in control_api:
+              if old_import not in control_api:
+                  raise SystemExit('control posts import anchor missing')
+              control_api = control_api.replace(old_import, new_import, 1)
+          old_scan_posts = """    posts,\n    counts: {\n"""
+          new_scan_posts = """    posts: posts.map(summarizePostForClient),\n    counts: {\n"""
+          if new_scan_posts not in control_api:
+              if old_scan_posts not in control_api:
+                  raise SystemExit('scan response posts anchor missing')
+              control_api = control_api.replace(old_scan_posts, new_scan_posts, 1)
+          old_posts_route = """    if (currentAction === 'posts') {\n      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);\n      return json({ posts: await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '') });\n    }\n"""
+          new_posts_route = """    if (currentAction === 'post-detail') {\n      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);\n      return json({ post: await savedPostDetail(context.env, new URL(context.request.url).searchParams.get('sourceKey') || '') });\n    }\n    if (currentAction === 'posts') {\n      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);\n      const posts = await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '');\n      return json({ posts: posts.map(summarizePostForClient) });\n    }\n"""
+          if new_posts_route not in control_api:
+              if old_posts_route not in control_api:
+                  raise SystemExit('posts route anchor missing')
+              control_api = control_api.replace(old_posts_route, new_posts_route, 1)
+          control_api_path.write_text(control_api)
+
+          client_path = Path('assets/js/control-center-v2.js')
+          client = client_path.read_text()
+          old_sizes = """  const GUIDE_PAGE_SIZE = 24;\n  const POST_PAGE_SIZE = 10;\n  const SOURCE_PAGE_SIZE = 12;\n  const MOBILE_QUERY = window.matchMedia('(max-width: 720px), (pointer: coarse)');\n"""
+          new_sizes = """  const MOBILE_QUERY = window.matchMedia('(max-width: 720px), (pointer: coarse)');\n  const GUIDE_PAGE_SIZE = MOBILE_QUERY.matches ? 8 : 24;\n  const POST_PAGE_SIZE = MOBILE_QUERY.matches ? 4 : 10;\n  const SOURCE_PAGE_SIZE = MOBILE_QUERY.matches ? 6 : 12;\n"""
+          if new_sizes not in client:
+              if old_sizes not in client:
+                  raise SystemExit('mobile page-size anchor missing')
+              client = client.replace(old_sizes, new_sizes, 1)
+          wait_anchor = """  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));\n"""
+          wait_insert = wait_anchor + """  const nextRenderFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));\n"""
+          if 'const nextRenderFrame' not in client:
+              if wait_anchor not in client:
+                  raise SystemExit('wait helper anchor missing')
+              client = client.replace(wait_anchor, wait_insert, 1)
+          policy_old = """    if (post.integrity?.autoPublishEligible === true) return `Ready for automatic publishing · ${typeLabel(post.contentType)} · ${(post.attachments || []).length} file${(post.attachments || []).length === 1 ? '' : 's'}`;\n"""
+          policy_new = """    if (post.integrity?.autoPublishEligible === true) {\n      const count = Number(post.attachmentCount ?? (post.attachments || []).length);\n      return `Ready for automatic publishing · ${typeLabel(post.contentType)} · ${count} file${count === 1 ? '' : 's'}`;\n    }\n"""
+          if policy_new not in client:
+              if policy_old not in client:
+                  raise SystemExit('policy attachment-count anchor missing')
+              client = client.replace(policy_old, policy_new, 1)
+
+          scan_anchor = """  async function scanCurrent(button = null) {\n"""
+          scan_helper = """  async function replacePostsForReview(posts) {\n    state.posts = new Map();\n    state.postOrder = [];\n    state.postRenderLimit = POST_PAGE_SIZE;\n    const items = Array.isArray(posts) ? posts : [];\n    const chunkSize = MOBILE_QUERY.matches ? 40 : 200;\n    for (let index = 0; index < items.length; index += chunkSize) {\n      for (const post of items.slice(index, index + chunkSize)) {\n        state.posts.set(post.sourceKey, post);\n        state.postOrder.push(post.sourceKey);\n      }\n      if (index + chunkSize < items.length) await nextRenderFrame();\n    }\n  }\n\n""" + scan_anchor
+          if 'async function replacePostsForReview' not in client:
+              if scan_anchor not in client:
+                  raise SystemExit('scanCurrent anchor missing')
+              client = client.replace(scan_anchor, scan_helper, 1)
+          old_scan_state = """      state.posts = new Map((output.posts || []).map((post) => [post.sourceKey, post]));\n      state.postOrder = (output.posts || []).map((post) => post.sourceKey);\n      state.postRenderLimit = POST_PAGE_SIZE;\n"""
+          new_scan_state = """      await replacePostsForReview(output.posts || []);\n"""
+          if new_scan_state not in client:
+              if old_scan_state not in client:
+                  raise SystemExit('scan client post-state anchor missing')
+              client = client.replace(old_scan_state, new_scan_state, 1)
+
+          old_preview = """  function openPreview(post) {\n    if (!post) return;\n    state.previewPostKey = post.sourceKey;\n    elements.previewTitle.textContent = post.title;\n    elements.previewMeta.textContent = `${typeLabel(post.contentType)} · ${post.author?.username || post.author?.name || 'No named author'} · ${post.sourceUpdatedAt ? new Date(post.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;\n    elements.previewBody.innerHTML = linkifyPreview(post.body || 'The exact body is loaded again during import.');\n    elements.preview.hidden = false;\n    document.body.style.overflow = 'hidden';\n  }\n"""
+          new_preview = """  async function openPreview(post) {\n    if (!post) return;\n    let exact = post;\n    if (typeof exact.body !== 'string') {\n      const output = await requestJson(`/api/control?action=post-detail&sourceKey=${encodeURIComponent(post.sourceKey)}`, { method: 'GET' });\n      exact = { ...post, ...output.post };\n      state.posts.set(post.sourceKey, exact);\n    }\n    state.previewPostKey = exact.sourceKey;\n    elements.previewTitle.textContent = exact.title;\n    elements.previewMeta.textContent = `${typeLabel(exact.contentType)} · ${exact.author?.username || exact.author?.name || 'No named author'} · ${exact.sourceUpdatedAt ? new Date(exact.sourceUpdatedAt).toLocaleString() : 'Unknown date'}`;\n    elements.previewBody.innerHTML = linkifyPreview(exact.body || 'No exact body was returned for this item.');\n    elements.preview.hidden = false;\n    document.body.style.overflow = 'hidden';\n  }\n"""
+          if new_preview not in client:
+              if old_preview not in client:
+                  raise SystemExit('openPreview anchor missing')
+              client = client.replace(old_preview, new_preview, 1)
+
+          old_ingest = """  function ingestDashboard(data) {\n    state.dashboard = data;\n    const summaries = data.guides || [];\n    state.guides = new Map(summaries.map((summary) => {\n      const cached = state.guideDetails.get(Number(summary.id));\n      const guide = cached?.updatedAt === summary.updatedAt ? { ...summary, ...cached } : summary;\n      if (cached && cached.updatedAt !== summary.updatedAt) state.guideDetails.delete(Number(summary.id));\n      return [Number(summary.id), guide];\n    }));\n    state.guideOrder = summaries.map((guide) => Number(guide.id));\n    unlock();\n    renderWhop();\n    renderSourceSummary();\n    renderCategories();\n    renderGuides({ reset: true });\n    root.dispatchEvent(new CustomEvent('sniperplug:dashboard-refreshed'));\n  }\n\n  async function loadDashboard({ discovery = false } = {}) {\n    const data = await api('dashboard', { method: 'GET' });\n    ingestDashboard(data);\n    renderDiscovery();\n"""
+          new_ingest = """  async function ingestDashboard(data) {\n    state.dashboard = data;\n    const summaries = data.guides || [];\n    state.guides = new Map();\n    state.guideOrder = [];\n    const chunkSize = MOBILE_QUERY.matches ? 60 : 250;\n    for (let index = 0; index < summaries.length; index += chunkSize) {\n      for (const summary of summaries.slice(index, index + chunkSize)) {\n        const numericId = Number(summary.id);\n        const cached = state.guideDetails.get(numericId);\n        const guide = cached?.updatedAt === summary.updatedAt ? { ...summary, ...cached } : summary;\n        if (cached && cached.updatedAt !== summary.updatedAt) state.guideDetails.delete(numericId);\n        state.guides.set(numericId, guide);\n        state.guideOrder.push(numericId);\n      }\n      if (index + chunkSize < summaries.length) await nextRenderFrame();\n    }\n    unlock();\n    renderWhop();\n    await nextRenderFrame();\n    renderSourceSummary();\n    renderCategories();\n    await nextRenderFrame();\n    renderGuides({ reset: true });\n    root.dispatchEvent(new CustomEvent('sniperplug:dashboard-refreshed'));\n  }\n\n  async function loadDashboard({ discovery = false } = {}) {\n    const data = await api('dashboard', { method: 'GET' });\n    await ingestDashboard(data);\n    await nextRenderFrame();\n    renderDiscovery();\n"""
+          if new_ingest not in client:
+              if old_ingest not in client:
+                  raise SystemExit('dashboard ingest anchor missing')
+              client = client.replace(old_ingest, new_ingest, 1)
+          old_preview_handler = """      if (action === 'post-preview') return openPreview(post);\n"""
+          new_preview_handler = """      if (action === 'post-preview') {\n        return withButton(button, 'Loading preview…', () => openPreview(post)).catch((error) => showStatus(error.message, 'error'));\n      }\n"""
+          if new_preview_handler not in client:
+              if old_preview_handler not in client:
+                  raise SystemExit('post preview handler anchor missing')
+              client = client.replace(old_preview_handler, new_preview_handler, 1)
+          client_path.write_text(client)
+
+          page_path = Path('control-center/index.html')
+          page = page_path.read_text()
+          for name in ['control-center-hardening.css', 'control-center-v2.js', 'control-center-whop-backups.js']:
+              page = page.replace(f'{name}?v=20260803.2', f'{name}?v=20260803.3')
+          page_path.write_text(page)
+
+          audit_path = Path('tools/audit-control-mobile-flow.mjs')
+          audit = audit_path.read_text()
+          audit = audit.replace("const page = readFileSync('control-center/index.html', 'utf8');\n", "const page = readFileSync('control-center/index.html', 'utf8');\nconst controlApi = readFileSync('functions/api/control.js', 'utf8');\nconst posts = readFileSync('functions/_lib/posts.js', 'utf8');\n")
+          audit = audit.replace("assert.ok(control.includes('const POST_PAGE_SIZE = 10'));\nassert.ok(control.includes('const SOURCE_PAGE_SIZE = 12'));\n", "assert.ok(control.includes('const POST_PAGE_SIZE = MOBILE_QUERY.matches ? 4 : 10'));\nassert.ok(control.includes('const SOURCE_PAGE_SIZE = MOBILE_QUERY.matches ? 6 : 12'));\nassert.ok(control.includes('const GUIDE_PAGE_SIZE = MOBILE_QUERY.matches ? 8 : 24'));\n")
+          audit = audit.replace("assert.ok(control.includes('scanIfApproved: false'));\n", "assert.ok(control.includes('scanIfApproved: false'));\nassert.ok(control.includes('async function replacePostsForReview') && control.includes('await nextRenderFrame()'));\nassert.ok(control.includes('action=post-detail') && control.includes('typeof exact.body !== \'string\''));\nassert.ok(controlApi.includes('posts: posts.map(summarizePostForClient)'));\nassert.ok(controlApi.includes(\"currentAction === 'post-detail'\"));\nassert.ok(posts.includes('export function summarizePostForClient') && posts.includes('export async function savedPostDetail'));\nassert.ok(!controlApi.includes('    posts,\\n    counts: {'));\n")
+          audit = audit.replace('v=20260803.2`)', 'v=20260803.3`)')
+          audit_path.write_text(audit)
+
+          task_path = Path('ACTIVE_TASK.md')
+          task = task_path.read_text()
+          task = task.replace(
+              '**Active — backup engine, mobile workflow repair, and cache bust merged/deployed; live Samsung and recovery validation pending.**',
+              '**Active — live Samsung retest found a remaining scan-payload pause; streamed-summary repair in progress.**'
+          )
+          finding_anchor = '- The original Control Center HTML kept old asset-version query strings, so Samsung Internet could continue serving the frozen pre-repair runtime after deployment.\n'
+          findings = '- Even after bounded card rendering, the scan API still returned every post with its complete Markdown body and full attachment payload, forcing Samsung Internet to parse and map all hidden content before showing the first page.\n- Unlock still mapped all guide summaries and rendered Whop, categories, and guide cards in one synchronous burst.\n'
+          if 'complete Markdown body' not in task:
+              task = task.replace(finding_anchor, finding_anchor + findings)
+          change_anchor = '- The production HTML can no longer silently point Samsung Internet at the old frozen runtime after the repair deployment.\n'
+          changes = '- Scan and saved-post list responses now expose lightweight review summaries; the exact body is fetched only when one preview is opened.\n- Mobile source, post, and guide pages are reduced to 6, 4, and 8 items respectively.\n- Large post/guide collections are indexed in frame-bounded chunks, and dashboard sections render across separate frames.\n- The repaired runtime assets move together to cache key `v=20260803.3`.\n'
+          if 'lightweight review summaries' not in task:
+              task = task.replace(change_anchor, change_anchor + changes)
+          task_path.write_text(task)
+          PY
+      - name: Validate streamed mobile data repair
+        run: |
+          node --check assets/js/control-center-v2.js
+          node --check functions/api/control.js
+          node --check functions/_lib/posts.js
+          node tools/audit-control-mobile-flow.mjs
+          npm run build
+      - name: Commit validated repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md assets/js/control-center-v2.js control-center/index.html functions/api/control.js functions/_lib/posts.js tools/audit-control-mobile-flow.mjs
+          if git diff --cached --quiet; then
+            echo "No streamed mobile data changes required"
+            exit 0
+          fi
+          git commit -m "Stream lightweight Control Center review data"
+          git push
