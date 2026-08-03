@@ -1,0 +1,52 @@
+name: Apply Control Center streamed mobile data on PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Execute embedded repair patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          workflow = Path('.github/workflows/apply-control-center-streamed-mobile-data.yml').read_text()
+          marker = "          python - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY\n", start)
+          body = workflow[start:end]
+          lines = [line[10:] if line.startswith('          ') else line for line in body.splitlines()]
+          exec(compile('\n'.join(lines) + '\n', 'embedded-streamed-mobile-patch.py', 'exec'))
+          PY
+      - name: Validate streamed mobile data repair
+        run: |
+          node --check assets/js/control-center-v2.js
+          node --check functions/api/control.js
+          node --check functions/_lib/posts.js
+          node tools/audit-control-mobile-flow.mjs
+          npm run build
+      - name: Commit validated repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md assets/js/control-center-v2.js control-center/index.html functions/api/control.js functions/_lib/posts.js tools/audit-control-mobile-flow.mjs
+          if git diff --cached --quiet; then
+            echo "No streamed mobile data changes required"
+            exit 0
+          fi
+          git commit -m "Stream lightweight Control Center review data"
+          git push
