@@ -221,6 +221,19 @@ async function dashboard(request, env, admin, context) {
   });
 }
 
+async function oauthStart(request, env, admin) {
+  if (request.method !== 'GET') return methodNotAllowed(['GET']);
+  try {
+    return redirect(await beginWhopOAuth(request, env, admin));
+  } catch (error) {
+    const url = new URL('/control-center/', request.url);
+    url.searchParams.set('whop', 'error');
+    url.searchParams.set('message', String(error?.message || 'Whop login could not start.').slice(0, 180));
+    url.hash = 'whop-importer';
+    return redirect(url.toString());
+  }
+}
+
 async function oauthCallback(request, env) {
   try {
     await finishWhopOAuth(request, env);
@@ -357,10 +370,7 @@ export async function onRequest(context) {
     if (currentAction === 'session') return await login(context.request, context.env);
     const admin = await requireAdmin(context.request, context.env);
     if (currentAction === 'dashboard') return await dashboard(context.request, context.env, admin, context);
-    if (currentAction === 'oauth-start') {
-      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-      return redirect(await beginWhopOAuth(context.request, context.env, admin));
-    }
+    if (currentAction === 'oauth-start') return await oauthStart(context.request, context.env, admin);
     if (currentAction === 'whop-disconnect') {
       if (context.request.method !== 'DELETE') return methodNotAllowed(['DELETE']);
       requireSameOrigin(context.request);

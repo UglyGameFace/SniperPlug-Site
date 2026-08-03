@@ -19,13 +19,57 @@ const ITEM_CONCURRENCY = 6;
 const EXPERIENCE_TYPE_CACHE_MS = 15 * 60_000;
 const experienceTypeCache = new Map();
 
+const OAUTH_CALLBACK_PATH = '/api/whop/oauth/callback';
+const PRODUCTION_OAUTH_ORIGIN = 'https://sniperplug.com';
+const PREVIEW_OAUTH_ORIGIN = 'https://agent-whop-guide-importer.sniperplug.pages.dev';
+const LOCAL_OAUTH_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+function callbackUrl(origin) {
+  return `${origin}${OAUTH_CALLBACK_PATH}`;
+}
+
+export function resolveWhopRedirectUri(request, env = {}) {
+  const requestUrl = new URL(request.url);
+  const hostname = requestUrl.hostname.toLowerCase();
+  if (hostname === 'sniperplug.com' || hostname === 'www.sniperplug.com') {
+    return callbackUrl(PRODUCTION_OAUTH_ORIGIN);
+  }
+  if (hostname === 'agent-whop-guide-importer.sniperplug.pages.dev') {
+    return callbackUrl(PREVIEW_OAUTH_ORIGIN);
+  }
+  if (LOCAL_OAUTH_HOSTS.has(hostname)) {
+    const configured = String(env?.WHOP_REDIRECT_URI || '').trim();
+    if (!configured) return callbackUrl(requestUrl.origin);
+    let configuredUrl;
+    try {
+      configuredUrl = new URL(configured);
+    } catch {
+      throw new HttpError(503, 'WHOP_REDIRECT_URI must be an absolute localhost callback URL during local development.');
+    }
+    if (
+      !LOCAL_OAUTH_HOSTS.has(configuredUrl.hostname.toLowerCase())
+      || configuredUrl.pathname !== OAUTH_CALLBACK_PATH
+      || configuredUrl.search
+      || configuredUrl.hash
+    ) {
+      throw new HttpError(503, `Local WHOP_REDIRECT_URI must end exactly in ${OAUTH_CALLBACK_PATH}.`);
+    }
+    return configuredUrl.toString();
+  }
+  throw new HttpError(503, 'Whop OAuth is not available on this host. Open the canonical SniperPlug Control Center instead.', {
+    code: 'whop_oauth_unregistered_host',
+    host: hostname,
+    controlCenter: `${PRODUCTION_OAUTH_ORIGIN}/control-center/`,
+    expectedRedirectUri: callbackUrl(PRODUCTION_OAUTH_ORIGIN),
+  });
+}
+
 function config(request, env) {
   const clientId = String(env?.WHOP_CLIENT_ID || '').trim();
   const tokenSecret = String(env?.WHOP_TOKEN_SECRET || '').trim();
   if (!clientId) throw new HttpError(503, 'WHOP_CLIENT_ID is not configured.');
   if (!tokenSecret) throw new HttpError(503, 'WHOP_TOKEN_SECRET is not configured.');
-  const origin = new URL(request.url).origin;
-  const redirectUri = String(env?.WHOP_REDIRECT_URI || `${origin}/api/whop/oauth/callback`).trim();
+  const redirectUri = resolveWhopRedirectUri(request, env);
   const scopes = String(env?.WHOP_OAUTH_SCOPES || DEFAULT_SCOPES).trim();
   return { clientId, tokenSecret, redirectUri, scopes };
 }
