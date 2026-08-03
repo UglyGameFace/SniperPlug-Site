@@ -579,6 +579,39 @@ export async function listWhopImportBackups(env, { limit = 30 } = {}) {
   return (rows.results || []).map(backupSummary);
 }
 
+export async function reattachPreservedWhopGuides(env, experienceId) {
+  const id = exactExperienceId(experienceId);
+  if (!id) return { reattached: 0, conflicts: [] };
+  const db = await ensureWhopBackupSchema(env);
+  const rows = await db.prepare(`
+    SELECT guides.id AS guide_id, posts.source_key
+    FROM guides
+    JOIN whop_posts AS posts
+      ON posts.experience_id = guides.source_experience_id
+     AND posts.post_id = guides.source_post_id
+     AND posts.stale_at IS NULL
+    WHERE guides.source_experience_id = ?
+      AND guides.status = 'published'
+      AND guides.source_key IS NULL
+    GROUP BY guides.id, posts.source_key
+    ORDER BY guides.id
+  `).bind(id).all();
+  let reattached = 0;
+  const conflicts = [];
+  for (const row of rows.results || []) {
+    const owner = await db.prepare('SELECT id FROM guides WHERE source_key = ? AND id != ? LIMIT 1')
+      .bind(row.source_key, row.guide_id).first();
+    if (owner) {
+      conflicts.push({ guideId: Number(row.guide_id), sourceKey: row.source_key, ownerGuideId: Number(owner.id) });
+      continue;
+    }
+    const result = await db.prepare('UPDATE guides SET source_key = ? WHERE id = ? AND source_key IS NULL')
+      .bind(row.source_key, row.guide_id).run();
+    reattached += changes(result);
+  }
+  return { reattached, conflicts };
+}
+
 export async function verifiedWhopResetContext(env, backupId) {
   const verified = await verifyBackup(env, backupId, { includePayload: false });
   const options = safeJson(verified.row.reset_options_json, {}) || {};

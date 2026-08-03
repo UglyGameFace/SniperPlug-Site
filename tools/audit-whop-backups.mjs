@@ -37,6 +37,8 @@ for (const table of ['whop_import_backups', 'whop_import_backup_rows', 'whop_imp
 assert.ok(migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'), 'Latest-scan stale tracking is missing from the migration.');
 assert.ok(posts.includes('stale_at = NULL') && posts.includes('SET stale_at = ?'), 'Scanning does not revive current posts and mark disappeared posts stale.');
 assert.ok(posts.includes('AND stale_at IS NULL'), 'Saved-post loading still returns stale Whop rows.');
+assert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'), 'Fresh scans do not reconnect preserved published guides to their restored source keys.');
+assert.ok(service.includes('export async function reattachPreservedWhopGuides') && service.includes("guides.source_key IS NULL"), 'Published-guide reattachment service is missing.');
 
 assert.ok(service.includes('signValue(backupSignatureValue') && service.includes('verifyValue(backupSignatureValue'), 'Backup manifests are not signed and verified.');
 assert.ok(service.includes('payloadChecksum') && service.includes('contentChecksum'), 'Backup rows and destructive scope are not checksum protected.');
@@ -58,6 +60,8 @@ assert.ok(endpoint.includes("currentAction === 'restore'") && endpoint.includes(
 assert.ok(endpoint.indexOf('verifiedWhopResetContext(env, id)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'Reset does not preflight its stored resync scope before deletion.');
 assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'The exact resync source is not proven readable before deletion.');
 assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"), 'Interrupted restore does not explain that the verified backup is safe to retry.');
+assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish') && endpoint.includes('warnings'), 'A post-reset resync failure can hide that deletion already completed.');
+assert.ok(endpoint.includes('The reset completed, but Whop disconnect did not finish'), 'A post-reset disconnect failure can hide a completed reset.');
 assert.ok(endpoint.includes('JSON.stringify(payload)') && !endpoint.includes('JSON.stringify(payload, null, 2)'), 'Backup download wastes Workers memory on pretty-printed JSON.');
 assert.ok(endpoint.indexOf("currentAction === 'restore'") < endpoint.indexOf("currentAction === 'reset'"), 'Restore routing is unexpectedly coupled to Whop resync.');
 
@@ -68,6 +72,8 @@ assert.ok(client.includes("root.dataset.whopBackupMounted === 'true'") && client
 assert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"), 'The UI can reset before creating and verifying a backup.');
 assert.ok(client.includes('Download JSON') && client.includes('Restore verified backup'), 'Backup history lacks download or restore actions.');
 assert.ok(client.includes("backup.status === 'verified'") && client.includes('incomplete backup cannot be downloaded'), 'Failed backups still expose destructive or recovery actions.');
+assert.ok(client.includes('force = false') && client.includes('quiet: true, force: true'), 'Backup history cannot refresh while a protected action is still busy.');
+assert.ok(client.includes("warning ? 'warning' : 'ok'") && client.includes('The reset succeeded, but resync needs attention'), 'The UI can misreport a completed reset as a total failure when resync is interrupted.');
 assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'), 'Backup workflow is not styled for desktop and mobile.');
 
 assert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'), 'Whop backup deployment and owner workflow are not documented.');

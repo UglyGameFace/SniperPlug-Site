@@ -5,7 +5,7 @@ import { prepareGuideBody } from './integrity.js';
 import { listExperienceItemsLite, sourceKeyForWhopItem } from './whop-items.js';
 import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
-import { ensureWhopBackupSchema } from './whop-backups.js';
+import { ensureWhopBackupSchema, reattachPreservedWhopGuides } from './whop-backups.js';
 
 const SCAN_LEASE_MS = 5 * 60_000;
 const D1_BATCH_SIZE = 100;
@@ -258,6 +258,7 @@ export async function scanApprovedSource(env, whopSession, experience) {
       SET stale_at = ?
       WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL
     `).bind(scanMarker, experienceId, scanMarker).run();
+    await reattachPreservedWhopGuides(env, experienceId);
     return verifySavedScan(db, experienceId, scanMarker, posts);
   } finally {
     await releaseScanLease(db, experienceId, leaseToken).catch(() => null);

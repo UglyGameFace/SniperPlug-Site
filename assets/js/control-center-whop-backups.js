@@ -186,8 +186,8 @@
     }
   }
 
-  async function loadOverview({ quiet = false } = {}) {
-    if (state.busy) return;
+  async function loadOverview({ quiet = false, force = false } = {}) {
+    if (state.busy && !force) return;
     try {
       if (!quiet) show('Loading verified Whop backups…', 'working');
       state.overview = await requestJson('overview');
@@ -243,7 +243,7 @@
     setBusy(true);
     try {
       const result = await createBackup();
-      await loadOverview({ quiet: true });
+      await loadOverview({ quiet: true, force: true });
       show(`Verified backup created: ${result.backup.backupId}. Download it now or keep it for one-click restore.`, 'ok');
     } catch (error) {
       show(error.message, 'error');
@@ -288,12 +288,19 @@
       resync: authorization.options?.resync === true,
     };
     const result = await post('reset', body);
-    await loadOverview({ quiet: true });
+    await loadOverview({ quiet: true, force: true });
     root.querySelector('[data-refresh-dashboard]')?.click();
     if (result.resync) root.querySelector('[data-refresh-groups]')?.click();
+    const warning = result.resync?.complete === false || (result.warnings || []).length > 0;
+    const resyncCopy = result.resync?.complete === true
+      ? ` Fresh resync found ${result.resync.posts} current post(s).`
+      : result.resync?.complete === false
+        ? ' The reset succeeded, but resync needs attention; the verified backup remains restorable.'
+        : '';
+    const warningCopy = (result.warnings || []).length ? ` ${result.warnings.join(' ')}` : '';
     show(
-      `Reset complete after verified backup ${created.backup.backupId}. Removed ${result.deleted.guides} guide(s), ${result.deleted.posts} post snapshot(s), and ${result.deleted.sources} source record(s).${result.resync ? ` Fresh resync found ${result.resync.posts} current post(s).` : ''}`,
-      'ok',
+      `Reset complete after verified backup ${created.backup.backupId}. Removed ${result.deleted.guides} guide(s), ${result.deleted.posts} post snapshot(s), and ${result.deleted.sources} source record(s).${resyncCopy}${warningCopy}`,
+      warning ? 'warning' : 'ok',
     );
   }
 
@@ -339,13 +346,13 @@
       if (pending.type === 'reset') await runReset(confirmation);
       if (pending.type === 'restore') {
         const result = await post('restore', { backupId: pending.backupId, confirmation });
-        await loadOverview({ quiet: true });
+        await loadOverview({ quiet: true, force: true });
         root.querySelector('[data-refresh-dashboard]')?.click();
         show(`Restore finished: ${result.restored.length} restored, ${result.unchanged.length} unchanged, ${result.conflicts.length} preserved as newer conflicts.`, result.conflicts.length ? 'warning' : 'ok');
       }
       if (pending.type === 'delete') {
         await post('delete', { backupId: pending.backupId, confirmation });
-        await loadOverview({ quiet: true });
+        await loadOverview({ quiet: true, force: true });
         show('Backup deleted. Live guides were not changed.', 'ok');
       }
       closeDialog();

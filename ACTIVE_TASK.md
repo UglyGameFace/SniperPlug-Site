@@ -26,6 +26,9 @@ Issue #19 — Back up Whop imports before clear-and-resync.
 - Offline JSON download and restore without a Whop session; newer guides remain conflicts instead of being overwritten.
 - Current scans revive returned rows, mark missing rows stale, and hide stale rows from normal review.
 - Verified backups pin R2 objects during media cleanup.
+- Reattach preserved published guides to fresh post source keys after any successful scan so future imports update instead of duplicate.
+- Report reset success independently from optional resync/disconnect failures, with the verified recovery backup kept actionable.
+- Force backup history to refresh after protected actions even while the operation guard is active.
 - One guarded Control Center panel for backup history, download, restore, clear/resync, and backup deletion.
 
 ## Validation

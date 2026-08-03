@@ -99,21 +99,35 @@ async function postAction(request, env, admin, currentAction) {
       experience = await retrieveExperience(whop, resetContext.experienceId);
     }
     const result = await resetWhopImporter(env, id, body);
+    const warnings = [];
     let resync = null;
     if (result.options.resync === true) {
-      await saveSourceDecision(env, experience, result.experienceId, 'approved');
-      const posts = await scanApprovedSource(env, whop, experience);
-      resync = {
-        experienceId: result.experienceId,
-        title: String(experience?.name || experience?.company?.title || result.experienceId),
-        posts: posts.length,
-        approved: posts.filter((post) => post.decision === 'approved').length,
-        pending: posts.filter((post) => post.decision === 'pending').length,
-        blocked: posts.filter((post) => post.decision === 'blocked').length,
-      };
+      try {
+        await saveSourceDecision(env, experience, result.experienceId, 'approved');
+        const posts = await scanApprovedSource(env, whop, experience);
+        resync = {
+          complete: true,
+          experienceId: result.experienceId,
+          title: String(experience?.name || experience?.company?.title || result.experienceId),
+          posts: posts.length,
+          approved: posts.filter((post) => post.decision === 'approved').length,
+          pending: posts.filter((post) => post.decision === 'pending').length,
+          blocked: posts.filter((post) => post.decision === 'blocked').length,
+        };
+      } catch (error) {
+        const message = String(error?.message || 'Whop resync did not finish.').slice(0, 300);
+        resync = { complete: false, experienceId: result.experienceId, error: message };
+        warnings.push(`The verified reset completed, but fresh Whop resync did not finish: ${message} Restore from backup ${result.backup.backupId} or retry the source scan.`);
+      }
     }
-    if (result.options.disconnectWhop === true) await disconnectWhop(request, env, admin);
-    return json({ ...result, resync });
+    if (result.options.disconnectWhop === true) {
+      try {
+        await disconnectWhop(request, env, admin);
+      } catch (error) {
+        warnings.push(`The reset completed, but Whop disconnect did not finish: ${String(error?.message || 'retry disconnect from the Control Center.').slice(0, 240)}`);
+      }
+    }
+    return json({ ...result, resync, warnings });
   }
   throw new HttpError(404, 'Unknown Whop backup action.');
 }
