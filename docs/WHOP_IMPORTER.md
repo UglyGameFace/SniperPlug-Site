@@ -51,7 +51,7 @@ When a ceiling is reached, SniperPlug keeps the new attachment in private draft 
 
 ## Complete Cloudflare configuration
 
-The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. The callback URL is derived from the current site origin through the dedicated `/api/whop/oauth/callback` route.
+The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. Production always uses the exact canonical callback `https://sniperplug.com/api/whop/oauth/callback`; the stable preview host uses its separately registered callback. A stale `WHOP_REDIRECT_URI` Cloudflare variable is intentionally ignored outside localhost so it cannot break production OAuth. Unknown Pages or custom hosts fail inside SniperPlug before contacting Whop.
 
 These private runtime items must exist in Cloudflare Preview while testing and in Production before launch:
 
@@ -72,6 +72,8 @@ Register both exact callback URLs in the Whop application:
 Preview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback
 Production: https://sniperplug.com/api/whop/oauth/callback
 ```
+
+Do not add `www`, a trailing slash, a branch-preview URL, or the bare `sniperplug.pages.dev` host. Whop requires an exact redirect URI match. `WHOP_REDIRECT_URI` is only a local-development override and should not be configured as a Cloudflare Production or Preview variable.
 
 The repository-configured OAuth scopes are:
 

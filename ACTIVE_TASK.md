@@ -20,6 +20,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The production screenshots for `IMG_7082.jpeg` and `image.png` still showed `Provided readable stream must have a known length`, proving the media bytes never reached R2.
 - `mirrorWhopMedia()` passed `response.body.pipeThrough(new TransformStream(...))` into `R2Bucket.put()`. The wrapper removed the response body's fixed-length identity even when Whop supplied `Content-Length`.
 - Media enhancement copies files sequentially, so buffering only unknown-length files under the existing 50 MB ceiling does not create unbounded per-request concurrency.
+- The owner’s production reconnect reached Whop’s raw `redirect_uri is invalid` response.
+- `config()` preferred `WHOP_REDIRECT_URI` over the request host even though the production documentation says the callback is origin/canonical-host aware. A stale localhost or old Pages value could therefore break every production reconnect.
+- Whop requires each OAuth redirect URI to match an app whitelist entry exactly.
 
 ## Implemented changes
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
@@ -40,6 +43,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - Use the R2 write result as the authoritative stored size, reject null or oversized writes, and preserve reservation rollback/deletion behavior.
 - Record the upload mode in R2 custom metadata for live diagnosis.
 - Add regression coverage for known-length identity preservation, chunked Blob fallback, and both declared and streamed oversize rejection.
+- Resolve production and stable-preview OAuth callbacks from an explicit canonical-host allowlist and ignore stale environment overrides outside localhost.
+- Reject unregistered hosts before redirecting to Whop and return start-up errors to the Control Center instead of a raw API response.
+- Add runtime regressions for production, www canonicalization, preview, localhost, stale overrides, external local overrides, and unknown Pages hosts.
 
 ## Validation
 - [x] Real editor placement and event path inspected.
@@ -82,3 +88,8 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 
 ## Scope lock
 No unrelated implementation begins until this media repair task is production-validated, unless the user explicitly sends the required FORCE SWITCH instruction.
+
+## OAuth reconnect validation
+- [ ] Canonical OAuth redirect regression and full Node 22 build pass.
+- [ ] OAuth repair PR review, cleanup, merge, and Cloudflare deployment pass.
+- [ ] Production Connect Whop opens consent/callback without `redirect_uri is invalid`.
