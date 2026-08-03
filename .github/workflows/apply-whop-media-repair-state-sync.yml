@@ -1,0 +1,112 @@
+name: Apply Whop media repair state sync
+
+on:
+  push:
+    branches:
+      - fix/whop-media-repair-state-sync
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply canonical guide render patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          v2_path = Path('assets/js/control-center-v2.js')
+          v2 = v2_path.read_text()
+          anchor = """  async function selectGuide(id) {\n"""
+          bridge = """  root.addEventListener('sniperplug:guide-media-repaired', (event) => {\n    const guide = event.detail?.guide;\n    if (!guide || typeof guide !== 'object') return;\n    updateGuideListItem(guide);\n    renderGuideEditor(guide, 'saved');\n    event.detail.handled = true;\n  });\n\n"""
+          if bridge not in v2:
+              if anchor not in v2:
+                  raise SystemExit('control-center-v2 anchor missing')
+              v2 = v2.replace(anchor, bridge + anchor, 1)
+              v2_path.write_text(v2)
+
+          repair_path = Path('assets/js/control-center-integrity-fix.js')
+          repair = repair_path.read_text()
+          old = """  function applyGuide(guide) {\n    if (!guide || typeof guide !== 'object') return;\n    if (typeof guide.body === 'string') {\n      bodyField.value = guide.body;\n      bodyField.dispatchEvent(new Event('input', { bubbles: true }));\n    }\n    const title = editor.elements.namedItem('title');\n    const description = editor.elements.namedItem('description');\n    const category = editor.elements.namedItem('category');\n    if (title instanceof HTMLInputElement && typeof guide.title === 'string') title.value = guide.title;\n    if (description instanceof HTMLTextAreaElement && typeof guide.description === 'string') description.value = guide.description;\n    if (category instanceof HTMLSelectElement && typeof guide.category === 'string') category.value = guide.category;\n    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail: { guide } }));\n  }\n"""
+          new = """  function applyGuide(guide) {\n    if (!guide || typeof guide !== 'object') return false;\n    const detail = { guide, handled: false };\n    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail }));\n    if (!detail.handled) {\n      show('SniperPlug received the repaired guide but could not refresh the editor safely. Reload this page before making more changes.', 'error');\n    }\n    return detail.handled;\n  }\n"""
+          if new not in repair:
+              if old not in repair:
+                  raise SystemExit('integrity applyGuide block missing')
+              repair = repair.replace(old, new, 1)
+              repair_path.write_text(repair)
+
+          test_path = Path('tools/test-recovery-media-truth.mjs')
+          test = test_path.read_text()
+          read_anchor = "const mediaRepairClient = read('assets/js/control-center-integrity-fix.js');\n"
+          read_insert = read_anchor + "const controlCenterClient = read('assets/js/control-center-v2.js');\n"
+          if "const controlCenterClient = read('assets/js/control-center-v2.js');" not in test:
+              if read_anchor not in test:
+                  raise SystemExit('test read anchor missing')
+              test = test.replace(read_anchor, read_insert, 1)
+          assertion_anchor = "assert.ok(mediaRepairClient.includes('applyGuide(error?.details?.guide)'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');\n"
+          assertions = assertion_anchor + "assert.ok(mediaRepairClient.includes(\"const detail = { guide, handled: false }\") && !mediaRepairClient.includes(\"bodyField.dispatchEvent(new Event('input'\"), 'Media repair still bypasses the canonical saved-guide renderer and dirties the editor.');\nassert.ok(controlCenterClient.includes(\"root.addEventListener('sniperplug:guide-media-repaired'\") && controlCenterClient.includes(\"renderGuideEditor(guide, 'saved')\") && controlCenterClient.includes('updateGuideListItem(guide)'), 'Repaired guides do not refresh canonical editor, list, publish, attachment, and clean-snapshot state.');\n"
+          if "Media repair still bypasses the canonical saved-guide renderer" not in test:
+              if assertion_anchor not in test:
+                  raise SystemExit('test assertion anchor missing')
+              test = test.replace(assertion_anchor, assertions, 1)
+          syntax_anchor = "  'assets/js/control-center-integrity-fix.js',\n"
+          syntax_insert = syntax_anchor + "  'assets/js/control-center-v2.js',\n"
+          if "  'assets/js/control-center-v2.js'," not in test:
+              if syntax_anchor not in test:
+                  raise SystemExit('syntax list anchor missing')
+              test = test.replace(syntax_anchor, syntax_insert, 1)
+          log_anchor = "console.log('✓ Repair failures appear beside the guide with the exact Pages deployment and newest server state.');\n"
+          log_insert = log_anchor + "console.log('✓ Repaired guides re-enter the canonical saved-guide renderer, refresh derived controls, and remain clean.');\n"
+          if "Repaired guides re-enter the canonical saved-guide renderer" not in test:
+              if log_anchor not in test:
+                  raise SystemExit('test log anchor missing')
+              test = test.replace(log_anchor, log_insert, 1)
+          test_path.write_text(test)
+
+          task_path = Path('ACTIVE_TASK.md')
+          task = task_path.read_text()
+          task = task.replace(
+              "**Active.** The first false-success guard from PR #14 is merged, but production retesting showed the editor still displayed the same old warning after the action. PR #15 adds exact deployment/runtime diagnostics and puts the result beside the repair button instead of only at the top of the Control Center. Branch validation is clean; production deployment and the owner’s exact-media retest remain.",
+              "**Active.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypasses the canonical saved-guide renderer, marks the editor dirty, and leaves publish/attachment controls stale. Branch `fix/whop-media-repair-state-sync` routes repaired guides through the existing saved-guide path before production retesting."
+          )
+          finding = "- PR #15's `applyGuide()` dispatched an artificial `input` event after mutating fields directly, which made draft safety report unsaved changes even though the server had already saved the guide.\n- The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.\n"
+          marker = "- The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.\n"
+          if "artificial `input` event" not in task:
+              task = task.replace(marker, marker + finding)
+          change_marker = "- Added targeted regression and syntax checks for the server and browser repair paths.\n"
+          change = "- Route every server-confirmed repair result through `updateGuideListItem()` and `renderGuideEditor(guide, 'saved')`, reusing the canonical list, derived-control, `sniperplug:guide-loaded`, and clean-snapshot path.\n- Remove the direct field mutation and synthetic `input` event that falsely dirtied the editor.\n- Fail visibly instead of silently applying a partial client state if the canonical renderer is unavailable.\n"
+          if "Route every server-confirmed repair result" not in task:
+              task = task.replace(change_marker, change_marker + change)
+          validation_marker = "- [x] Changed-file scope and cleanup inspection pass.\n"
+          validation = "- [ ] Canonical repair-state regression and JavaScript syntax checks pass on the follow-up branch.\n- [ ] Full Node 22 build passes on the follow-up branch.\n- [ ] Temporary patch workflow is removed before review/merge.\n"
+          if "Canonical repair-state regression" not in task:
+              task = task.replace(validation_marker, validation_marker + validation)
+          task_path.write_text(task)
+          PY
+      - name: Validate focused repair path
+        run: |
+          node --check assets/js/control-center-integrity-fix.js
+          node --check assets/js/control-center-v2.js
+          node tools/test-recovery-media-truth.mjs
+      - name: Validate full Node 22 build
+        run: npm run build
+      - name: Commit validated repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md assets/js/control-center-integrity-fix.js assets/js/control-center-v2.js tools/test-recovery-media-truth.mjs
+          if git diff --cached --quiet; then
+            echo "No patch changes required"
+            exit 0
+          fi
+          git commit -m "Keep Whop media repair editor state synchronized"
+          git push
