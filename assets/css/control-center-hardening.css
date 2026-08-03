@@ -186,3 +186,32 @@ button[aria-busy=true]::after,.btn[aria-busy=true]::after{content:'';display:inl
 
 [data-pressed=true]{transform:scale(.975)!important;filter:brightness(1.12);transition:none!important}
 .control-operation-bar{touch-action:none}
+
+
+/* Ordered, low-work Control Center flow */
+.whop-recovery-workflow>summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;cursor:pointer;list-style:none;padding:.25rem}
+.whop-recovery-workflow>summary::-webkit-details-marker{display:none}
+.whop-recovery-workflow>summary span{display:grid;gap:.3rem}
+.whop-recovery-workflow>summary small{color:var(--muted);font-weight:650;line-height:1.45}
+.whop-recovery-workflow>summary b{color:#71f2a2;font-size:.85rem}
+.whop-recovery-body{display:grid;gap:1rem;padding-top:1rem}
+.whop-recovery-action{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.75rem;align-items:end;padding:.9rem;border:1px solid rgba(96,239,134,.22);border-radius:16px;background:rgba(96,239,134,.055)}
+.whop-recovery-action label{display:grid;gap:.4rem;color:var(--muted);font-weight:780}
+.whop-recovery-action select{width:100%;min-width:0}
+.whop-recovery-advanced{padding:.75rem;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:#0a111c}
+.whop-recovery-advanced>summary{cursor:pointer;font-weight:800;color:var(--muted)}
+.source-load-more,.post-load-more{width:100%;margin-top:.5rem}
+.post-card{content-visibility:auto;contain-intrinsic-size:auto 320px}
+@media(max-width:720px){
+  html{scroll-behavior:auto!important}
+  .control-operation-bar{backdrop-filter:none;box-shadow:0 8px 22px rgba(0,0,0,.34)}
+  .control-panel .btn.primary{box-shadow:none}
+  .control-panel,.discovered-group,.discovered-source,.post-card{box-shadow:none!important}
+  .whop-recovery-action{grid-template-columns:1fr}
+  .whop-recovery-action .btn{width:100%}
+  .whop-recovery-workflow>summary{align-items:flex-start}
+}
+@media(prefers-reduced-motion:reduce),(max-width:720px){
+  .control-operation-track span,button[aria-busy=true]::after,.btn[aria-busy=true]::after{animation-duration:1.4s}
+  *{scroll-behavior:auto!important}
+}

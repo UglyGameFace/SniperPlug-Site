@@ -36,6 +36,79 @@
     loaded: false,
   };
 
+  function structureRecoveryPanel() {
+    if (panel.dataset.structured === 'true') return;
+    panel.dataset.structured = 'true';
+    const app = elements.app;
+    if (app instanceof HTMLElement) app.append(panel);
+
+    const dialog = elements.dialog;
+    const content = [...panel.children].filter((child) => child !== dialog);
+    const workflow = document.createElement('details');
+    workflow.className = 'whop-recovery-workflow';
+    workflow.dataset.recoveryWorkflow = 'true';
+    const summary = document.createElement('summary');
+    summary.innerHTML = '<span><strong>Backup & recovery</strong><small>Open only when you need a backup, restore, or safe clear-and-resync.</small></span><b>Open safety tools</b>';
+    const body = document.createElement('div');
+    body.className = 'whop-recovery-body';
+    for (const child of content) body.append(child);
+    workflow.append(summary, body);
+    panel.replaceChildren(workflow);
+    if (dialog) panel.append(dialog);
+
+    const heading = panel.querySelector('.panel-head h2');
+    const intro = panel.querySelector('.panel-head p');
+    const eyebrow = panel.querySelector('.panel-head .eyebrow');
+    if (heading) heading.textContent = 'One safety center';
+    if (intro) intro.textContent = 'Choose a source, choose one action, then review the matching recovery history below.';
+    if (eyebrow) eyebrow.textContent = 'Safety · Backup & recovery';
+    if (elements.refresh) elements.refresh.textContent = 'Refresh history';
+
+    const actionRow = document.createElement('div');
+    actionRow.className = 'whop-recovery-action';
+    const label = document.createElement('label');
+    label.innerHTML = '<span>What do you need to do?</span>';
+    const select = document.createElement('select');
+    select.dataset.backupAction = 'true';
+    select.innerHTML = '<option value="backup">Create a recovery backup</option><option value="reset">Clear & resync safely (backup included)</option>';
+    label.append(select);
+    const continueButton = document.createElement('button');
+    continueButton.type = 'button';
+    continueButton.className = 'btn primary';
+    continueButton.dataset.backupContinue = 'true';
+    continueButton.textContent = 'Continue';
+    actionRow.append(label, continueButton);
+
+    const resetOptions = panel.querySelector('.whop-reset-options');
+    if (resetOptions) {
+      resetOptions.before(actionRow);
+      const advanced = document.createElement('details');
+      advanced.className = 'whop-recovery-advanced';
+      advanced.innerHTML = '<summary>Advanced clear/reset options</summary>';
+      for (const child of [...resetOptions.children]) {
+        if (!child.classList?.contains('button-row')) advanced.append(child);
+      }
+      resetOptions.replaceChildren(advanced);
+      resetOptions.hidden = true;
+    }
+    if (elements.create) elements.create.hidden = true;
+    if (elements.reset) elements.reset.hidden = true;
+
+    select.addEventListener('change', () => {
+      if (resetOptions) resetOptions.hidden = select.value !== 'reset';
+      continueButton.textContent = select.value === 'reset' ? 'Review safe clear & resync' : 'Create backup';
+    });
+    continueButton.addEventListener('click', () => {
+      if (select.value === 'reset') previewReset();
+      else createManualBackup();
+    });
+    workflow.addEventListener('toggle', () => {
+      const stateLabel = summary.querySelector('b');
+      if (stateLabel) stateLabel.textContent = workflow.open ? 'Close safety tools' : 'Open safety tools';
+      if (workflow.open && !state.loaded) loadOverview();
+    });
+  }
+
   async function requestJson(action, options = {}) {
     const response = await fetch(`/api/whop-backups?action=${encodeURIComponent(action)}`, {
       credentials: 'same-origin',
@@ -384,10 +457,6 @@
     if (remove) previewDelete(remove.getAttribute('data-backup-delete'));
   });
 
-  const observer = new MutationObserver(() => {
-    if (elements.app instanceof HTMLElement && !elements.app.hidden && !state.loaded) loadOverview();
-  });
-  if (elements.app instanceof HTMLElement) observer.observe(elements.app, { attributes: true, attributeFilter: ['hidden'] });
-  if (elements.app instanceof HTMLElement && !elements.app.hidden) loadOverview();
+  structureRecoveryPanel();
   syncControls();
 })();

@@ -7,7 +7,10 @@
   const idle = window.requestIdleCallback
     ? (callback) => window.requestIdleCallback(callback, { timeout: 120 })
     : (callback) => setTimeout(() => callback({ timeRemaining: () => 8, didTimeout: true }), 0);
-  const GUIDE_PAGE_SIZE = 60;
+  const GUIDE_PAGE_SIZE = 24;
+  const POST_PAGE_SIZE = 10;
+  const SOURCE_PAGE_SIZE = 12;
+  const MOBILE_QUERY = window.matchMedia('(max-width: 720px), (pointer: coarse)');
 
   const elements = {
     loginPanel: $('[data-login-panel]'),
@@ -131,6 +134,8 @@
     posts: new Map(),
     postOrder: [],
     postRenderToken: 0,
+    postRenderLimit: POST_PAGE_SIZE,
+    sourceRenderLimits: new Map(),
     guides: new Map(),
     guideDetails: new Map(),
     guideOrder: [],
@@ -598,16 +603,29 @@
     return card;
   }
 
-  function renderGroupSources(group, groupCard) {
+  function renderGroupSources(group, groupCard, { more = false } = {}) {
     const list = $('.discovered-source-list', groupCard);
-    if (!list || list.dataset.rendered === 'true') return;
+    if (!list) return;
+    const key = groupKey(group);
+    const current = state.sourceRenderLimits.get(key) || SOURCE_PAGE_SIZE;
+    const limit = more ? current + SOURCE_PAGE_SIZE : current;
+    state.sourceRenderLimits.set(key, limit);
     const query = elements.sourceSearch.value.trim().toLocaleLowerCase('en-US');
     const filter = elements.sourceFilter.value;
+    const entries = group.sources || [];
     const fragment = document.createDocumentFragment();
-    for (const entry of group.sources || []) {
+    for (const entry of entries.slice(0, limit)) {
       const card = createSourceCard(entry);
       card.hidden = !sourceMatches(entry, query, filter);
       fragment.append(card);
+    }
+    if (limit < entries.length) {
+      const moreButton = document.createElement('button');
+      moreButton.type = 'button';
+      moreButton.className = 'btn ghost source-load-more';
+      moreButton.dataset.action = 'source-load-more';
+      moreButton.textContent = `Load ${Math.min(SOURCE_PAGE_SIZE, entries.length - limit)} more · ${entries.length - limit} remaining`;
+      fragment.append(moreButton);
     }
     list.replaceChildren(fragment);
     list.dataset.rendered = 'true';
@@ -804,15 +822,10 @@
   function scheduleDiscoveryContinuation(data) {
     clearTimeout(state.discoveryTimer);
     state.discoveryTimer = null;
-    const probe = data?.capabilityProbe || {};
-    const pending = Number(probe.pending || 0);
-    const checked = Number(probe.checked || 0);
-    if (!pending || !checked || state.discoveryAutoPasses >= 8) return;
-    state.discoveryAutoPasses += 1;
-    state.discoveryTimer = setTimeout(() => {
-      state.discoveryTimer = null;
-      loadDiscovery({ background: true }).catch(() => null);
-    }, 350);
+    const pending = Number(data?.capabilityProbe?.pending || 0);
+    if (pending > 0) {
+      elements.discoveryMessage.textContent = `${discoveryStatusText(data)} · press Refresh sources to run another bounded pass.`;
+    }
   }
 
   async function loadDiscovery({ background = false, manual = false } = {}) {
@@ -1048,29 +1061,22 @@
   }
 
   function renderPosts() {
-    const token = ++state.postRenderToken;
-    elements.postList.replaceChildren();
-    let index = 0;
-    const appendCount = (limit) => {
-      if (token !== state.postRenderToken) return;
-      const fragment = document.createDocumentFragment();
-      let count = 0;
-      while (index < state.postOrder.length && count < limit) {
-        const post = state.posts.get(state.postOrder[index]);
-        index += 1;
-        count += 1;
-        if (post) fragment.append(createPostCard(post));
-      }
-      elements.postList.append(fragment);
-    };
-    appendCount(Math.min(12, state.postOrder.length));
-    const appendRemaining = (deadline) => {
-      if (token !== state.postRenderToken) return;
-      const budget = Math.max(8, Math.min(30, Math.floor(deadline.timeRemaining() * 3) || 8));
-      appendCount(budget);
-      if (index < state.postOrder.length) idle(appendRemaining);
-    };
-    if (index < state.postOrder.length) idle(appendRemaining);
+    state.postRenderToken += 1;
+    const fragment = document.createDocumentFragment();
+    const visibleKeys = state.postOrder.slice(0, state.postRenderLimit);
+    for (const key of visibleKeys) {
+      const post = state.posts.get(key);
+      if (post) fragment.append(createPostCard(post));
+    }
+    if (visibleKeys.length < state.postOrder.length) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'btn ghost post-load-more';
+      more.dataset.action = 'post-load-more';
+      more.textContent = `Load ${Math.min(POST_PAGE_SIZE, state.postOrder.length - visibleKeys.length)} more · ${state.postOrder.length - visibleKeys.length} remaining`;
+      fragment.append(more);
+    }
+    elements.postList.replaceChildren(fragment);
     syncPostControls();
   }
 
@@ -1106,6 +1112,7 @@
       state.source = output.source;
       state.posts = new Map((output.posts || []).map((post) => [post.sourceKey, post]));
       state.postOrder = (output.posts || []).map((post) => post.sourceKey);
+      state.postRenderLimit = POST_PAGE_SIZE;
       renderSourceReview();
       elements.postPanel.hidden = false;
       elements.postTitle.textContent = `${state.experience.name || 'Whop source'} · ${typeLabel(output.sourceType)} content`;
@@ -1114,7 +1121,7 @@
       elements.postSummary.textContent = `${output.counts.total} top-level item${output.counts.total === 1 ? '' : 's'} · ${ready} automatic-ready · ${manual} manual review · replies, junk, and expired picks are blocked.`;
       renderPosts();
       await afterLayoutPaint();
-      elements.postPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      elements.postPanel.scrollIntoView({ behavior: MOBILE_QUERY.matches ? 'auto' : 'smooth', block: 'start' });
     }).catch((error) => showStatus(error.message, 'error'));
   }
 
@@ -1332,7 +1339,8 @@
       try {
         const data = await loadDashboard({ discovery: false });
         if (data.whop?.verified) {
-          await loadDiscovery({ manual: true });
+          elements.discoverySummary.textContent = 'Whop connected. Press Load sources when you are ready.';
+          elements.discoveryMessage.textContent = 'Source discovery is manual so the Control Center stays responsive.';
           return data.whop;
         }
       } catch (error) {
@@ -1598,8 +1606,10 @@
       if (!session.authenticated) return lock();
       const dashboard = await loadDashboard({ discovery: false });
       const background = [loadBulkJob(), loadRecentActions()];
-      if (dashboard.whop?.verified) background.push(loadDiscovery({ manual: true }));
-      else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
+      if (dashboard.whop?.verified) {
+        elements.discoverySummary.textContent = 'Whop connected. Press Load sources when you are ready.';
+        elements.discoveryMessage.textContent = 'Nothing scans automatically on page load.';
+      } else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
       await Promise.allSettled(background);
       const params = new URLSearchParams(location.search);
       if (params.get('whop') === 'error') showStatus(params.get('message') || 'Whop login failed.', 'error');
@@ -1630,8 +1640,10 @@
         form.reset();
         const dashboard = await loadDashboard({ discovery: false });
         const background = [loadBulkJob(), loadRecentActions()];
-        if (dashboard.whop?.verified) background.push(loadDiscovery({ manual: true }));
-        else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
+        if (dashboard.whop?.verified) {
+          elements.discoverySummary.textContent = 'Whop connected. Press Load sources when you are ready.';
+          elements.discoveryMessage.textContent = 'Nothing scans automatically after unlock.';
+        } else if (dashboard.whop?.connected) background.push(verifyWhopUntilSettled());
         await Promise.allSettled(background);
       }).catch((error) => {
         elements.loginMessage.textContent = error.message;
@@ -1641,7 +1653,7 @@
     }
     if (form === elements.sourceForm) {
       await withButton(button, 'Checking source…', async () => {
-        await checkSource(new FormData(form).get('source'), { scanIfApproved: true });
+        await checkSource(new FormData(form).get('source'), { scanIfApproved: false });
         elements.sourceReview.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }).catch((error) => showStatus(error.message, 'error'));
       return;
@@ -1781,6 +1793,17 @@
       }
       return;
     }
+    if (action === 'source-load-more') {
+      const card = button.closest('.discovered-group');
+      const group = (state.discovery?.groups || []).find((item) => groupKey(item) === card?.dataset.groupKey);
+      if (group && card) renderGroupSources(group, card, { more: true });
+      return;
+    }
+    if (action === 'post-load-more') {
+      state.postRenderLimit += POST_PAGE_SIZE;
+      renderPosts();
+      return;
+    }
     if (action?.startsWith('group-')) {
       const card = button.closest('.discovered-group');
       const group = (state.discovery?.groups || []).find((item) => groupKey(item) === card?.dataset.groupKey);
@@ -1796,7 +1819,7 @@
       if (action === 'source-disapprove') return decideSources([id], 'disapproved', button);
       if (action === 'source-review') {
         await withButton(button, 'Loading…', async () => {
-          await checkSource(id, { scanIfApproved: true });
+          await checkSource(id, { scanIfApproved: false });
           elements.sourceReview.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }).catch((error) => showStatus(error.message, 'error'));
       }
@@ -1811,7 +1834,7 @@
       if (saved) state.source = saved;
       else if (state.source) state.source.decision = decision;
       renderSourceReview();
-      if (decision === 'approved') await scanCurrent(elements.sourceScan);
+      if (decision === 'approved') showStatus('Source approved. Press Review content when you are ready to scan it.');
       return;
     }
     if (button === elements.sourceScan) return scanCurrent(button);
