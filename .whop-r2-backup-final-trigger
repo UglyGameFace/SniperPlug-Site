@@ -1,1 +1,1 @@
-trigger query-efficient R2 Whop backup validation
+trigger cleanup validation for failed and corrupt Whop backups
