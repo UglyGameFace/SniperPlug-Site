@@ -610,24 +610,26 @@
     const list = $('.discovered-source-list', groupCard);
     if (!list) return;
     const key = groupKey(group);
-    const current = state.sourceRenderLimits.get(key) || SOURCE_PAGE_SIZE;
-    const limit = more ? current + SOURCE_PAGE_SIZE : current;
-    state.sourceRenderLimits.set(key, limit);
     const query = elements.sourceSearch.value.trim().toLocaleLowerCase('en-US');
     const filter = elements.sourceFilter.value;
+    const filterKey = `${query}
+${filter}`;
+    const filterChanged = list.dataset.filterKey !== filterKey;
+    const current = filterChanged ? SOURCE_PAGE_SIZE : state.sourceRenderLimits.get(key) || SOURCE_PAGE_SIZE;
+    const limit = more ? current + SOURCE_PAGE_SIZE : current;
+    state.sourceRenderLimits.set(key, limit);
+    list.dataset.filterKey = filterKey;
     const entries = group.sources || [];
+    const matchingEntries = entries.filter((entry) => sourceMatches(entry, query, filter));
+    for (const entry of entries) state.sourceCards.delete(sourceId(entry));
     const fragment = document.createDocumentFragment();
-    for (const entry of entries.slice(0, limit)) {
-      const card = createSourceCard(entry);
-      card.hidden = !sourceMatches(entry, query, filter);
-      fragment.append(card);
-    }
-    if (limit < entries.length) {
+    for (const entry of matchingEntries.slice(0, limit)) fragment.append(createSourceCard(entry));
+    if (limit < matchingEntries.length) {
       const moreButton = document.createElement('button');
       moreButton.type = 'button';
       moreButton.className = 'btn ghost source-load-more';
       moreButton.dataset.action = 'source-load-more';
-      moreButton.textContent = `Load ${Math.min(SOURCE_PAGE_SIZE, entries.length - limit)} more · ${entries.length - limit} remaining`;
+      moreButton.textContent = `Load ${Math.min(SOURCE_PAGE_SIZE, matchingEntries.length - limit)} more · ${matchingEntries.length - limit} remaining`;
       fragment.append(moreButton);
     }
     list.replaceChildren(fragment);
@@ -803,12 +805,7 @@
       card.hidden = !sourceMatch && !hasExternal;
       if (query && !card.hidden) setGroupExpanded(group, card, true);
       const list = $('.discovered-source-list', card);
-      if (list?.dataset.rendered === 'true') {
-        for (const entry of group.sources || []) {
-          const sourceCard = state.sourceCards.get(sourceId(entry));
-          if (sourceCard) sourceCard.hidden = !sourceMatches(entry, query, filter);
-        }
-      }
+      if (list?.dataset.rendered === 'true') renderGroupSources(group, card);
       const external = $('.external-apps', card);
       if (external) external.hidden = card.dataset.collapsed === 'true' || !hasExternal;
     }

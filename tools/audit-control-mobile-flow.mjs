@@ -12,6 +12,8 @@ assert.ok(!control.includes('state.discoveryAutoPasses >= 8'));
 assert.ok(!control.includes('idle(appendRemaining)'));
 assert.ok(control.includes("dataset.action = 'post-load-more'"));
 assert.ok(control.includes("dataset.action = 'source-load-more'"));
+assert.ok(control.includes('const matchingEntries = entries.filter') && control.includes('list.dataset.filterKey = filterKey'));
+assert.ok(control.includes('for (const entry of entries) state.sourceCards.delete(sourceId(entry))'));
 assert.ok(control.includes('scanIfApproved: false'));
 assert.ok(control.includes('const background = [];') && control.includes('deferredHistoryLoaded'));
 assert.ok(control.includes("textContent = state.discovery ? 'Refresh sources' : 'Load sources'"));
