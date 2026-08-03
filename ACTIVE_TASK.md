@@ -4,14 +4,14 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — backup engine merged/deployed; PR #22 mobile workflow repair under final validation.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`. Production build, private-guide privacy, affiliate-readiness, and retired-route checks passed. Live Samsung Internet testing then exposed a frozen, repetitive Control Center, so the same task remains open until PR #22 is deployed and the real backup/download/clear-resync/restore exercise succeeds.
+**Active — backup engine and mobile workflow repair merged/deployed; live Samsung and recovery validation pending.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`. PR #22 merged as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`. Production Node 22, private-guide privacy, affiliate-readiness, and retired-route checks passed after both deployments. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
 
 ## Confirmed findings
 - Reconnecting Whop replaces OAuth access but does not clear saved source/post/guide/video/media state.
 - A safe reset needs a durable recovery archive that remains restorable after Whop access is lost.
 - The first production recovery panel competed with the normal import flow and loaded backup history automatically.
-- Unlocking the page also started dashboard, bulk history, recent actions, and Whop discovery together.
-- Discovery could rerun itself up to eight times only 350 ms apart while rebuilding source-group DOM.
+- Unlocking also started dashboard, bulk history, recent actions, and Whop discovery together.
+- Discovery could rerun up to eight times only 350 ms apart while rebuilding source-group DOM.
 - Opening an approved source immediately started a content scan.
 - Source and post views eventually rendered every card, producing a large control wall and freezing Samsung Internet.
 - Mobile blur, shadows, animation, and smooth scrolling increased paint work during the same heavy operations.
@@ -24,21 +24,23 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - R2 archive/media pinning, stale-post filtering, preserved-guide reattachment, and retry-safe restore behavior.
 - Owner-only backup history, JSON download, restore, safe clear/resync, reset-all, and deletion.
 
-## Implemented on PR #22
+## Implemented and merged in PR #22
 - No automatic source discovery or content scan on unlock.
 - Explicit `Load sources` action; later passes are manual `Refresh sources` actions.
 - Removed the eight-pass 350 ms discovery loop.
-- Source groups remain collapsed and render 12 sources at a time with explicit Load more.
+- Source groups remain collapsed and render 12 matching sources at a time with explicit Load more.
+- Search/filtering runs before source pagination, so matches beyond the original first page remain visible.
+- Rerendering one filtered group replaces only that group’s detached source-card index entries.
 - Choosing or approving a source no longer scans it; `Review content` is a separate action.
 - Content review renders 10 cards at a time with explicit Load more.
 - Guide review renders 24 summaries at a time with existing lazy detail loading.
 - Bulk-job and recent-action history load only when the bulk workflow is opened.
 - Backup history loads only when the recovery workflow is opened.
-- Backup, restore, and clear/resync now live together in one collapsed safety center at the end of the ordered workflow.
+- Backup, restore, and clear/resync live together in one collapsed safety center at the end of the ordered workflow.
 - One action selector chooses backup-only or safe clear/resync; advanced destructive options stay collapsed.
 - The new Continue action shares all busy/valid locks to prevent duplicate mobile taps.
 - Mobile removes expensive blur/shadow/smooth-scroll work and disables busy animations.
-- Permanent regressions enforce bounded pagination, manual scanning, lazy history, one recovery center, and mobile action locks.
+- Permanent regressions enforce bounded pagination, manual scanning, lazy history, one recovery center, filtered pagination, and mobile action locks.
 
 ## Validation
 - [x] PR #21 focused backup/reset/restore audit passed.
@@ -46,10 +48,10 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - [x] PR #21 squash-merged and production post-merge checks passed.
 - [x] PR #22 focused mobile-flow audit passed.
 - [x] PR #22 complete existing Node 22 build passed after replacing render-all behavior with bounded pagination.
-- [x] PR #22 follow-up busy-lock/lazy-history audit and complete build passed.
-- [x] PR #22 cleanup leaves only permanent runtime/UI/regression files; no patch scripts or self-mutating workflows remain.
-- [ ] PR #22 clean-head CI and review pass.
-- [ ] PR #22 is squash-merged and Cloudflare production contains the merge commit.
+- [x] PR #22 busy-lock, lazy-history, and filtered-pagination follow-ups passed focused and full builds.
+- [x] PR #22 cleanup left only seven permanent runtime/UI/task/regression files.
+- [x] PR #22 clean-head CI #869, affiliate checks, retired-route checks, Cloudflare preview, and review passed.
+- [x] PR #22 squash-merged and production post-merge Node 22/privacy/affiliate/retired-route checks passed.
 - [ ] Samsung Internet opens/unlocks without freezing and performs no automatic source/content scan.
 - [ ] Production backup creation and JSON download succeed on real imported content.
 - [ ] Production clear-and-resync preserves published guides and removes stale state.
