@@ -495,30 +495,7 @@ async function issueResetToken(env, row, options) {
   };
 }
 
-export async function previewWhopReset(env, input = {}) {
-  const snapshot = await snapshotScope(env, input);
-  const estimatedBytes = byteLength(stableBackupJson(snapshot.entities));
-  if (estimatedBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This source is larger than the 10 MB safe backup limit. Back up a smaller source before resetting.');
-  return {
-    scope: snapshot.scope.scope,
-    experienceId: snapshot.scope.experienceId,
-    label: backupLabel(snapshot.scope, snapshot.rows),
-    counts: snapshot.counts,
-    payloadBytes: estimatedBytes,
-    deletePublished: input.deletePublished === true,
-    confirmationPhrase: resetConfirmationPhrase(snapshot.scope, input.deletePublished === true),
-    warnings: [
-      'A signed R2 recovery archive will be created and read back before deletion starts.',
-      input.deletePublished === true ? 'Published guides are included in this reset.' : 'Published guides remain in the private library.',
-      'Referenced media and the recovery archive remain pinned until this backup is deleted.',
-    ],
-  };
-}
-
-export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
-  if (!env?.SNIPERPLUG_MEDIA) throw new HttpError(503, 'Connect the SNIPERPLUG_MEDIA R2 bucket before creating a restorable Whop backup.');
-  const snapshot = await snapshotScope(env, input);
-  const db = await ensureWhopBackupSchema(env);
+async function buildWhopBackupArchive(env, snapshot, ownerSessionId) {
   const createdAt = nowIso();
   const backupId = `wib_${randomToken(18)}`;
   const ownerId = String(ownerSessionId || 'sniperplug-owner');
@@ -539,7 +516,47 @@ export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
   const archiveJson = stableBackupJson({ manifest, signature, entities: snapshot.entities });
   const archiveBytes = byteLength(archiveJson);
   if (archiveBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This source is larger than the 10 MB safe backup limit. Back up a smaller source before resetting.');
-  const archiveChecksum = await sha256(archiveJson);
+  return {
+    createdAt,
+    backupId,
+    ownerId,
+    archiveKey,
+    manifest,
+    signature,
+    archiveJson,
+    archiveBytes,
+    archiveChecksum: await sha256(archiveJson),
+  };
+}
+
+export async function previewWhopReset(env, ownerSessionId, input = {}) {
+  const snapshot = await snapshotScope(env, input);
+  const archive = await buildWhopBackupArchive(env, snapshot, ownerSessionId);
+  return {
+    scope: snapshot.scope.scope,
+    experienceId: snapshot.scope.experienceId,
+    label: backupLabel(snapshot.scope, snapshot.rows),
+    counts: snapshot.counts,
+    payloadBytes: archive.archiveBytes,
+    deletePublished: input.deletePublished === true,
+    confirmationPhrase: resetConfirmationPhrase(snapshot.scope, input.deletePublished === true),
+    warnings: [
+      'A signed R2 recovery archive will be created and read back before deletion starts.',
+      input.deletePublished === true ? 'Published guides are included in this reset.' : 'Published guides remain in the private library.',
+      'Referenced media and the recovery archive remain pinned until this backup is deleted.',
+    ],
+  };
+}
+
+export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
+  if (!env?.SNIPERPLUG_MEDIA) throw new HttpError(503, 'Connect the SNIPERPLUG_MEDIA R2 bucket before creating a restorable Whop backup.');
+  const snapshot = await snapshotScope(env, input);
+  const db = await ensureWhopBackupSchema(env);
+  const archive = await buildWhopBackupArchive(env, snapshot, ownerSessionId);
+  const {
+    createdAt, backupId, ownerId, archiveKey, manifest, signature,
+    archiveJson, archiveBytes, archiveChecksum,
+  } = archive;
   const prepared = await prepareMediaCopy(env, archiveKey, {
     declaredSize: archiveBytes,
     contentType: 'application/json',

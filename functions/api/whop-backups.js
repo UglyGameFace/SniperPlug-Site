@@ -63,7 +63,7 @@ async function overview(env) {
 async function postAction(request, env, admin, currentAction) {
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 250_000 });
-  if (currentAction === 'preview') return json(await previewWhopReset(env, body));
+  if (currentAction === 'preview') return json(await previewWhopReset(env, admin.sid, body));
   if (currentAction === 'create') {
     return json(await createWhopImportBackup(env, admin.sid, body));
   }
