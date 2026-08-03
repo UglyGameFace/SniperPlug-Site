@@ -1,0 +1,110 @@
+name: Apply Whop R2 known-length fix
+
+on:
+  push:
+    branches:
+      - fix/whop-r2-known-length-upload
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply R2 upload-body fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          media_path = Path('functions/_lib/media.js')
+          media = media_path.read_text()
+          old_helper = """function boundedStream(body) {\n  let bytes = 0;\n  const stream = body.pipeThrough(new TransformStream({\n    transform(chunk, controller) {\n      bytes += Number(chunk?.byteLength || 0);\n      if (bytes > MAX_MEDIA_OBJECT_BYTES) {\n        controller.error(new Error('This media file is larger than the 50 MB automatic-copy limit.'));\n        return;\n      }\n      controller.enqueue(chunk);\n    },\n  }));\n  return { stream, bytes: () => bytes };\n}\n"""
+          new_helper = """function parsedContentLength(value) {\n  const length = Number(value);\n  return Number.isSafeInteger(length) && length > 0 ? length : 0;\n}\n\nasync function boundedBlob(body, contentType, maxBytes) {\n  const reader = body.getReader();\n  const chunks = [];\n  let size = 0;\n  try {\n    while (true) {\n      const { done, value } = await reader.read();\n      if (done) break;\n      if (!value) continue;\n      const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);\n      size += chunk.byteLength;\n      if (size > maxBytes) {\n        await reader.cancel('Media exceeds SniperPlug automatic-copy limit.').catch(() => null);\n        throw new Error('This media file is larger than the 50 MB automatic-copy limit.');\n      }\n      chunks.push(chunk);\n    }\n  } finally {\n    try { reader.releaseLock(); } catch {}\n  }\n  return { value: new Blob(chunks, { type: contentType }), size, mode: 'buffered-blob' };\n}\n\nexport async function r2UploadValue(response, contentType = 'application/octet-stream', maxBytes = MAX_MEDIA_OBJECT_BYTES) {\n  if (!response?.body || typeof response.body.getReader !== 'function') {\n    throw new Error('Whop media download returned no readable body.');\n  }\n  const limit = Math.min(MAX_MEDIA_OBJECT_BYTES, Math.max(1, Number(maxBytes || MAX_MEDIA_OBJECT_BYTES)));\n  const length = parsedContentLength(response.headers?.get?.('content-length'));\n  if (length > limit) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');\n  if (length > 0) return { value: response.body, size: length, mode: 'response-body' };\n  return boundedBlob(response.body, contentType, limit);\n}\n"""
+          if new_helper not in media:
+              if old_helper not in media:
+                  raise SystemExit('boundedStream helper anchor missing')
+              media = media.replace(old_helper, new_helper, 1)
+
+          old_upload = """    const length = Math.max(0, Number(response.headers.get('content-length') || declaredSize || 0));\n    if (length > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');\n    const contentType = String(response.headers.get('content-type') || file?.contentType || 'application/octet-stream').split(';')[0].trim();\n    const bounded = boundedStream(response.body);\n    await env.SNIPERPLUG_MEDIA.put(key, bounded.stream, {\n      storageClass: 'Standard',\n      httpMetadata: {\n        contentType,\n        cacheControl: 'public, max-age=31536000, immutable',\n        contentDisposition: contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')\n          ? 'inline'\n          : `attachment; filename=\"${filename.replace(/\"/g, '')}\"`,\n      },\n      customMetadata: {\n        source: 'whop-authorized-import',\n        sourceId: String(file?.id || '').slice(0, 120),\n        sourceKey: String(sourceKey || '').slice(0, 180),\n        hardFreeMode: '8GB-50MB-25Kobjects-2Kdaily-50Kmonthly-10Kreads',\n      },\n    });\n    stored = true;\n    const actualSize = Math.max(length, bounded.bytes());\n"""
+          new_upload = """    const responseLength = parsedContentLength(response.headers.get('content-length'));\n    if (responseLength > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');\n    const contentType = String(response.headers.get('content-type') || file?.contentType || 'application/octet-stream').split(';')[0].trim();\n    const upload = await r2UploadValue(response, contentType);\n    const storedObject = await env.SNIPERPLUG_MEDIA.put(key, upload.value, {\n      storageClass: 'Standard',\n      httpMetadata: {\n        contentType,\n        cacheControl: 'public, max-age=31536000, immutable',\n        contentDisposition: contentType.startsWith('image/') || contentType.startsWith('video/') || contentType.startsWith('audio/')\n          ? 'inline'\n          : `attachment; filename=\"${filename.replace(/\"/g, '')}\"`,\n      },\n      customMetadata: {\n        source: 'whop-authorized-import',\n        sourceId: String(file?.id || '').slice(0, 120),\n        sourceKey: String(sourceKey || '').slice(0, 180),\n        uploadMode: upload.mode,\n        hardFreeMode: '8GB-50MB-25Kobjects-2Kdaily-50Kmonthly-10Kreads',\n      },\n    });\n    if (!storedObject) throw new Error('R2 did not confirm the permanent media object write.');\n    stored = true;\n    const actualSize = Math.max(0, Number(storedObject.size || upload.size || 0));\n    if (actualSize > MAX_MEDIA_OBJECT_BYTES) throw new Error('This media file is larger than the 50 MB automatic-copy limit.');\n"""
+          if new_upload not in media:
+              if old_upload not in media:
+                  raise SystemExit('R2 upload block anchor missing')
+              media = media.replace(old_upload, new_upload, 1)
+          media_path.write_text(media)
+
+          test_path = Path('tools/test-media-hard-free.mjs')
+          test = test_path.read_text()
+          import_anchor = "import { onRequest as serveMedia } from '../functions/media/[key].js';\n"
+          import_line = import_anchor + "import { r2UploadValue } from '../functions/_lib/media.js';\n"
+          if "import { r2UploadValue }" not in test:
+              if import_anchor not in test:
+                  raise SystemExit('media test import anchor missing')
+              test = test.replace(import_anchor, import_line, 1)
+
+          assertion_anchor = "assert.equal(mediaStorageSnapshot({}, false).connected, false);\n"
+          assertions = """assert.equal(mediaStorageSnapshot({}, false).connected, false);\n\nconst knownResponse = new Response(new Uint8Array([1, 2, 3]), {\n  headers: { 'content-length': '3', 'content-type': 'image/jpeg' },\n});\nconst knownBody = knownResponse.body;\nconst knownUpload = await r2UploadValue(knownResponse, 'image/jpeg', 8);\nassert.equal(knownUpload.mode, 'response-body');\nassert.equal(knownUpload.value, knownBody, 'Known-length fetch bodies must reach R2 untouched so Workers preserves fixed-length metadata.');\nassert.equal(knownUpload.size, 3);\n\nconst chunkedResponse = new Response(new ReadableStream({\n  start(controller) {\n    controller.enqueue(new Uint8Array([4, 5]));\n    controller.enqueue(new Uint8Array([6, 7]));\n    controller.close();\n  },\n}), { headers: { 'content-type': 'image/png' } });\nconst chunkedUpload = await r2UploadValue(chunkedResponse, 'image/png', 8);\nassert.equal(chunkedUpload.mode, 'buffered-blob');\nassert.ok(chunkedUpload.value instanceof Blob, 'Unknown-length media must become a fixed-size Blob before R2.put.');\nassert.equal(chunkedUpload.size, 4);\nassert.deepEqual([...new Uint8Array(await chunkedUpload.value.arrayBuffer())], [4, 5, 6, 7]);\n\nawait assert.rejects(\n  () => r2UploadValue(new Response(new Uint8Array([1]), { headers: { 'content-length': '9' } }), 'image/jpeg', 8),\n  /larger than the 50 MB automatic-copy limit/i,\n);\nawait assert.rejects(\n  () => r2UploadValue(new Response(new ReadableStream({\n    start(controller) {\n      controller.enqueue(new Uint8Array([1, 2]));\n      controller.enqueue(new Uint8Array([3, 4]));\n      controller.close();\n    },\n  })), 'application/octet-stream', 3),\n  /larger than the 50 MB automatic-copy limit/i,\n);\n"""
+          if 'Known-length fetch bodies must reach R2 untouched' not in test:
+              if assertion_anchor not in test:
+                  raise SystemExit('media test assertion anchor missing')
+              test = test.replace(assertion_anchor, assertions, 1)
+
+          log_anchor = "console.log('✓ Private-media copying stops above 50 MB per object.');\n"
+          log_line = log_anchor + "console.log('✓ Known-length Whop response bodies and unknown-length fixed-size Blob fallbacks are both accepted safely by R2.');\n"
+          if 'unknown-length fixed-size Blob fallbacks' not in test:
+              if log_anchor not in test:
+                  raise SystemExit('media test log anchor missing')
+              test = test.replace(log_anchor, log_line, 1)
+          test_path.write_text(test)
+
+          task_path = Path('ACTIVE_TASK.md')
+          task = task_path.read_text()
+          task = task.replace(
+              '**Active — merged; exact production media retest pending.**',
+              '**Active — underlying R2 upload repair in progress.**'
+          )
+          task = task.replace(
+              'PR #16 is squash-merged at `28b1047cb96f5abe579f79ddcaecca9c16379866`. Implementation, focused regression, full Node 22 validation, review repair, cleanup, conflict inspection, and post-merge production privacy checks are complete. The active task remains locked until the exact Whop guide reports its live Pages identity and either repairs the media or exposes the remaining source, size, storage, or runtime blocker.',
+              'PR #16 fixed result visibility and editor synchronization, but the exact production retest proved the underlying uploader still wrapped Whop response bodies in a generic `TransformStream`. That stripped the runtime-known length and caused R2 to reject every affected image before storage. Branch `fix/whop-r2-known-length-upload` repairs the actual upload body path before another owner retest.'
+          )
+          finding_anchor = "- The first PR #16 event listener marked incomplete guide payloads handled even when `renderGuideEditor()` returned without applying them.\n"
+          findings = "- The production screenshots for `IMG_7082.jpeg` and `image.png` still show `Provided readable stream must have a known length`, proving the media bytes never reached R2.\n- `mirrorWhopMedia()` passed `response.body.pipeThrough(new TransformStream(...))` into `R2Bucket.put()`. The wrapper removed the response body's fixed-length identity even when Whop supplied `Content-Length`.\n- Media enhancement copies files sequentially, so buffering only unknown-length files under the existing 50 MB ceiling does not create unbounded per-request concurrency.\n"
+          if 'response.body.pipeThrough' not in task:
+              task = task.replace(finding_anchor, finding_anchor + findings)
+          change_anchor = "- Preserve the reload-safety error instead of overwriting it with success, including incomplete-repair responses that return a newer guide.\n"
+          changes = "- Send known-length Whop fetch bodies to R2 untouched so Workers preserves their runtime fixed-length metadata.\n- Convert only unknown-length/chunked responses into a byte-capped fixed-size `Blob` before `R2Bucket.put()`.\n- Use the R2 write result as the authoritative stored size, reject null or oversized writes, and preserve reservation rollback/deletion behavior.\n- Add regression coverage for known-length identity preservation, chunked Blob fallback, and both declared and streamed oversize rejection.\n"
+          if 'known-length Whop fetch bodies' not in task:
+              task = task.replace(change_anchor, change_anchor + changes)
+          validation_marker = "- [ ] Live repair result reports the active Pages branch/commit containing merge `28b1047c`.\n"
+          validation = "- [ ] Focused R2 hard-free/media upload regression passes on the uploader-fix branch.\n- [ ] Recovery-media regression and full Node 22 build pass on the uploader-fix branch.\n- [ ] Uploader-fix PR review, cleanup, merge, and production deployment pass.\n"
+          if 'Focused R2 hard-free/media upload regression' not in task:
+              task = task.replace(validation_marker, validation + validation_marker)
+          task_path.write_text(task)
+          PY
+      - name: Validate focused media paths
+        run: |
+          node --check functions/_lib/media.js
+          node --check tools/test-media-hard-free.mjs
+          node tools/test-media-hard-free.mjs
+          node tools/test-recovery-media-truth.mjs
+      - name: Validate full Node 22 build
+        run: npm run build
+      - name: Commit validated uploader repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md functions/_lib/media.js tools/test-media-hard-free.mjs
+          if git diff --cached --quiet; then
+            echo "No uploader changes required"
+            exit 0
+          fi
+          git commit -m "Fix Whop media uploads with R2-known body lengths"
+          git push
