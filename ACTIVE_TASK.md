@@ -4,7 +4,7 @@
 Issue #19 — Back up Whop imports before clear-and-resync.
 
 ## Status
-**Active — implementation branch under validation.** The previous OAuth/media repair is no longer blocking progress. Branch `feat/whop-backup-reset-restore` adds persistent signed backups, verified reset authorization, offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.
+**Active — implementation branch under validation.** The previous OAuth/media repair is no longer blocking progress. Branch `feat/whop-backup-reset-restore` adds bounded signed R2 recovery archives, manifest-only D1 state, verified reset authorization, JSON-batched offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.
 
 ## Confirmed findings
 - Reconnecting Whop replaces OAuth access but does not clear `whop_sources`, `whop_posts`, imported guides, course-video mappings, or R2 records.
@@ -16,6 +16,8 @@ Issue #19 — Back up Whop imports before clear-and-resync.
 ## Implemented on branch
 - D1 migration/runtime schema for signed backup manifests, normalized backup rows, media pins, reset tokens, and stale post timestamps.
 - Exact snapshots of sources, posts, categories, guides, course-video mappings, and media ledger records.
+- Store the complete recovery payload as one checksum-verified R2 archive while D1 keeps only manifest/history/reset state, avoiding one query per imported method.
+- Restore large source sets through bounded `json_each` batches below D1 string and parameter limits.
 - Read-back checksum and HMAC signature verification before a backup becomes verified.
 - Short-lived one-time reset authorization bound to the verified scope and destructive options.
 - Current-state checksum comparison immediately before deletion so newer work forces a fresh backup.

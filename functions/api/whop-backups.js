@@ -30,9 +30,9 @@ function backupId(request, body = {}) {
   return String(body.backupId || new URL(request.url).searchParams.get('id') || '').trim();
 }
 
-function downloadResponse(backupIdValue, payload) {
+function downloadResponse(backupIdValue, archiveJson) {
   const filename = `sniperplug-whop-backup-${backupIdValue}.json`;
-  return new Response(JSON.stringify(payload), {
+  return new Response(String(archiveJson || ''), {
     status: 200,
     headers: {
       'content-type': 'application/json; charset=utf-8',
@@ -140,7 +140,8 @@ export async function onRequest(context) {
       if (currentAction === 'overview') return overview(context.env);
       if (currentAction === 'download') {
         const id = backupId(context.request);
-        return downloadResponse(id, await exportWhopImportBackup(context.env, id));
+        const exported = await exportWhopImportBackup(context.env, id);
+        return downloadResponse(id, exported.archiveJson);
       }
       return methodNotAllowed(['POST']);
     }

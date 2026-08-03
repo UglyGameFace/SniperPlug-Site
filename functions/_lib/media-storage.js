@@ -670,17 +670,21 @@ async function guideReferenceKeys(db) {
   }
   try {
     const backupRows = await db.prepare(`
-      SELECT DISTINCT media.storage_key
-      FROM whop_import_backup_media AS media
-      JOIN whop_import_backups AS backup ON backup.backup_id = media.backup_id
-      WHERE backup.status = 'verified' AND backup.deleted_at IS NULL
+      SELECT archive_key, manifest_json
+      FROM whop_import_backups
+      WHERE status = 'verified' AND deleted_at IS NULL
     `).all();
     for (const row of backupRows.results || []) {
-      const key = validMediaStorageKey(row.storage_key);
-      if (key) keys.add(key);
+      const archiveKey = validMediaStorageKey(row.archive_key);
+      if (archiveKey) keys.add(archiveKey);
+      const manifest = safeJson(row.manifest_json, {});
+      for (const value of Array.isArray(manifest?.mediaKeys) ? manifest.mediaKeys : []) {
+        const key = validMediaStorageKey(value);
+        if (key) keys.add(key);
+      }
     }
   } catch (error) {
-    if (!/no such table/i.test(String(error?.message || ''))) throw error;
+    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;
   }
   return keys;
 }

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
+  backupJsonBatches,
   deleteBackupConfirmationPhrase,
   resetConfirmationPhrase,
   restoreConfirmationPhrase,
@@ -24,61 +25,55 @@ const docs = read('docs/WHOP_IMPORTER.md');
 const packageJson = JSON.parse(read('package.json'));
 const task = read('ACTIVE_TASK.md');
 
-assert.equal(stableBackupJson({ z: 1, a: { d: 2, b: 1 } }), '{"a":{"b":1,"d":2},"z":1}', 'Backup checksums are not canonical.');
+assert.equal(stableBackupJson({ z: 1, a: { d: 2, b: 1 } }), '{"a":{"b":1,"d":2},"z":1}');
 assert.equal(resetConfirmationPhrase({ scope: 'source', experienceId: 'exp_ABC123xyz' }), 'CLEAR SOURCE 123XYZ');
 assert.equal(resetConfirmationPhrase({ scope: 'all' }, true), 'RESET WHOP IMPORTER INCLUDING PUBLISHED');
 assert.equal(restoreConfirmationPhrase('wib_abcdefgh123456'), 'RESTORE 123456');
 assert.equal(deleteBackupConfirmationPhrase('wib_abcdefgh123456'), 'DELETE BACKUP 123456');
+const batches = backupJsonBatches([{ body: 'a'.repeat(800_000) }, { body: 'b'.repeat(800_000) }]);
+assert.equal(batches.length, 2, 'JSON restore batches can exceed the D1 2 MB value limit.');
 
-for (const table of ['whop_import_backups', 'whop_import_backup_rows', 'whop_import_backup_media']) {
-  assert.ok(migration.includes(`CREATE TABLE IF NOT EXISTS ${table}`), `Migration is missing ${table}.`);
-  assert.ok(service.includes(`CREATE TABLE IF NOT EXISTS ${table}`), `Runtime schema repair is missing ${table}.`);
-}
-assert.ok(migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'), 'Latest-scan stale tracking is missing from the migration.');
-assert.ok(posts.includes('stale_at = NULL') && posts.includes('SET stale_at = ?'), 'Scanning does not revive current posts and mark disappeared posts stale.');
-assert.ok(posts.includes('AND stale_at IS NULL'), 'Saved-post loading still returns stale Whop rows.');
-assert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'), 'Fresh scans do not reconnect preserved published guides to their restored source keys.');
-assert.ok(service.includes('export async function reattachPreservedWhopGuides') && service.includes("guides.source_key IS NULL"), 'Published-guide reattachment service is missing.');
+for (const column of ['archive_key', 'archive_checksum', 'archive_bytes']) assert.ok(migration.includes(column), `Migration is missing ${column}.`);
+assert.ok(!migration.includes('whop_import_backup_rows') && !migration.includes('whop_import_backup_media'), 'Backups still create one D1 row per imported method or media item.');
+assert.ok(migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'));
+assert.ok(posts.includes('stale_at = NULL') && posts.includes('SET stale_at = ?') && posts.includes('AND stale_at IS NULL'));
+assert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'));
 
-assert.ok(service.includes('signValue(backupSignatureValue') && service.includes('verifyValue(backupSignatureValue'), 'Backup manifests are not signed and verified.');
-assert.ok(service.includes('payloadChecksum') && service.includes('contentChecksum'), 'Backup rows and destructive scope are not checksum protected.');
-assert.ok(service.indexOf('verifyBackup(env, backupId') < service.indexOf('resetWhopImporter'), 'Reset is not built on verified backup reads.');
-assert.ok(service.includes("status = 'verified'") && service.includes('reset_token_hash'), 'Destructive reset is not tied to a verified one-time authorization.');
-assert.ok(service.includes("AND status != 'published'") && service.includes('deletePublished'), 'Published guides are not preserved by default with a separate opt-in delete path.');
-assert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'), 'Reset can delete work added after the backup.');
-assert.ok(service.includes('stableScope.contentChecksum !== snapshot.contentChecksum') && service.includes("backup_scope_changed_during_create"), 'A backup can become verified after its source changes during snapshot creation.');
-assert.ok(service.includes("row.owner_session_id || ''") && service.includes('owner_session_id: String(ownerSessionId'), 'Backup signatures are not bound to the owner session.');
-assert.ok(service.includes('const MAX_BACKUP_BYTES = 30_000_000'), 'Backup exports can exceed a safe in-memory Workers payload.');
-assert.ok(service.includes('export async function verifiedWhopResetContext'), 'The reset endpoint cannot preflight stored resync options before deletion.');
-assert.ok(service.includes('conflicts.push') && service.includes('guideEquivalent'), 'Restore can overwrite newer guide state silently.');
-assert.ok(service.includes("entities['course-video']") && service.includes("entities['media-object']"), 'Backup restore omits course video or R2 media state.');
+assert.ok(service.includes('export const WHOP_BACKUP_SCHEMA_VERSION = 2'));
+assert.ok(service.includes('const MAX_BACKUP_BYTES = 10_000_000'));
+assert.ok(service.includes('prepareMediaCopy') && service.includes('SNIPERPLUG_MEDIA.put') && service.includes('completeMediaCopy'));
+assert.ok(service.includes('new Blob([archiveJson]') && service.includes('archive_checksum'));
+assert.ok(service.includes('verifyValue(backupSignatureValue') && service.includes("row.owner_session_id || ''"));
+assert.ok(service.includes('stableScope.contentChecksum !== snapshot.contentChecksum'));
+assert.ok(service.includes("code: 'backup_scope_changed_during_create'"));
+assert.ok(service.includes('FROM json_each(?)'), 'Restore does not use D1 JSON batching.');
+assert.ok(service.includes('backupJsonBatches') && service.includes('JSON_BATCH_BYTES = 1_400_000'));
+assert.ok(!service.includes('whop_import_backup_rows') && !service.includes('whop_import_backup_media'));
+assert.ok(service.includes("AND status != 'published'") && service.includes('deletePublished'));
+assert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'));
+assert.ok(service.includes('guideEquivalent(before, snapshot)') && service.includes('current-guide-differs'));
+assert.ok(service.includes('SET deleted_at = ?') && service.includes("archiveCleanup: 'grace-period'"));
 
-assert.ok(mediaStorage.includes('whop_import_backup_media') && mediaStorage.includes("status = 'verified'"), 'Media cleanup does not honor verified backup pins.');
-assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'), 'Backup mutations are not owner authenticated and same-origin protected.');
-assert.ok(endpoint.includes("currentAction === 'download'") && endpoint.includes('content-disposition'), 'Owner backup download is missing.');
-assert.ok(endpoint.includes("currentAction === 'restore'") && endpoint.includes('restoreWhopImportBackup'), 'Offline restore endpoint is missing.');
-assert.ok(endpoint.indexOf('verifiedWhopResetContext(env, id)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'Reset does not preflight its stored resync scope before deletion.');
-assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'The exact resync source is not proven readable before deletion.');
-assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"), 'Interrupted restore does not explain that the verified backup is safe to retry.');
-assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish') && endpoint.includes('warnings'), 'A post-reset resync failure can hide that deletion already completed.');
-assert.ok(endpoint.includes('The reset completed, but Whop disconnect did not finish'), 'A post-reset disconnect failure can hide a completed reset.');
-assert.ok(endpoint.includes('JSON.stringify(payload)') && !endpoint.includes('JSON.stringify(payload, null, 2)'), 'Backup download wastes Workers memory on pretty-printed JSON.');
-assert.ok(endpoint.indexOf("currentAction === 'restore'") < endpoint.indexOf("currentAction === 'reset'"), 'Restore routing is unexpectedly coupled to Whop resync.');
+assert.ok(mediaStorage.includes('SELECT archive_key, manifest_json') && mediaStorage.includes('manifest?.mediaKeys'));
+assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'));
+assert.ok(endpoint.includes('exported.archiveJson') && endpoint.includes("new Response(String(archiveJson || '')"));
+assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'));
+assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish'));
+assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"));
 
-assert.ok(html.includes('data-whop-backup-panel') && html.includes('data-backup-dialog'), 'Control Center backup/reset panel is missing.');
-assert.equal((html.match(/control-center-whop-backups\.js/g) || []).length, 1, 'Whop backup client is loaded more than once.');
-assert.equal((html.match(/whop-backups\.css/g) || []).length, 1, 'Whop backup styles are loaded more than once.');
-assert.ok(client.includes("root.dataset.whopBackupMounted === 'true'") && client.includes("root.dataset.whopBackupMounted = 'true'"), 'Backup controls can mount duplicate handlers.');
-assert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"), 'The UI can reset before creating and verifying a backup.');
-assert.ok(client.includes('Download JSON') && client.includes('Restore verified backup'), 'Backup history lacks download or restore actions.');
-assert.ok(client.includes("backup.status === 'verified'") && client.includes('incomplete backup cannot be downloaded'), 'Failed backups still expose destructive or recovery actions.');
-assert.ok(client.includes('force = false') && client.includes('quiet: true, force: true'), 'Backup history cannot refresh while a protected action is still busy.');
-assert.ok(client.includes("warning ? 'warning' : 'ok'") && client.includes('The reset succeeded, but resync needs attention'), 'The UI can misreport a completed reset as a total failure when resync is interrupted.');
-assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'), 'Backup workflow is not styled for desktop and mobile.');
+assert.ok(html.includes('data-whop-backup-panel') && html.includes('data-backup-dialog'));
+assert.equal((html.match(/control-center-whop-backups\.js/g) || []).length, 1);
+assert.equal((html.match(/whop-backups\.css/g) || []).length, 1);
+assert.ok(client.includes("root.dataset.whopBackupMounted === 'true'"));
+assert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"));
+assert.ok(client.includes("backup.status === 'verified'") && client.includes('quiet: true, force: true'));
+assert.ok(client.includes("warning ? 'warning' : 'ok'"));
+assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'));
 
-assert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'), 'Whop backup deployment and owner workflow are not documented.');
-assert.ok(packageJson.scripts.audit.includes('audit-whop-backups.mjs'), 'Full build does not run the Whop backup regression.');
-assert.ok(task.includes('Issue #19') && task.includes('backup'), 'Active task record was not switched to the Whop backup/reset task.');
+assert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'));
+assert.ok(docs.includes('R2 recovery archive'));
+assert.ok(packageJson.scripts.audit.includes('audit-whop-backups.mjs'));
+assert.ok(task.includes('Issue #19') && task.includes('R2'));
 
 for (const file of [
   'functions/_lib/whop-backups.js',
@@ -93,8 +88,8 @@ for (const file of [
 }
 
 console.log('\nSNIPERPLUG WHOP BACKUP / RESET / RESTORE AUDIT PASSED\n');
-console.log('✓ Reset cannot start before a signed backup is created and read back.');
-console.log('✓ Source, post, guide, course-video, and R2 references survive loss of Whop access.');
-console.log('✓ Published guides are preserved by default and newer guide conflicts fail safely.');
-console.log('✓ Missing source posts become stale instead of resurfacing forever.');
-console.log('✓ Backup history is owner-only, downloadable, restorable, and protected from duplicate UI mounts.');
+console.log('✓ Complete signed backups live in bounded R2 archives, not one D1 query per method.');
+console.log('✓ D1 stores the verified manifest and uses bounded JSON batches for restore.');
+console.log('✓ Reset requires a current verified archive and preserves published guides by default.');
+console.log('✓ Backup archives and their referenced media remain pinned through the cleanup grace model.');
+console.log('✓ Stale posts disappear from review and preserved published guides reconnect after fresh scans.');

@@ -87,9 +87,9 @@ Never commit real secret values. Saving or changing a Cloudflare secret or bindi
 
 ## Backup, clear, and restore
 
-The Control Center has one owner-only recovery panel for Whop imports. A destructive clear never runs directly. SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes every source/post/guide/course-video/media reference to D1, reads the snapshot back, verifies every checksum, and only then issues a short-lived reset authorization.
+The Control Center has one owner-only recovery panel for Whop imports. A destructive clear never runs directly. SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes one bounded R2 recovery archive, reads that archive back, verifies its signature and checksums, and only then issues a short-lived reset authorization. D1 stores only the verified manifest, archive identity, history, and one-time reset state so the workflow remains inside Cloudflare Free-plan query limits.
 
-Backups include saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and R2 media ledger references. Verified backups pin their R2 objects so normal detached-media cleanup cannot delete the only surviving copy. Published guides are preserved by default; deleting them requires a separate checkbox and a stronger typed confirmation phrase.
+The R2 recovery archive includes saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and media ledger references. Verified backups pin their R2 objects so normal detached-media cleanup cannot delete the only surviving copy. Published guides are preserved by default; deleting them requires a separate checkbox and a stronger typed confirmation phrase.
 
 Backup history supports owner-only JSON download, restore, and deletion. Restore does not call Whop, so it still works after membership or group access is lost. Existing newer guides are reported as conflicts and are never overwritten silently. Clearing one source can immediately reapprove and rescan it, while an entire-importer reset can optionally disconnect OAuth before rebuilding from zero.
 

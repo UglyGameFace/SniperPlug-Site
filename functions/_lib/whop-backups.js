@@ -193,7 +193,15 @@ async function optionalRows(db, sql, bindings = [], missing = '') {
   }
 }
 
-function jsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {
+async function optionalRowsByJsonValues(db, sql, values, missing = '') {
+  const output = [];
+  for (const group of backupJsonBatches(values)) {
+    output.push(...await optionalRows(db, sql, [stableBackupJson(group)], missing));
+  }
+  return output;
+}
+
+export function backupJsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {
   const values = Array.isArray(rows) ? rows : [];
   const output = [];
   let current = [];
@@ -216,7 +224,7 @@ function jsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {
 
 async function runJsonBatches(db, rows, sql) {
   const results = [];
-  for (const group of jsonBatches(rows)) results.push(await db.prepare(sql).bind(stableBackupJson(group)).run());
+  for (const group of backupJsonBatches(rows)) results.push(await db.prepare(sql).bind(stableBackupJson(group)).run());
   return results;
 }
 
@@ -242,20 +250,20 @@ async function currentScopeRows(db, scope) {
 
   const categorySlugs = [...new Set(guides.map((row) => String(row.category_slug || '')).filter(Boolean))];
   const categories = categorySlugs.length
-    ? await optionalRows(
+    ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM guide_categories WHERE slug IN (SELECT value FROM json_each(?)) ORDER BY slug',
-      [stableBackupJson(categorySlugs)],
+      categorySlugs,
       'guide_categories',
     )
     : [];
 
   const guideIds = guides.map((row) => Number(row.id)).filter((id) => Number.isFinite(id) && id > 0);
   const courseVideos = guideIds.length
-    ? await optionalRows(
+    ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM course_video_sources WHERE guide_id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY video_key',
-      [stableBackupJson(guideIds)],
+      guideIds,
       'course_video_sources',
     )
     : [];
@@ -266,10 +274,10 @@ async function currentScopeRows(db, scope) {
   }
   const mediaKeys = [...mediaKeySet].sort();
   const mediaObjects = mediaKeys.length
-    ? await optionalRows(
+    ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM media_objects WHERE storage_key IN (SELECT value FROM json_each(?)) ORDER BY storage_key',
-      [stableBackupJson(mediaKeys)],
+      mediaKeys,
       'media_objects',
     )
     : [];
@@ -765,7 +773,13 @@ async function restoreGuides(db, guideRows) {
   const unchanged = [];
   const conflicts = [];
   const guideIdMap = new Map();
-  for (const batch of jsonBatches(guideRows)) {
+  for (const batch of backupJsonBatches(guideRows)) {
+    const beforeRows = await currentGuidesForBatch(db, batch);
+    const beforeByKey = new Map();
+    for (const row of beforeRows) {
+      beforeByKey.set(guideLookupKey(row), row);
+      if (row.source_experience_id && row.source_post_id) beforeByKey.set(`post:${row.source_experience_id}:${row.source_post_id}`, row);
+    }
     await db.prepare(`
       INSERT OR IGNORE INTO guides (${GUIDE_COLUMNS.join(', ')})
       SELECT
@@ -784,29 +798,31 @@ async function restoreGuides(db, guideRows) {
     `).bind(stableBackupJson(batch)).run();
     const currentRows = await currentGuidesForBatch(db, batch);
     const currentByKey = new Map();
-    for (const current of currentRows) {
-      currentByKey.set(guideLookupKey(current), current);
-      if (current.source_experience_id && current.source_post_id) currentByKey.set(`post:${current.source_experience_id}:${current.source_post_id}`, current);
+    for (const row of currentRows) {
+      currentByKey.set(guideLookupKey(row), row);
+      if (row.source_experience_id && row.source_post_id) currentByKey.set(`post:${row.source_experience_id}:${row.source_post_id}`, row);
     }
     for (const snapshot of batch) {
-      const current = currentByKey.get(guideLookupKey(snapshot)) || null;
-      if (!current) {
-        conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: null, title: snapshot.title, reason: 'slug-or-constraint-conflict' });
+      const key = guideLookupKey(snapshot);
+      const postKey = snapshot.source_experience_id && snapshot.source_post_id
+        ? `post:${snapshot.source_experience_id}:${snapshot.source_post_id}`
+        : '';
+      const before = beforeByKey.get(key) || (postKey ? beforeByKey.get(postKey) : null) || null;
+      const current = currentByKey.get(key) || (postKey ? currentByKey.get(postKey) : null) || null;
+      if (before) {
+        if (guideEquivalent(before, snapshot)) {
+          unchanged.push(Number(before.id));
+          guideIdMap.set(Number(snapshot.id), Number(before.id));
+        } else {
+          conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: Number(before.id), title: before.title, currentUpdatedAt: before.updated_at, backupUpdatedAt: snapshot.updated_at });
+        }
         continue;
       }
-      guideIdMap.set(Number(snapshot.id), Number(current.id));
-      const existedBefore = currentRows.some((row) => Number(row.id) === Number(current.id) && Number(row.id) === Number(snapshot.id));
-      if (guideEquivalent(current, snapshot)) {
-        if (existedBefore) unchanged.push(Number(current.id));
-        else restored.push(Number(current.id));
+      if (current && guideEquivalent(current, snapshot)) {
+        restored.push(Number(current.id));
+        guideIdMap.set(Number(snapshot.id), Number(current.id));
       } else {
-        conflicts.push({
-          backupGuideId: Number(snapshot.id),
-          currentGuideId: Number(current.id),
-          title: current.title,
-          currentUpdatedAt: current.updated_at,
-          backupUpdatedAt: snapshot.updated_at,
-        });
+        conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: current ? Number(current.id) : null, title: current?.title || snapshot.title, reason: current ? 'current-guide-differs' : 'slug-or-constraint-conflict' });
       }
     }
   }
