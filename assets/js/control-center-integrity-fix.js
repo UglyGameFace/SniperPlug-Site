@@ -184,18 +184,13 @@
   }
 
   function applyGuide(guide) {
-    if (!guide || typeof guide !== 'object') return;
-    if (typeof guide.body === 'string') {
-      bodyField.value = guide.body;
-      bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+    if (!guide || typeof guide !== 'object') return false;
+    const detail = { guide, handled: false };
+    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail }));
+    if (!detail.handled) {
+      show('SniperPlug received the repaired guide but could not refresh the editor safely. Reload this page before making more changes.', 'error');
     }
-    const title = editor.elements.namedItem('title');
-    const description = editor.elements.namedItem('description');
-    const category = editor.elements.namedItem('category');
-    if (title instanceof HTMLInputElement && typeof guide.title === 'string') title.value = guide.title;
-    if (description instanceof HTMLTextAreaElement && typeof guide.description === 'string') description.value = guide.description;
-    if (category instanceof HTMLSelectElement && typeof guide.category === 'string') category.value = guide.category;
-    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail: { guide } }));
+    return detail.handled;
   }
 
   async function request(body) {
@@ -240,13 +235,17 @@
     try {
       const output = await request({ guideId: id, rightsConfirmed: true });
       if (!output?.guide) throw new Error('SniperPlug repaired the source but could not reload the guide.');
-      applyGuide(output.guide);
+      const applied = applyGuide(output.guide);
       const suffix = deploymentSuffix({ deployment: output.deployment });
-      show(`Media repaired. The guide now contains the server-confirmed media copy.${suffix}`, 'ok');
+      if (applied) show(`Media repaired. The guide now contains the server-confirmed media copy.${suffix}`, 'ok');
       finish();
     } catch (error) {
-      applyGuide(error?.details?.guide);
-      show(errorMessage(error), 'error');
+      const newestGuide = error?.details?.guide;
+      const applied = newestGuide ? applyGuide(newestGuide) : null;
+      const reloadSuffix = applied === false
+        ? ' The server returned a newer guide, but this page could not refresh it safely. Reload before making more changes.'
+        : '';
+      show(`${errorMessage(error)}${reloadSuffix}`, 'error');
       finish();
     }
   });

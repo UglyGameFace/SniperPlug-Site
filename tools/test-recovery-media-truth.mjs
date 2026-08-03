@@ -93,6 +93,7 @@ const route = read('functions/course-video/[key].js');
 const repair = read('functions/api/guide-repair.js');
 const mediaRepair = read('functions/api/guide-media-repair.js');
 const mediaRepairClient = read('assets/js/control-center-integrity-fix.js');
+const controlCenterClient = read('assets/js/control-center-v2.js');
 const client = read('assets/js/control-center-recovery.js');
 const snapshots = read('functions/_lib/guide-snapshots.js');
 const routeHandler = route.slice(route.indexOf('export async function onRequest'));
@@ -107,7 +108,13 @@ assert.ok(mediaRepair.includes('CF_PAGES_COMMIT_SHA') && mediaRepair.includes('C
 assert.ok(mediaRepair.includes('guide: repaired'), 'An incomplete repair does not return the newest server-confirmed guide state.');
 assert.ok(mediaRepairClient.includes('data.mediaRepairStatus') || mediaRepairClient.includes("dataset.mediaRepairStatus = ''"), 'Media repair feedback is not rendered beside the guide controls.');
 assert.ok(mediaRepairClient.includes('error.details = data.details') && mediaRepairClient.includes('Active Pages deployment:'), 'The browser drops the server repair reason or deployment identity.');
-assert.ok(mediaRepairClient.includes('applyGuide(error?.details?.guide)'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');
+assert.ok(mediaRepairClient.includes('const newestGuide = error?.details?.guide') && mediaRepairClient.includes('newestGuide ? applyGuide(newestGuide) : null'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');
+assert.ok(mediaRepairClient.includes("const detail = { guide, handled: false }") && !mediaRepairClient.includes("bodyField.dispatchEvent(new Event('input'"), 'Media repair still bypasses the canonical saved-guide renderer and dirties the editor.');
+assert.ok(controlCenterClient.includes("root.addEventListener('sniperplug:guide-media-repaired'") && controlCenterClient.includes("renderGuideEditor(guide, 'saved')") && controlCenterClient.includes('updateGuideListItem(guide)'), 'Repaired guides do not refresh canonical editor, list, publish, attachment, and clean-snapshot state.');
+assert.ok(mediaRepairClient.includes('const applied = applyGuide(output.guide)') && mediaRepairClient.includes('if (applied) show(`Media repaired.'), 'A failed client refresh can still be overwritten by a false media-repair success message.');
+assert.ok(mediaRepairClient.includes('const reloadSuffix = applied === false') && mediaRepairClient.includes('could not refresh it safely'), 'Incomplete repair errors do not preserve the reload-safety warning when the newest guide cannot be rendered.');
+assert.ok(controlCenterClient.includes("typeof guide?.body !== 'string') return false") && controlCenterClient.includes('return true;'), 'The canonical guide renderer does not report whether it actually applied the guide.');
+assert.ok(controlCenterClient.includes("if (!renderGuideEditor(guide, 'saved')) return;") && controlCenterClient.indexOf("if (!renderGuideEditor(guide, 'saved')) return;") < controlCenterClient.indexOf('event.detail.handled = true'), 'The repair bridge can acknowledge an incomplete or rejected guide render.');
 assert.ok(mediaRepairClient.includes('/(?:Media|Attachment) review required/i'), 'The repair action disappears after a non-storage media failure.');
 assert.ok(snapshots.includes('guideSnapshotMatches(current, row)'), 'No-op recovery rollback can still become a false 500.');
 assert.ok(client.includes('Permanent R2 copies can be restored directly') && client.includes('error.details = body.details'), 'Recovery UI does not expose media truth or server recovery codes.');
@@ -122,6 +129,7 @@ for (const file of [
   'functions/course-video/[key].js',
   'assets/js/control-center-recovery.js',
   'assets/js/control-center-integrity-fix.js',
+  'assets/js/control-center-v2.js',
 ]) {
   const result = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
   assert.equal(result.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
@@ -132,5 +140,7 @@ console.log('✓ Saved Whop-backed players are never confused with permanent R2 
 console.log('✓ Permanent R2 media restores and plays without current Whop access.');
 console.log('✓ Missing R2 storage and unresolved review warnings cannot report a successful media repair.');
 console.log('✓ Repair failures appear beside the guide with the exact Pages deployment and newest server state.');
+console.log('✓ Repaired guides re-enter the canonical saved-guide renderer, refresh derived controls, and remain clean.');
+console.log('✓ Reload warnings survive failed client refreshes and incomplete guides cannot be acknowledged as handled.');
 console.log('✓ Lost or missing Whop access returns the real recovery reason instead of a generic 500.');
 console.log('✓ An unchanged rejected guide is a successful idempotent rollback, not a rollback failure.');

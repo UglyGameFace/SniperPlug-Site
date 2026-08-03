@@ -1211,7 +1211,8 @@
   }
 
   function renderGuideEditor(guide, mode = 'select') {
-    if (!guide?.body && guide?.body !== '') return;
+    const guideId = Number(guide?.id);
+    if (!Number.isFinite(guideId) || guideId <= 0 || typeof guide?.body !== 'string') return false;
     const previous = elements.draftList.querySelector('.draft-item.active');
     if (previous) previous.classList.remove('active');
     const current = elements.draftList.querySelector(`[data-guide-id="${guide.id}"]`);
@@ -1241,7 +1242,22 @@
     elements.rejectGuide.disabled = guide.status === 'rejected';
     elements.returnDraft.disabled = guide.status === 'draft';
     root.dispatchEvent(new CustomEvent('sniperplug:guide-loaded', { detail: { id: guide.id, mode } }));
+    return true;
   }
+
+  root.addEventListener('sniperplug:guide-media-repaired', (event) => {
+    const guide = event.detail?.guide;
+    const guideId = Number(guide?.id);
+    if (!Number.isFinite(guideId) || guideId <= 0 || typeof guide?.body !== 'string') return;
+    try {
+      if (!renderGuideEditor(guide, 'saved')) return;
+      updateGuideListItem(guide);
+      event.detail.handled = true;
+    } catch (error) {
+      event.detail.handled = false;
+      console.error('SniperPlug could not apply repaired guide state.', error);
+    }
+  });
 
   async function selectGuide(id) {
     const requestToken = ++state.guideRequestToken;
