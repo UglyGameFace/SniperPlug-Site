@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/whop-backups.css?v=20260803.1">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -48,6 +49,33 @@
         <p class="whop-connection-detail" data-whop-connection-detail data-state="idle">Checking the saved Whop connection…</p>
         <p class="scope-warning" data-scope-warning hidden></p>
         <div class="source-summary" data-source-options aria-live="polite"></div>
+      </section>
+
+      <section class="control-panel" id="whop-backups" data-whop-backup-panel>
+        <header class="panel-head"><div><span class="eyebrow">Backup & reset</span><h2>Keep every imported method recoverable</h2><p>Create signed recovery snapshots, clear stale importer state safely, and restore methods even after Whop access is gone.</p></div><button class="btn ghost panel-action" type="button" data-refresh-backups>Refresh backups</button></header>
+        <div class="whop-backup-tools">
+          <label><span>Backup/reset scope</span><select data-backup-scope><option value="source" selected>One saved Whop source</option><option value="all">Entire Whop importer</option></select></label>
+          <label><span>Saved source</span><select data-backup-source><option value="">Loading saved sources…</option></select></label>
+        </div>
+        <div class="whop-reset-options">
+          <label class="rights-check"><input type="checkbox" data-reset-resync checked><span>After clearing one source, reconnect it and scan only the current Whop posts.</span></label>
+          <label class="rights-check"><input type="checkbox" data-reset-published><span>Also delete published guides in this scope. Leave this off to preserve the private library.</span></label>
+          <label class="rights-check"><input type="checkbox" data-reset-disconnect><span>Disconnect Whop after an entire-importer reset.</span></label>
+          <div class="button-row"><button class="btn ghost" type="button" data-create-whop-backup>Create verified backup</button><button class="decision disapprove" type="button" data-reset-whop-importer>Back up, clear & resync</button></div>
+        </div>
+        <p class="whop-backup-status" data-backup-status role="status" aria-live="polite" hidden></p>
+        <div class="whop-backup-history-head"><div><h3>Recovery history</h3><p>Server-held backups pin their R2 media. Download JSON for an offline copy.</p></div></div>
+        <p class="whop-backup-empty" data-backup-empty>No verified Whop backups yet.</p>
+        <div class="whop-backup-history" data-backup-history></div>
+        <dialog class="whop-backup-dialog" data-backup-dialog>
+          <div class="whop-backup-dialog-inner">
+            <header><span class="eyebrow">Protected action</span><h3 data-backup-dialog-title>Confirm backup action</h3></header>
+            <p data-backup-dialog-copy></p>
+            <div class="whop-backup-dialog-counts" data-backup-dialog-counts></div>
+            <label class="whop-backup-confirmation"><span>Type this exact phrase</span><code data-backup-phrase></code><input type="text" data-backup-confirmation autocomplete="off" spellcheck="false"></label>
+            <div class="button-row"><button class="decision disapprove" type="button" data-backup-confirm disabled>Confirm</button><button class="btn ghost" type="button" data-backup-cancel>Cancel</button></div>
+          </div>
+        </dialog>
       </section>
 
       <section class="control-panel" id="source-browser" data-discovery-panel>
@@ -180,6 +208,7 @@
   <script src="/assets/js/control-center-network-guard.js?v=20260730.14" defer></script>
   <script src="/assets/js/control-center-v2.js?v=20260730.14" defer></script>
   <script src="/assets/js/control-center-lifecycle.js?v=20260730.14" defer></script>
+  <script src="/assets/js/control-center-whop-backups.js?v=20260803.1" defer></script>
   <script src="/assets/js/control-center-integrity-fix.js?v=20260730.14" defer></script>
 </body>
 </html>

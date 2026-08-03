@@ -293,7 +293,7 @@ async function snapshotFromRows(scope, rows) {
   const payloadBytes = entityRows.reduce((sum, row) => sum + new TextEncoder().encode(row.payloadJson).byteLength, 0);
   if (payloadBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This importer backup is larger than 80 MB. Back up one source at a time.');
 
-  const contentRows = entityRows.filter((row) => row.entityType !== 'media-object');
+  const contentRows = entityRows.filter((row) => ['source', 'post', 'guide', 'course-video'].includes(row.entityType));
   const checksumInput = entityRows.map((row) => [row.entityType, row.entityKey, row.payloadChecksum]);
   const contentChecksumInput = contentRows.map((row) => [row.entityType, row.entityKey, row.payloadChecksum]);
   const checksum = await sha256(stableBackupJson(checksumInput));
@@ -437,10 +437,10 @@ async function readBackupEntities(db, backupId) {
   return rows.results || [];
 }
 
-async function verifyBackup(env, backupId, { includePayload = true } = {}) {
+async function verifyBackup(env, backupId, { includePayload = true, allowCreating = false } = {}) {
   const db = await ensureWhopBackupSchema(env);
   const row = await backupRow(db, backupId);
-  if (row.status !== 'verified') throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');
+  if (row.status !== 'verified' && !(allowCreating && row.status === 'creating')) throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');
   const signatureValid = await verifyValue(backupSignatureValue(row), row.signature, env?.SNIPERPLUG_SESSION_SECRET);
   if (!signatureValid) throw new HttpError(409, 'This Whop backup signature is invalid. Do not reset or restore from it.');
 
@@ -464,8 +464,18 @@ async function verifyBackup(env, backupId, { includePayload = true } = {}) {
   if (!manifest || manifest.checksum !== checksum || Number(manifest.schemaVersion) !== WHOP_BACKUP_SCHEMA_VERSION) {
     throw new HttpError(409, 'The Whop backup manifest is incompatible or corrupted.');
   }
-  const expectedRows = Object.values(manifest.counts || {}).reduce((sum, _value, index) => sum + (index < 0 ? 0 : 0), 0);
-  void expectedRows;
+  const actualCounts = Object.fromEntries(ENTITY_ORDER.map((type) => [type, entities.filter((entity) => entity.entity_type === type).length]));
+  const expectedCounts = {
+    source: Number(manifest.counts?.sources || 0),
+    post: Number(manifest.counts?.posts || 0),
+    category: Number(manifest.counts?.categories || 0),
+    guide: Number(manifest.counts?.guides || 0),
+    'course-video': Number(manifest.counts?.courseVideos || 0),
+    'media-object': Number(manifest.counts?.mediaObjects || 0),
+  };
+  for (const [type, expected] of Object.entries(expectedCounts)) {
+    if (actualCounts[type] !== expected) throw new HttpError(409, `Whop backup ${type} count does not match its manifest.`);
+  }
   return { db, row, manifest, entities: includePayload ? grouped : null };
 }
 
@@ -534,8 +544,10 @@ export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
     await persistSnapshot(db, { backupId, ownerSessionId: String(ownerSessionId || 'sniperplug-owner'), label, signature, createdAt }, snapshot, manifest);
     const creating = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first();
     if (!creating) throw new HttpError(500, 'SniperPlug could not read back the new Whop backup manifest.');
-    await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)
+    await verifyBackup(env, backupId, { includePayload: false, allowCreating: true });
+    const verifiedUpdate = await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)
       .bind(nowIso(), backupId).run();
+    if (changes(verifiedUpdate) !== 1) throw new HttpError(409, 'The Whop backup changed before verification could be finalized.');
     const verified = await verifyBackup(env, backupId, { includePayload: false });
     const authorization = input.authorizeReset === true
       ? await issueResetToken(env, verified.row, input)
@@ -666,12 +678,29 @@ export async function restoreWhopImportBackup(env, backupId, input = {}) {
   const guideIdMap = new Map();
   for (const snapshot of guideRows) {
     let current = snapshot.source_key
-      ? await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(snapshot.source_key).first()
+      ? await db.prepare(`
+          SELECT * FROM guides
+          WHERE source_key = ?
+             OR (source_key IS NULL AND source_experience_id = ? AND source_post_id = ?)
+          ORDER BY CASE WHEN source_key = ? THEN 0 ELSE 1 END
+          LIMIT 1
+        `).bind(snapshot.source_key, snapshot.source_experience_id, snapshot.source_post_id, snapshot.source_key).first()
       : await db.prepare('SELECT * FROM guides WHERE id = ?').bind(snapshot.id).first();
     if (current && guideEquivalent(current, snapshot)) {
       unchanged.push(Number(current.id));
       guideIdMap.set(Number(snapshot.id), Number(current.id));
       continue;
+    }
+    if (current && !current.source_key && snapshot.source_key && GUIDE_COLUMNS
+      .filter((column) => column !== 'source_key')
+      .every((column) => (current[column] ?? null) === (snapshot[column] ?? null))) {
+      const reattached = await db.prepare('UPDATE guides SET source_key = ? WHERE id = ? AND source_key IS NULL')
+        .bind(snapshot.source_key, current.id).run();
+      if (changes(reattached) === 1) {
+        restored.push(Number(current.id));
+        guideIdMap.set(Number(snapshot.id), Number(current.id));
+        continue;
+      }
     }
     if (current) {
       conflicts.push({

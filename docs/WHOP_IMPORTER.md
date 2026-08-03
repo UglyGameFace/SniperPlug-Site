@@ -20,7 +20,7 @@ Whop-hosted course videos use the exact lesson's current Mux playback credential
 
 ## Cloudflare storage
 
-Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, and `migrations/0003_media_hard_free.sql` in order.
+Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, `migrations/0003_media_hard_free.sql`, and `migrations/0004_whop_import_backups.sql` in order.
 
 D1 privately stores OAuth sessions, approved and disapproved source IDs, content decisions, exact previews, categories, drafts, and published guides. Imported source bodies are never committed to this public repository.
 
@@ -84,6 +84,16 @@ openid profile email forum:read courses:read chat:read member:basic:read member:
 Enable `forum:read`, `courses:read`, `chat:read`, `member:basic:read`, and `member:email:read` in the Whop application. Existing connections must disconnect and reconnect once after any new scope is added.
 
 Never commit real secret values. Saving or changing a Cloudflare secret or binding requires a fresh Pages deployment before Functions can read the new value.
+
+## Backup, clear, and restore
+
+The Control Center has one owner-only recovery panel for Whop imports. A destructive clear never runs directly. SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes every source/post/guide/course-video/media reference to D1, reads the snapshot back, verifies every checksum, and only then issues a short-lived reset authorization.
+
+Backups include saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and R2 media ledger references. Verified backups pin their R2 objects so normal detached-media cleanup cannot delete the only surviving copy. Published guides are preserved by default; deleting them requires a separate checkbox and a stronger typed confirmation phrase.
+
+Backup history supports owner-only JSON download, restore, and deletion. Restore does not call Whop, so it still works after membership or group access is lost. Existing newer guides are reported as conflicts and are never overwritten silently. Clearing one source can immediately reapprove and rescan it, while an entire-importer reset can optionally disconnect OAuth before rebuilding from zero.
+
+Fresh source scans now mark posts missing from Whop as stale and hide them from ordinary review instead of letting old rows resurface forever. If a stale item returns in a later official scan, its row is revived automatically.
 
 ## Owner workflow
 

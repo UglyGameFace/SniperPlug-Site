@@ -668,6 +668,20 @@ async function guideReferenceKeys(db) {
     const attachments = safeJson(row.attachment_json, {});
     for (const key of extractMediaStorageKeys(row.body_markdown, attachments)) keys.add(key);
   }
+  try {
+    const backupRows = await db.prepare(`
+      SELECT DISTINCT media.storage_key
+      FROM whop_import_backup_media AS media
+      JOIN whop_import_backups AS backup ON backup.backup_id = media.backup_id
+      WHERE backup.status = 'verified' AND backup.deleted_at IS NULL
+    `).all();
+    for (const row of backupRows.results || []) {
+      const key = validMediaStorageKey(row.storage_key);
+      if (key) keys.add(key);
+    }
+  } catch (error) {
+    if (!/no such table/i.test(String(error?.message || ''))) throw error;
+  }
   return keys;
 }
 
