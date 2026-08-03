@@ -1,4 +1,4 @@
-name: Apply Whop backup reset hardening
+name: Apply Whop backup reset final safety
 
 on:
   push:
@@ -19,98 +19,85 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply final safety hardening
+      - name: Apply reset outcome and reattachment safety
         run: |
           python - <<'PY'
           from pathlib import Path
 
           backup_path = Path('functions/_lib/whop-backups.js')
           backup = backup_path.read_text()
-          backup = backup.replace('const MAX_BACKUP_BYTES = 80_000_000;', 'const MAX_BACKUP_BYTES = 30_000_000;')
-          backup = backup.replace('This importer backup is larger than 80 MB.', 'This importer backup is larger than 30 MB.')
-          old_signature = "return [row.backup_id, row.checksum, row.created_at, row.scope, row.experience_id || '', row.schema_version].join('.');"
-          new_signature = "return [row.backup_id, row.owner_session_id || '', row.checksum, row.created_at, row.scope, row.experience_id || '', row.schema_version].join('.');"
-          if new_signature not in backup:
-              if old_signature not in backup: raise SystemExit('backup signature anchor missing')
-              backup = backup.replace(old_signature, new_signature, 1)
-          unsigned_anchor = """  const unsigned = {\n    backup_id: backupId,\n    checksum: snapshot.checksum,\n"""
-          unsigned_replacement = """  const unsigned = {\n    backup_id: backupId,\n    owner_session_id: String(ownerSessionId || 'sniperplug-owner'),\n    checksum: snapshot.checksum,\n"""
-          if unsigned_replacement not in backup:
-              if unsigned_anchor not in backup: raise SystemExit('unsigned owner anchor missing')
-              backup = backup.replace(unsigned_anchor, unsigned_replacement, 1)
-          verify_anchor = """    await verifyBackup(env, backupId, { includePayload: false, allowCreating: true });\n    const verifiedUpdate = await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)\n"""
-          verify_replacement = """    await verifyBackup(env, backupId, { includePayload: false, allowCreating: true });\n    const stableScope = await snapshotScope(env, snapshot.scope);\n    if (stableScope.contentChecksum !== snapshot.contentChecksum) {\n      throw new HttpError(409, 'The importer changed while SniperPlug was creating this backup. The incomplete snapshot was not verified; create it again.', {\n        code: 'backup_scope_changed_during_create',\n        backupId,\n      });\n    }\n    const verifiedUpdate = await db.prepare(`UPDATE whop_import_backups SET status = 'verified', verified_at = ? WHERE backup_id = ? AND status = 'creating'`)\n"""
-          if verify_replacement not in backup:
-              if verify_anchor not in backup: raise SystemExit('backup stable-scope anchor missing')
-              backup = backup.replace(verify_anchor, verify_replacement, 1)
-          context_anchor = """export async function authorizeWhopReset(env, backupId, options = {}) {\n"""
-          context_block = """export async function verifiedWhopResetContext(env, backupId) {\n  const verified = await verifyBackup(env, backupId, { includePayload: false });\n  const options = safeJson(verified.row.reset_options_json, {}) || {};\n  return {\n    backupId: verified.row.backup_id,\n    scope: verified.row.scope,\n    experienceId: verified.row.experience_id || null,\n    options: {\n      deletePublished: options.deletePublished === true,\n      resync: options.resync === true,\n      disconnectWhop: options.disconnectWhop === true,\n    },\n    confirmationPhrase: resetConfirmationPhrase({\n      scope: verified.row.scope,\n      experienceId: verified.row.experience_id,\n    }, options.deletePublished === true),\n  };\n}\n\n"""
-          if 'export async function verifiedWhopResetContext' not in backup:
-              if context_anchor not in backup: raise SystemExit('reset context anchor missing')
-              backup = backup.replace(context_anchor, context_block + context_anchor, 1)
+          context_anchor = """export async function verifiedWhopResetContext(env, backupId) {\n"""
+          reattach = """export async function reattachPreservedWhopGuides(env, experienceId) {\n  const id = exactExperienceId(experienceId);\n  if (!id) return { reattached: 0, conflicts: [] };\n  const db = await ensureWhopBackupSchema(env);\n  const rows = await db.prepare(`\n    SELECT guides.id AS guide_id, posts.source_key\n    FROM guides\n    JOIN whop_posts AS posts\n      ON posts.experience_id = guides.source_experience_id\n     AND posts.post_id = guides.source_post_id\n     AND posts.stale_at IS NULL\n    WHERE guides.source_experience_id = ?\n      AND guides.status = 'published'\n      AND guides.source_key IS NULL\n    GROUP BY guides.id, posts.source_key\n    ORDER BY guides.id\n  `).bind(id).all();\n  let reattached = 0;\n  const conflicts = [];\n  for (const row of rows.results || []) {\n    const owner = await db.prepare('SELECT id FROM guides WHERE source_key = ? AND id != ? LIMIT 1')\n      .bind(row.source_key, row.guide_id).first();\n    if (owner) {\n      conflicts.push({ guideId: Number(row.guide_id), sourceKey: row.source_key, ownerGuideId: Number(owner.id) });\n      continue;\n    }\n    const result = await db.prepare('UPDATE guides SET source_key = ? WHERE id = ? AND source_key IS NULL')\n      .bind(row.source_key, row.guide_id).run();\n    reattached += changes(result);\n  }\n  return { reattached, conflicts };\n}\n\n"""
+          if 'export async function reattachPreservedWhopGuides' not in backup:
+              if context_anchor not in backup: raise SystemExit('reattach service anchor missing')
+              backup = backup.replace(context_anchor, reattach + context_anchor, 1)
           backup_path.write_text(backup)
+
+          posts_path = Path('functions/_lib/posts.js')
+          posts = posts_path.read_text()
+          old_import = "import { ensureWhopBackupSchema } from './whop-backups.js';"
+          new_import = "import { ensureWhopBackupSchema, reattachPreservedWhopGuides } from './whop-backups.js';"
+          if new_import not in posts:
+              if old_import not in posts: raise SystemExit('posts reattach import anchor missing')
+              posts = posts.replace(old_import, new_import, 1)
+          old_finish = """    await db.prepare(`\n      UPDATE whop_posts\n      SET stale_at = ?\n      WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL\n    `).bind(scanMarker, experienceId, scanMarker).run();\n    return verifySavedScan(db, experienceId, scanMarker, posts);\n"""
+          new_finish = """    await db.prepare(`\n      UPDATE whop_posts\n      SET stale_at = ?\n      WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL\n    `).bind(scanMarker, experienceId, scanMarker).run();\n    await reattachPreservedWhopGuides(env, experienceId);\n    return verifySavedScan(db, experienceId, scanMarker, posts);\n"""
+          if new_finish not in posts:
+              if old_finish not in posts: raise SystemExit('posts reattach call anchor missing')
+              posts = posts.replace(old_finish, new_finish, 1)
+          posts_path.write_text(posts)
 
           endpoint_path = Path('functions/api/whop-backups.js')
           endpoint = endpoint_path.read_text()
-          import_anchor = """  restoreWhopImportBackup,\n} from '../_lib/whop-backups.js';\n"""
-          import_replacement = """  restoreWhopImportBackup,\n  verifiedWhopResetContext,\n} from '../_lib/whop-backups.js';\n"""
-          if import_replacement not in endpoint:
-              if import_anchor not in endpoint: raise SystemExit('endpoint reset-context import anchor missing')
-              endpoint = endpoint.replace(import_anchor, import_replacement, 1)
-          endpoint = endpoint.replace('return new Response(JSON.stringify(payload, null, 2), {', 'return new Response(JSON.stringify(payload), {')
-          old_restore = """  if (currentAction === 'restore') {\n    return json(await restoreWhopImportBackup(env, backupId(request, body), body));\n  }\n"""
-          new_restore = """  if (currentAction === 'restore') {\n    const id = backupId(request, body);\n    try {\n      return json(await restoreWhopImportBackup(env, id, body));\n    } catch (error) {\n      if (error instanceof HttpError && [400, 401, 403, 404, 422].includes(error.status)) throw error;\n      throw new HttpError(409, 'The restore did not finish. Any rows already restored are preserved, the verified backup is unchanged, and retrying the same restore is safe.', {\n        code: 'backup_restore_retry_safe',\n        backupId: id,\n        cause: String(error?.message || 'Unknown restore interruption.').slice(0, 300),\n      });\n    }\n  }\n"""
-          if new_restore not in endpoint:
-              if old_restore not in endpoint: raise SystemExit('endpoint restore anchor missing')
-              endpoint = endpoint.replace(old_restore, new_restore, 1)
-          old_reset = """  if (currentAction === 'reset') {\n    let whop = null;\n    if (body.resync === true) whop = await requireWhopSession(request, env, admin);\n    const result = await resetWhopImporter(env, backupId(request, body), body);\n    let resync = null;\n    if (result.options.resync === true) {\n      if (result.scope !== 'source' || !result.experienceId) {\n        throw new HttpError(422, 'Automatic resync is available only when clearing one exact Whop source.');\n      }\n      if (!whop) whop = await requireWhopSession(request, env, admin);\n      const experience = await retrieveExperience(whop, result.experienceId);\n      await saveSourceDecision(env, experience, result.experienceId, 'approved');\n      const posts = await scanApprovedSource(env, whop, experience);\n      resync = {\n        experienceId: result.experienceId,\n        title: String(experience?.name || experience?.company?.title || result.experienceId),\n        posts: posts.length,\n        approved: posts.filter((post) => post.decision === 'approved').length,\n        pending: posts.filter((post) => post.decision === 'pending').length,\n        blocked: posts.filter((post) => post.decision === 'blocked').length,\n      };\n    }\n"""
-          new_reset = """  if (currentAction === 'reset') {\n    const id = backupId(request, body);\n    const resetContext = await verifiedWhopResetContext(env, id);\n    let whop = null;\n    let experience = null;\n    if (resetContext.options.resync === true) {\n      if (resetContext.scope !== 'source' || !resetContext.experienceId) {\n        throw new HttpError(422, 'Automatic resync is available only when clearing one exact Whop source.');\n      }\n      whop = await requireWhopSession(request, env, admin);\n      experience = await retrieveExperience(whop, resetContext.experienceId);\n    }\n    const result = await resetWhopImporter(env, id, body);\n    let resync = null;\n    if (result.options.resync === true) {\n      await saveSourceDecision(env, experience, result.experienceId, 'approved');\n      const posts = await scanApprovedSource(env, whop, experience);\n      resync = {\n        experienceId: result.experienceId,\n        title: String(experience?.name || experience?.company?.title || result.experienceId),\n        posts: posts.length,\n        approved: posts.filter((post) => post.decision === 'approved').length,\n        pending: posts.filter((post) => post.decision === 'pending').length,\n        blocked: posts.filter((post) => post.decision === 'blocked').length,\n      };\n    }\n"""
-          if new_reset not in endpoint:
-              if old_reset not in endpoint: raise SystemExit('endpoint preflight-resync anchor missing')
-              endpoint = endpoint.replace(old_reset, new_reset, 1)
+          old_resync = """    const result = await resetWhopImporter(env, id, body);\n    let resync = null;\n    if (result.options.resync === true) {\n      await saveSourceDecision(env, experience, result.experienceId, 'approved');\n      const posts = await scanApprovedSource(env, whop, experience);\n      resync = {\n        experienceId: result.experienceId,\n        title: String(experience?.name || experience?.company?.title || result.experienceId),\n        posts: posts.length,\n        approved: posts.filter((post) => post.decision === 'approved').length,\n        pending: posts.filter((post) => post.decision === 'pending').length,\n        blocked: posts.filter((post) => post.decision === 'blocked').length,\n      };\n    }\n    if (result.options.disconnectWhop === true) await disconnectWhop(request, env, admin);\n    return json({ ...result, resync });\n"""
+          new_resync = """    const result = await resetWhopImporter(env, id, body);\n    const warnings = [];\n    let resync = null;\n    if (result.options.resync === true) {\n      try {\n        await saveSourceDecision(env, experience, result.experienceId, 'approved');\n        const posts = await scanApprovedSource(env, whop, experience);\n        resync = {\n          complete: true,\n          experienceId: result.experienceId,\n          title: String(experience?.name || experience?.company?.title || result.experienceId),\n          posts: posts.length,\n          approved: posts.filter((post) => post.decision === 'approved').length,\n          pending: posts.filter((post) => post.decision === 'pending').length,\n          blocked: posts.filter((post) => post.decision === 'blocked').length,\n        };\n      } catch (error) {\n        const message = String(error?.message || 'Whop resync did not finish.').slice(0, 300);\n        resync = { complete: false, experienceId: result.experienceId, error: message };\n        warnings.push(`The verified reset completed, but fresh Whop resync did not finish: ${message} Restore from backup ${result.backup.backupId} or retry the source scan.`);\n      }\n    }\n    if (result.options.disconnectWhop === true) {\n      try {\n        await disconnectWhop(request, env, admin);\n      } catch (error) {\n        warnings.push(`The reset completed, but Whop disconnect did not finish: ${String(error?.message || 'retry disconnect from the Control Center.').slice(0, 240)}`);\n      }\n    }\n    return json({ ...result, resync, warnings });\n"""
+          if new_resync not in endpoint:
+              if old_resync not in endpoint: raise SystemExit('endpoint reset outcome anchor missing')
+              endpoint = endpoint.replace(old_resync, new_resync, 1)
           endpoint_path.write_text(endpoint)
 
           client_path = Path('assets/js/control-center-whop-backups.js')
           client = client_path.read_text()
-          old_actions = """        <div class=\"button-row\">\n          <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n          <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n          <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n        </div>\n"""
-          new_actions = """        ${backup.status === 'verified' ? `\n          <div class=\"button-row\">\n            <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n            <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n          </div>` : '<small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>'}\n"""
-          if new_actions not in client:
-              if old_actions not in client: raise SystemExit('client verified-actions anchor missing')
-              client = client.replace(old_actions, new_actions, 1)
-          old_count = "if (!quiet) show(`Backup history ready. ${state.overview.backups.length} verified backup(s) available.`, 'ok');"
-          new_count = "if (!quiet) show(`Backup history ready. ${state.overview.backups.filter((backup) => backup.status === 'verified').length} verified backup(s) available.`, 'ok');"
-          if new_count not in client:
-              if old_count not in client: raise SystemExit('client verified-count anchor missing')
-              client = client.replace(old_count, new_count, 1)
+          old_signature = "async function loadOverview({ quiet = false } = {}) {\n    if (state.busy) return;"
+          new_signature = "async function loadOverview({ quiet = false, force = false } = {}) {\n    if (state.busy && !force) return;"
+          if new_signature not in client:
+              if old_signature not in client: raise SystemExit('client force-refresh anchor missing')
+              client = client.replace(old_signature, new_signature, 1)
+          client = client.replace("loadOverview({ quiet: true })", "loadOverview({ quiet: true, force: true })")
+          old_message = """    show(\n      `Reset complete after verified backup ${created.backup.backupId}. Removed ${result.deleted.guides} guide(s), ${result.deleted.posts} post snapshot(s), and ${result.deleted.sources} source record(s).${result.resync ? ` Fresh resync found ${result.resync.posts} current post(s).` : ''}`,\n      'ok',\n    );\n"""
+          new_message = """    const warning = result.resync?.complete === false || (result.warnings || []).length > 0;\n    const resyncCopy = result.resync?.complete === true\n      ? ` Fresh resync found ${result.resync.posts} current post(s).`\n      : result.resync?.complete === false\n        ? ' The reset succeeded, but resync needs attention; the verified backup remains restorable.'\n        : '';\n    const warningCopy = (result.warnings || []).length ? ` ${result.warnings.join(' ')}` : '';\n    show(\n      `Reset complete after verified backup ${created.backup.backupId}. Removed ${result.deleted.guides} guide(s), ${result.deleted.posts} post snapshot(s), and ${result.deleted.sources} source record(s).${resyncCopy}${warningCopy}`,\n      warning ? 'warning' : 'ok',\n    );\n"""
+          if new_message not in client:
+              if old_message not in client: raise SystemExit('client reset-result anchor missing')
+              client = client.replace(old_message, new_message, 1)
           client_path.write_text(client)
 
           audit_path = Path('tools/audit-whop-backups.mjs')
           audit = audit_path.read_text()
-          anchor = """assert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'), 'Reset can delete work added after the backup.');\n"""
-          additions = anchor + """assert.ok(service.includes('stableScope.contentChecksum !== snapshot.contentChecksum') && service.includes("backup_scope_changed_during_create"), 'A backup can become verified after its source changes during snapshot creation.');\nassert.ok(service.includes("row.owner_session_id || ''") && service.includes('owner_session_id: String(ownerSessionId'), 'Backup signatures are not bound to the owner session.');\nassert.ok(service.includes('const MAX_BACKUP_BYTES = 30_000_000'), 'Backup exports can exceed a safe in-memory Workers payload.');\nassert.ok(service.includes('export async function verifiedWhopResetContext'), 'The reset endpoint cannot preflight stored resync options before deletion.');\n"""
-          if 'backup_scope_changed_during_create' not in audit:
-              if anchor not in audit: raise SystemExit('audit backup-hardening anchor missing')
-              audit = audit.replace(anchor, additions, 1)
-          endpoint_anchor = """assert.ok(endpoint.includes(\"currentAction === 'restore'\") && endpoint.includes('restoreWhopImportBackup'), 'Offline restore endpoint is missing.');\n"""
-          endpoint_add = endpoint_anchor + """assert.ok(endpoint.indexOf('verifiedWhopResetContext(env, id)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'Reset does not preflight its stored resync scope before deletion.');\nassert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'), 'The exact resync source is not proven readable before deletion.');\nassert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"), 'Interrupted restore does not explain that the verified backup is safe to retry.');\nassert.ok(endpoint.includes('JSON.stringify(payload)') && !endpoint.includes('JSON.stringify(payload, null, 2)'), 'Backup download wastes Workers memory on pretty-printed JSON.');\n"""
-          if 'verifiedWhopResetContext(env, id)' not in audit:
-              if endpoint_anchor not in audit: raise SystemExit('audit endpoint-hardening anchor missing')
+          posts_anchor = """assert.ok(posts.includes('AND stale_at IS NULL'), 'Saved-post loading still returns stale Whop rows.');\n"""
+          posts_add = posts_anchor + """assert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'), 'Fresh scans do not reconnect preserved published guides to their restored source keys.');\nassert.ok(service.includes('export async function reattachPreservedWhopGuides') && service.includes("guides.source_key IS NULL"), 'Published-guide reattachment service is missing.');\n"""
+          if 'Fresh scans do not reconnect preserved published guides' not in audit:
+              if posts_anchor not in audit: raise SystemExit('audit reattach anchor missing')
+              audit = audit.replace(posts_anchor, posts_add, 1)
+          endpoint_anchor = """assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"), 'Interrupted restore does not explain that the verified backup is safe to retry.');\n"""
+          endpoint_add = endpoint_anchor + """assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish') && endpoint.includes('warnings'), 'A post-reset resync failure can hide that deletion already completed.');\nassert.ok(endpoint.includes('The reset completed, but Whop disconnect did not finish'), 'A post-reset disconnect failure can hide a completed reset.');\n"""
+          if 'post-reset resync failure' not in audit:
+              if endpoint_anchor not in audit: raise SystemExit('audit reset outcome anchor missing')
               audit = audit.replace(endpoint_anchor, endpoint_add, 1)
-          client_anchor = """assert.ok(client.includes('Download JSON') && client.includes('Restore verified backup'), 'Backup history lacks download or restore actions.');\n"""
-          client_add = client_anchor + """assert.ok(client.includes("backup.status === 'verified'") && client.includes('incomplete backup cannot be downloaded'), 'Failed backups still expose destructive or recovery actions.');\n"""
-          if 'incomplete backup cannot be downloaded' not in audit:
-              if client_anchor not in audit: raise SystemExit('audit client-hardening anchor missing')
+          client_anchor = """assert.ok(client.includes("backup.status === 'verified'") && client.includes('incomplete backup cannot be downloaded'), 'Failed backups still expose destructive or recovery actions.');\n"""
+          client_add = client_anchor + """assert.ok(client.includes('force = false') && client.includes('quiet: true, force: true'), 'Backup history cannot refresh while a protected action is still busy.');\nassert.ok(client.includes("warning ? 'warning' : 'ok'") && client.includes('The reset succeeded, but resync needs attention'), 'The UI can misreport a completed reset as a total failure when resync is interrupted.');\n"""
+          if 'protected action is still busy' not in audit:
+              if client_anchor not in audit: raise SystemExit('audit client refresh anchor missing')
               audit = audit.replace(client_anchor, client_add, 1)
           audit_path.write_text(audit)
 
           task_path = Path('ACTIVE_TASK.md')
           task = task_path.read_text()
-          marker = '- Current-state checksum comparison immediately before deletion so newer work forces a fresh backup.\n'
-          extra = ('- Re-check the scope after snapshot persistence so concurrent changes prevent the backup from becoming verified.\n'
-                   '- Resolve and authorize the exact Whop source before any clear-and-resync deletion begins.\n'
-                   '- Bind backup signatures to the owner session, keep incomplete backups actionless, cap in-memory exports at 30 MB, and make interrupted restore explicitly retry-safe.\n')
-          if 'Re-check the scope after snapshot persistence' not in task:
-              if marker not in task: raise SystemExit('active-task hardening anchor missing')
+          marker = '- Verified backups pin R2 objects during media cleanup.\n'
+          extra = ('- Reattach preserved published guides to fresh post source keys after any successful scan so future imports update instead of duplicate.\n'
+                   '- Report reset success independently from optional resync/disconnect failures, with the verified recovery backup kept actionable.\n'
+                   '- Force backup history to refresh after protected actions even while the operation guard is active.\n')
+          if 'Reattach preserved published guides' not in task:
+              if marker not in task: raise SystemExit('active task final-safety anchor missing')
               task = task.replace(marker, marker + extra, 1)
           task_path.write_text(task)
           PY
@@ -118,18 +105,19 @@ jobs:
         run: |
           node --check functions/_lib/whop-backups.js
           node --check functions/api/whop-backups.js
+          node --check functions/_lib/posts.js
           node --check assets/js/control-center-whop-backups.js
           node tools/audit-whop-backups.mjs
       - name: Run full Node 22 build
         run: npm run build
-      - name: Commit validated hardening
+      - name: Commit validated final safety
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ACTIVE_TASK.md functions/_lib/whop-backups.js functions/api/whop-backups.js assets/js/control-center-whop-backups.js tools/audit-whop-backups.mjs
+          git add ACTIVE_TASK.md functions/_lib/whop-backups.js functions/api/whop-backups.js functions/_lib/posts.js assets/js/control-center-whop-backups.js tools/audit-whop-backups.mjs
           if git diff --cached --quiet; then
-            echo "No hardening changes required"
+            echo "No final safety changes required"
             exit 0
           fi
-          git commit -m "Harden verified Whop reset and offline restore"
+          git commit -m "Keep Whop reset outcomes and preserved guides truthful"
           git push
