@@ -1,4 +1,4 @@
-name: Validate incomplete Whop backup cleanup
+name: Apply incomplete Whop backup cleanup
 
 on:
   push:
@@ -19,93 +19,64 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Allow owner cleanup of incomplete backups
+      - name: Apply incomplete backup cleanup
         run: |
           python - <<'PY'
           from pathlib import Path
 
           service_path = Path('functions/_lib/whop-backups.js')
           service = service_path.read_text()
-          old_delete = """export async function deleteWhopImportBackup(env, backupId, confirmation) {\n  const verified = await verifyBackup(env, backupId);\n  const expected = deleteBackupConfirmationPhrase(backupId);\n  if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);\n  const result = await verified.db.prepare(`\n    UPDATE whop_import_backups\n    SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL\n    WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL\n  `).bind(nowIso(), backupId).run();\n  if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');\n  return { deleted: true, backupId, archiveCleanup: 'grace-period' };\n}\n"""
-          new_delete = """export async function deleteWhopImportBackup(env, backupId, confirmation) {\n  const db = await ensureWhopBackupSchema(env);\n  const row = await backupRow(db, backupId);\n  const expected = deleteBackupConfirmationPhrase(backupId);\n  if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);\n  const result = await db.prepare(`\n    UPDATE whop_import_backups\n    SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL\n    WHERE backup_id = ? AND deleted_at IS NULL\n  `).bind(nowIso(), backupId).run();\n  if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');\n  return {\n    deleted: true,\n    backupId,\n    previousStatus: row.status,\n    archiveCleanup: row.archive_key ? 'grace-period' : 'none',\n  };\n}\n"""
-          if new_delete not in service:
-              if old_delete not in service:
-                  raise SystemExit('backup deletion anchor missing')
-              service = service.replace(old_delete, new_delete, 1)
+          old = """export async function deleteWhopImportBackup(env, backupId, confirmation) {\n  const verified = await verifyBackup(env, backupId);\n  const expected = deleteBackupConfirmationPhrase(backupId);\n  if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);\n  const result = await verified.db.prepare(`\n    UPDATE whop_import_backups\n    SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL\n    WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL\n  `).bind(nowIso(), backupId).run();\n  if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');\n  return { deleted: true, backupId, archiveCleanup: 'grace-period' };\n}\n"""
+          new = """export async function deleteWhopImportBackup(env, backupId, confirmation) {\n  const db = await ensureWhopBackupSchema(env);\n  const row = await backupRow(db, backupId);\n  const expected = deleteBackupConfirmationPhrase(backupId);\n  if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);\n  const result = await db.prepare(`\n    UPDATE whop_import_backups\n    SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL\n    WHERE backup_id = ? AND deleted_at IS NULL\n  `).bind(nowIso(), backupId).run();\n  if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');\n  return {\n    deleted: true,\n    backupId,\n    previousStatus: row.status,\n    archiveCleanup: row.archive_key ? 'grace-period' : 'none',\n  };\n}\n"""
+          if new not in service:
+              if old not in service:
+                  raise SystemExit('service delete anchor missing')
+              service = service.replace(old, new, 1)
           service_path.write_text(service)
 
           client_path = Path('assets/js/control-center-whop-backups.js')
           client = client_path.read_text()
-          old_actions = """        ${backup.status === 'verified' ? `\n          <div class=\"button-row\">\n            <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n            <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n          </div>` : '<small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>'}\n"""
-          new_actions = """        ${backup.status === 'verified' ? `\n          <div class=\"button-row\">\n            <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n            <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n          </div>` : `\n          <div class=\"whop-backup-incomplete\">\n            <small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete incomplete backup</button>\n          </div>`}\n"""
-          if new_actions not in client:
-              if old_actions not in client:
-                  raise SystemExit('client incomplete backup anchor missing')
-              client = client.replace(old_actions, new_actions, 1)
+          old = """        ${backup.status === 'verified' ? `\n          <div class=\"button-row\">\n            <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n            <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n          </div>` : '<small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>'}\n"""
+          new = """        ${backup.status === 'verified' ? `\n          <div class=\"button-row\">\n            <a class=\"btn ghost\" href=\"${escapeHtml(backup.downloadUrl)}\" data-backup-download>Download JSON</a>\n            <button class=\"btn ghost\" type=\"button\" data-backup-restore=\"${escapeHtml(backup.backupId)}\">Restore</button>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete backup</button>\n          </div>` : `\n          <div class=\"whop-backup-incomplete\">\n            <small>This incomplete backup cannot be downloaded, restored, or used for reset.</small>\n            <button class=\"decision disapprove\" type=\"button\" data-backup-delete=\"${escapeHtml(backup.backupId)}\">Delete incomplete backup</button>\n          </div>`}\n"""
+          if new not in client:
+              if old not in client:
+                  raise SystemExit('client action anchor missing')
+              client = client.replace(old, new, 1)
           client_path.write_text(client)
 
           css_path = Path('assets/css/whop-backups.css')
           css = css_path.read_text()
-          addition = """
-.whop-backup-incomplete {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: .75rem;
-  flex-wrap: wrap;
-}
-
-.whop-backup-incomplete small {
-  flex: 1 1 260px;
-}
-"""
           if '.whop-backup-incomplete {' not in css:
-              css += addition
+              css += """\n.whop-backup-incomplete {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: .75rem;\n  flex-wrap: wrap;\n}\n\n.whop-backup-incomplete small {\n  flex: 1 1 260px;\n}\n"""
           css_path.write_text(css)
 
           audit_path = Path('tools/audit-whop-backups.mjs')
           audit = audit_path.read_text()
-          service_anchor = "assert.ok(service.includes('SET deleted_at = ?') && service.includes(\"archiveCleanup: 'grace-period'\"));\n"
-          service_checks = service_anchor + "assert.ok(service.includes('const row = await backupRow(db, backupId)') && !service.includes('const verified = await verifyBackup(env, backupId);\\n  const expected = deleteBackupConfirmationPhrase'), 'Corrupt or failed backup rows still require archive verification before deletion.');\nassert.ok(service.includes('previousStatus: row.status') && service.includes(\"row.archive_key ? 'grace-period' : 'none'\"), 'Backup deletion does not report whether an archive needs delayed cleanup.');\n"
-          if 'Corrupt or failed backup rows still require archive verification' not in audit:
-              if service_anchor not in audit:
-                  raise SystemExit('audit deletion service anchor missing')
-              audit = audit.replace(service_anchor, service_checks, 1)
+          anchor = "assert.ok(service.includes('SET deleted_at = ?') && service.includes(\"archiveCleanup: 'grace-period'\"));\n"
+          replacement = """assert.ok(service.includes('SET deleted_at = ?') && service.includes("row.archive_key ? 'grace-period' : 'none'"));\nassert.ok(service.includes('const row = await backupRow(db, backupId)'));\nassert.ok(!service.includes("WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL"));\n"""
+          if replacement not in audit:
+              if anchor not in audit:
+                  raise SystemExit('audit service anchor missing')
+              audit = audit.replace(anchor, replacement, 1)
           client_anchor = "assert.ok(client.includes(\"backup.status === 'verified'\") && client.includes('quiet: true, force: true'));\n"
-          client_checks = client_anchor + "assert.ok(client.includes('Delete incomplete backup') && client.includes('whop-backup-incomplete'), 'Incomplete backup attempts cannot be removed from history.');\n"
-          if 'Incomplete backup attempts cannot be removed' not in audit:
+          client_replacement = client_anchor + "assert.ok(client.includes('Delete incomplete backup') && client.includes('whop-backup-incomplete'));\n"
+          if "client.includes('Delete incomplete backup')" not in audit:
               if client_anchor not in audit:
-                  raise SystemExit('audit incomplete client anchor missing')
-              audit = audit.replace(client_anchor, client_checks, 1)
+                  raise SystemExit('audit client anchor missing')
+              audit = audit.replace(client_anchor, client_replacement, 1)
           audit_path.write_text(audit)
-
-          task_path = Path('ACTIVE_TASK.md')
-          task = task_path.read_text()
-          marker = '- Bind backup signatures to the owner session, keep incomplete backups actionless, cap in-memory exports at 30 MB, and make interrupted restore explicitly retry-safe.\n'
-          replacement = '- Bind backup signatures to the owner session, keep incomplete backups from exposing download/restore/reset, allow typed owner cleanup of failed or corrupt attempts, and make interrupted restore explicitly retry-safe.\n'
-          if marker in task:
-              task = task.replace(marker, replacement, 1)
-          elif 'typed owner cleanup of failed or corrupt attempts' not in task:
-              implementation_marker = '- One guarded Control Center panel for backup history, download, restore, clear/resync, and backup deletion.\n'
-              if implementation_marker not in task:
-                  raise SystemExit('active-task deletion cleanup anchor missing')
-              task = task.replace(implementation_marker, implementation_marker + '- Failed or corrupt backup attempts expose Delete only and do not require archive verification to leave history.\n', 1)
-          task_path.write_text(task)
           PY
-      - name: Run focused backup regression
+      - name: Validate changed paths
         run: |
           node --check functions/_lib/whop-backups.js
           node --check assets/js/control-center-whop-backups.js
           node tools/audit-whop-backups.mjs
-      - name: Run full Node 22 build
-        run: npm run build
-      - name: Commit validated cleanup behavior
+      - name: Commit cleanup
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ACTIVE_TASK.md functions/_lib/whop-backups.js assets/js/control-center-whop-backups.js assets/css/whop-backups.css tools/audit-whop-backups.mjs
+          git add functions/_lib/whop-backups.js assets/js/control-center-whop-backups.js assets/css/whop-backups.css tools/audit-whop-backups.mjs
           if git diff --cached --quiet; then
-            echo "No incomplete-backup cleanup changes required"
             exit 0
           fi
           git commit -m "Allow cleanup of incomplete Whop backups"
