@@ -1243,6 +1243,14 @@
     root.dispatchEvent(new CustomEvent('sniperplug:guide-loaded', { detail: { id: guide.id, mode } }));
   }
 
+  root.addEventListener('sniperplug:guide-media-repaired', (event) => {
+    const guide = event.detail?.guide;
+    if (!guide || typeof guide !== 'object') return;
+    updateGuideListItem(guide);
+    renderGuideEditor(guide, 'saved');
+    event.detail.handled = true;
+  });
+
   async function selectGuide(id) {
     const requestToken = ++state.guideRequestToken;
     const numericId = Number(id);

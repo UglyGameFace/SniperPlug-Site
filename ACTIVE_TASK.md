@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active.** The first false-success guard from PR #14 is merged, but production retesting showed the editor still displayed the same old warning after the action. PR #15 adds exact deployment/runtime diagnostics and puts the result beside the repair button instead of only at the top of the Control Center. Branch validation is clean; production deployment and the owner’s exact-media retest remain.
+**Active.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypasses the canonical saved-guide renderer, marks the editor dirty, and leaves publish/attachment controls stale. Branch `fix/whop-media-repair-state-sync` routes repaired guides through the existing saved-guide path before production retesting.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -13,6 +13,8 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The browser discarded structured API error details, including the exact unresolved media reason.
 - The repair action was restricted to old storage-related warning text and could disappear after the server replaced that warning with another media-copy failure.
 - The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.
+- PR #15's `applyGuide()` dispatched an artificial `input` event after mutating fields directly, which made draft safety report unsaved changes even though the server had already saved the guide.
+- The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.
 
 ## Implemented changes on PR #15
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
@@ -23,6 +25,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - Updated the editor immediately from the newest server guide on both success and incomplete repair, preventing obsolete warning text from remaining on screen.
 - Kept Repair media available for any generated Media or Attachment review warning.
 - Added targeted regression and syntax checks for the server and browser repair paths.
+- Route every server-confirmed repair result through `updateGuideListItem()` and `renderGuideEditor(guide, 'saved')`, reusing the canonical list, derived-control, `sniperplug:guide-loaded`, and clean-snapshot path.
+- Remove the direct field mutation and synthetic `input` event that falsely dirtied the editor.
+- Fail visibly instead of silently applying a partial client state if the canonical renderer is unavailable.
 
 ## Validation
 - [x] Real editor placement and event path inspected.
@@ -32,6 +37,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Full Node 22 build and regression suite pass on the branch (workflow run #815).
 - [x] PR is mergeable with no review threads or conflicting duplicate implementation path.
 - [x] Changed-file scope and cleanup inspection pass.
+- [ ] Canonical repair-state regression and JavaScript syntax checks pass on the follow-up branch.
+- [ ] Full Node 22 build passes on the follow-up branch.
+- [ ] Temporary patch workflow is removed before review/merge.
 - [ ] Cloudflare production deployment contains the merged PR #15 commit.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.
 - [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.

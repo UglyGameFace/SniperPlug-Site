@@ -184,18 +184,13 @@
   }
 
   function applyGuide(guide) {
-    if (!guide || typeof guide !== 'object') return;
-    if (typeof guide.body === 'string') {
-      bodyField.value = guide.body;
-      bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+    if (!guide || typeof guide !== 'object') return false;
+    const detail = { guide, handled: false };
+    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail }));
+    if (!detail.handled) {
+      show('SniperPlug received the repaired guide but could not refresh the editor safely. Reload this page before making more changes.', 'error');
     }
-    const title = editor.elements.namedItem('title');
-    const description = editor.elements.namedItem('description');
-    const category = editor.elements.namedItem('category');
-    if (title instanceof HTMLInputElement && typeof guide.title === 'string') title.value = guide.title;
-    if (description instanceof HTMLTextAreaElement && typeof guide.description === 'string') description.value = guide.description;
-    if (category instanceof HTMLSelectElement && typeof guide.category === 'string') category.value = guide.category;
-    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail: { guide } }));
+    return detail.handled;
   }
 
   async function request(body) {
