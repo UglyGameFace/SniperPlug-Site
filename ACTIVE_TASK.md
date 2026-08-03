@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active — merged; exact production media retest pending.** PR #16 is squash-merged at `28b1047cb96f5abe579f79ddcaecca9c16379866`. Implementation, focused regression, full Node 22 validation, review repair, cleanup, conflict inspection, and post-merge production privacy checks are complete. The active task remains locked until the exact Whop guide reports its live Pages identity and either repairs the media or exposes the remaining source, size, storage, or runtime blocker.
+**Active — underlying R2 upload repair in progress.** PR #16 fixed result visibility and editor synchronization, but the exact production retest proved the underlying uploader still wrapped Whop response bodies in a generic `TransformStream`. That stripped the runtime-known length and caused R2 to reject every affected image before storage. Branch `fix/whop-r2-known-length-upload` repairs the actual upload body path before another owner retest.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -17,6 +17,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.
 - The first PR #16 implementation allowed the fallback reload warning to be overwritten by an unconditional success message.
 - The first PR #16 event listener marked incomplete guide payloads handled even when `renderGuideEditor()` returned without applying them.
+- The production screenshots for `IMG_7082.jpeg` and `image.png` still show `Provided readable stream must have a known length`, proving the media bytes never reached R2.
+- `mirrorWhopMedia()` passed `response.body.pipeThrough(new TransformStream(...))` into `R2Bucket.put()`. The wrapper removed the response body's fixed-length identity even when Whop supplied `Content-Length`.
+- Media enhancement copies files sequentially, so buffering only unknown-length files under the existing 50 MB ceiling does not create unbounded per-request concurrency.
 
 ## Implemented changes
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
@@ -32,6 +35,10 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - Fail visibly instead of silently applying a partial client state if the canonical renderer is unavailable.
 - Make `renderGuideEditor()` return explicit applied/not-applied truth and acknowledge the event only after a successful render and list refresh.
 - Preserve the reload-safety error instead of overwriting it with success, including incomplete-repair responses that return a newer guide.
+- Send known-length Whop fetch bodies to R2 untouched so Workers preserves their runtime fixed-length metadata.
+- Convert only unknown-length/chunked responses into a byte-capped fixed-size `Blob` before `R2Bucket.put()`.
+- Use the R2 write result as the authoritative stored size, reject null or oversized writes, and preserve reservation rollback/deletion behavior.
+- Add regression coverage for known-length identity preservation, chunked Blob fallback, and both declared and streamed oversize rejection.
 
 ## Validation
 - [x] Real editor placement and event path inspected.
@@ -50,6 +57,9 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] PR #16 was mergeable, zero commits behind `main`, and squash-merged.
 - [x] Merge commit: `28b1047cb96f5abe579f79ddcaecca9c16379866`.
 - [x] Post-merge production privacy workflow confirmed `sniperplug.pages.dev` returns the owner lock and the custom domain blocks anonymous guide access.
+- [ ] Focused R2 hard-free/media upload regression passes on the uploader-fix branch.
+- [ ] Recovery-media regression and full Node 22 build pass on the uploader-fix branch.
+- [ ] Uploader-fix PR review, cleanup, merge, and production deployment pass.
 - [ ] Live repair result reports the active Pages branch/commit containing merge `28b1047c`.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.
 - [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.

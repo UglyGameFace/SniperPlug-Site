@@ -13,6 +13,7 @@ import {
   validMediaStorageKey,
 } from '../functions/_lib/media-storage.js';
 import { onRequest as serveMedia } from '../functions/media/[key].js';
+import { r2UploadValue } from '../functions/_lib/media.js';
 
 const key = 'whop-0123456789abcdef0123456789abcdef-proof.mp4';
 assert.equal(validMediaStorageKey(key), key);
@@ -53,6 +54,43 @@ assert.equal(mediaStorageSnapshot({ copies_this_month: MAX_MEDIA_COPIES_PER_MONT
 assert.equal(mediaStorageSnapshot({ copies_today: MAX_MEDIA_COPIES_PER_DAY }, true).stopReason, 'daily-copy-cap');
 assert.equal(mediaStorageSnapshot({ origin_reads_today: MAX_MEDIA_ORIGIN_READS_PER_DAY }, true).stopReason, 'daily-origin-read-cap');
 assert.equal(mediaStorageSnapshot({}, false).connected, false);
+
+const knownResponse = new Response(new Uint8Array([1, 2, 3]), {
+  headers: { 'content-length': '3', 'content-type': 'image/jpeg' },
+});
+const knownBody = knownResponse.body;
+const knownUpload = await r2UploadValue(knownResponse, 'image/jpeg', 8);
+assert.equal(knownUpload.mode, 'response-body');
+assert.equal(knownUpload.value, knownBody, 'Known-length fetch bodies must reach R2 untouched so Workers preserves fixed-length metadata.');
+assert.equal(knownUpload.size, 3);
+
+const chunkedResponse = new Response(new ReadableStream({
+  start(controller) {
+    controller.enqueue(new Uint8Array([4, 5]));
+    controller.enqueue(new Uint8Array([6, 7]));
+    controller.close();
+  },
+}), { headers: { 'content-type': 'image/png' } });
+const chunkedUpload = await r2UploadValue(chunkedResponse, 'image/png', 8);
+assert.equal(chunkedUpload.mode, 'buffered-blob');
+assert.ok(chunkedUpload.value instanceof Blob, 'Unknown-length media must become a fixed-size Blob before R2.put.');
+assert.equal(chunkedUpload.size, 4);
+assert.deepEqual([...new Uint8Array(await chunkedUpload.value.arrayBuffer())], [4, 5, 6, 7]);
+
+await assert.rejects(
+  () => r2UploadValue(new Response(new Uint8Array([1]), { headers: { 'content-length': '9' } }), 'image/jpeg', 8),
+  /larger than the 50 MB automatic-copy limit/i,
+);
+await assert.rejects(
+  () => r2UploadValue(new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array([1, 2]));
+      controller.enqueue(new Uint8Array([3, 4]));
+      controller.close();
+    },
+  })), 'application/octet-stream', 3),
+  /larger than the 50 MB automatic-copy limit/i,
+);
 
 class FakeStatement {
   constructor(db, sql) {
@@ -293,6 +331,7 @@ try {
 
 console.log('\nSNIPERPLUG R2 HARD-FREE TESTS PASSED\n');
 console.log('✓ Private-media copying stops above 50 MB per object.');
+console.log('✓ Known-length Whop response bodies and unknown-length fixed-size Blob fallbacks are both accepted safely by R2.');
 console.log('✓ Storage, object-count, daily-copy, and monthly-copy ceilings stop before billable R2/D1 usage.');
 console.log('✓ Media references are deduplicated and rejected-guide media enters delayed cleanup.');
 console.log('✓ Owner authentication runs before the internal edge cache and every user-facing response remains private/no-store.');
