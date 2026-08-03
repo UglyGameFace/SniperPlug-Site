@@ -117,23 +117,32 @@
   const root = document.querySelector('[data-control-root]');
   const editor = document.querySelector('[data-draft-editor]');
   const bodyField = editor instanceof HTMLFormElement ? editor.elements.namedItem('body') : null;
-  const status = document.querySelector('[data-global-status]');
+  const globalStatus = document.querySelector('[data-global-status]');
   if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(bodyField instanceof HTMLTextAreaElement)) return;
 
   const actions = editor.querySelector('.editor-actions');
+  if (!(actions instanceof HTMLElement)) return;
+
+  const inlineStatus = document.createElement('div');
+  inlineStatus.className = 'control-status media-repair-status';
+  inlineStatus.dataset.mediaRepairStatus = '';
+  inlineStatus.setAttribute('role', 'status');
+  inlineStatus.setAttribute('aria-live', 'polite');
+  inlineStatus.hidden = true;
+  actions.before(inlineStatus);
+
   const repair = document.createElement('button');
   repair.type = 'button';
   repair.className = 'btn ghost';
   repair.dataset.repairGuideMedia = '';
   repair.textContent = 'Repair media from Whop';
   repair.hidden = true;
-  actions?.prepend(repair);
+  actions.prepend(repair);
 
   let busy = false;
 
   function staleMediaWarning() {
-    const body = String(bodyField.value || '');
-    return /Media review required[\s\S]{0,500}(media storage is not connected|SNIPERPLUG_MEDIA|could not verify its free media budget)/i.test(body);
+    return /(?:Media|Attachment) review required/i.test(String(bodyField.value || ''));
   }
 
   function sync() {
@@ -142,11 +151,51 @@
     if (!busy) repair.disabled = false;
   }
 
+  function setStatus(element, message, state) {
+    if (!(element instanceof HTMLElement)) return;
+    element.hidden = !message;
+    element.textContent = message;
+    element.dataset.type = state;
+  }
+
   function show(message, state = 'ok') {
-    if (!(status instanceof HTMLElement)) return;
-    status.hidden = !message;
-    status.textContent = message;
-    status.dataset.type = state;
+    setStatus(inlineStatus, message, state);
+    setStatus(globalStatus, message, state);
+  }
+
+  function deploymentSuffix(details) {
+    const deployment = details?.deployment || {};
+    const commit = String(deployment.commit || '').trim().slice(0, 8);
+    const branch = String(deployment.branch || '').trim();
+    if (!commit && !branch) return '';
+    return ` Active Pages deployment: ${branch ? `${branch} · ` : ''}${commit || 'commit unavailable'}.`;
+  }
+
+  function errorMessage(error) {
+    const details = error?.details || {};
+    const suffix = deploymentSuffix(details);
+    if (details.code === 'media_storage_not_connected') {
+      return `${error.message}${suffix}`;
+    }
+    if (details.code === 'media_repair_incomplete') {
+      return `${error.message}${suffix}`;
+    }
+    return `${error?.message || 'Media repair failed.'}${suffix}`;
+  }
+
+  function applyGuide(guide) {
+    if (!guide || typeof guide !== 'object') return;
+    if (typeof guide.body === 'string') {
+      bodyField.value = guide.body;
+      bodyField.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    const title = editor.elements.namedItem('title');
+    const description = editor.elements.namedItem('description');
+    const category = editor.elements.namedItem('category');
+    if (title instanceof HTMLInputElement && typeof guide.title === 'string') title.value = guide.title;
+    if (description instanceof HTMLTextAreaElement && typeof guide.description === 'string') description.value = guide.description;
+    if (category instanceof HTMLSelectElement && typeof guide.category === 'string') category.value = guide.category;
+    root.dispatchEvent(new CustomEvent('sniperplug:guide-media-repaired', { detail: { guide } }));
   }
 
   async function request(body) {
@@ -158,8 +207,21 @@
       body: JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Media repair failed (${response.status}).`);
+    if (!response.ok) {
+      const error = new Error(data.error || `Media repair failed (${response.status}).`);
+      error.status = response.status;
+      error.details = data.details || null;
+      throw error;
+    }
     return data;
+  }
+
+  function finish() {
+    busy = false;
+    repair.disabled = false;
+    repair.removeAttribute('aria-busy');
+    repair.textContent = 'Repair media from Whop';
+    sync();
   }
 
   repair.addEventListener('click', async (event) => {
@@ -174,23 +236,26 @@
     repair.disabled = true;
     repair.setAttribute('aria-busy', 'true');
     repair.textContent = 'Repairing media…';
-    show('Re-fetching the current Whop lesson and rebuilding its media section…', 'ok');
+    show('Checking this exact deployment, re-fetching Whop, and copying the current media into R2…', 'ok');
     try {
       const output = await request({ guideId: id, rightsConfirmed: true });
       if (!output?.guide) throw new Error('SniperPlug repaired the source but could not reload the guide.');
-      show('Media repaired from the current Whop source. Reloading the server-confirmed guide…', 'ok');
-      window.location.replace(`${window.location.pathname}?guide=${id}&mediaRepaired=${Date.now()}`);
+      applyGuide(output.guide);
+      const suffix = deploymentSuffix({ deployment: output.deployment });
+      show(`Media repaired. The guide now contains the server-confirmed media copy.${suffix}`, 'ok');
+      finish();
     } catch (error) {
-      show(error.message, 'error');
-      busy = false;
-      repair.disabled = false;
-      repair.removeAttribute('aria-busy');
-      repair.textContent = 'Repair media from Whop';
+      applyGuide(error?.details?.guide);
+      show(errorMessage(error), 'error');
+      finish();
     }
   });
 
   bodyField.addEventListener('input', sync);
-  root.addEventListener('sniperplug:guide-loaded', sync);
+  root.addEventListener('sniperplug:guide-loaded', () => {
+    inlineStatus.hidden = true;
+    sync();
+  });
   root.addEventListener('sniperplug:dashboard-refreshed', sync);
   new MutationObserver(sync).observe(editor, { attributes: true, attributeFilter: ['hidden'] });
   sync();
