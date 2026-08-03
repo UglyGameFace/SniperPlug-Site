@@ -1,0 +1,50 @@
+name: Apply Whop review test sync
+
+on:
+  push:
+    branches:
+      - fix/whop-media-repair-state-sync
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update stale review assertion
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/test-recovery-media-truth.mjs')
+          text = path.read_text()
+          old = "assert.ok(mediaRepairClient.includes('applyGuide(error?.details?.guide)'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');"
+          new = "assert.ok(mediaRepairClient.includes('const newestGuide = error?.details?.guide') && mediaRepairClient.includes('newestGuide ? applyGuide(newestGuide) : null'), 'The editor can keep displaying an obsolete warning after the server saved a newer failure reason.');"
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('stale review assertion anchor missing')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+      - name: Validate focused Whop regression
+        run: |
+          node --check tools/test-recovery-media-truth.mjs
+          node tools/test-recovery-media-truth.mjs
+      - name: Commit validated assertion sync
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tools/test-recovery-media-truth.mjs
+          if git diff --cached --quiet; then
+            echo "No assertion sync required"
+            exit 0
+          fi
+          git commit -m "Sync Whop repair regression with reviewed flow"
+          git push
