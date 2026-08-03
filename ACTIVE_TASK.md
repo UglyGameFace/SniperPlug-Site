@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypasses the canonical saved-guide renderer, marks the editor dirty, and leaves publish/attachment controls stale. Branch `fix/whop-media-repair-state-sync` routes repaired guides through the existing saved-guide path before production retesting.
+**Active.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. Branch `fix/whop-media-repair-state-sync` now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, and temporary-workflow cleanup are complete; PR review, production deployment, and the owner’s exact-media retest remain.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -16,7 +16,7 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - PR #15's `applyGuide()` dispatched an artificial `input` event after mutating fields directly, which made draft safety report unsaved changes even though the server had already saved the guide.
 - The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.
 
-## Implemented changes on PR #15
+## Implemented changes
 - Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
 - Missing-binding errors now say the active Function cannot see the binding, rather than incorrectly claiming the dashboard has no binding.
 - Incomplete repairs return the newest server-confirmed guide state and the exact unresolved reasons.
@@ -34,13 +34,15 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Existing repair endpoint, import path, media mirror path, binding guard, callers, and tests inspected.
 - [x] Inline status and structured diagnostics implemented.
 - [x] Regression assertions added.
-- [x] Full Node 22 build and regression suite pass on the branch (workflow run #815).
-- [x] PR is mergeable with no review threads or conflicting duplicate implementation path.
-- [x] Changed-file scope and cleanup inspection pass.
-- [ ] Canonical repair-state regression and JavaScript syntax checks pass on the follow-up branch.
-- [ ] Full Node 22 build passes on the follow-up branch.
-- [ ] Temporary patch workflow is removed before review/merge.
-- [ ] Cloudflare production deployment contains the merged PR #15 commit.
+- [x] Full Node 22 build and regression suite pass on PR #15 (workflow run #815).
+- [x] Canonical repair-state regression passes on the follow-up branch.
+- [x] `node --check` passes for both modified Control Center clients.
+- [x] Full Node 22 build passes on the follow-up branch before its implementation commit is pushed.
+- [x] Temporary patch workflow and trigger are removed from the final branch.
+- [x] Follow-up branch is based on current `main` with no open competing pull request.
+- [ ] Final changed-file, conflict, duplicate-path, and review-thread inspection passes.
+- [ ] Follow-up PR is merged.
+- [ ] Cloudflare production deployment contains the merged repair commit.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.
 - [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.
 
@@ -49,6 +51,7 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - The result identifies whether the active Function sees R2 and which Pages commit/branch handled the request.
 - A successful repair replaces the warning with the server-confirmed media Markdown immediately.
 - An incomplete repair shows the exact reason and newest saved guide state; it never reports success or appears inert.
+- Repaired server state refreshes the guide list, editor status, preview, publish controls, attachment resolution, and draft clean snapshot through the canonical renderer.
 - Targeted tests, full build, deployment validation, cleanup, and conflict inspection pass.
 
 ## Backlog
