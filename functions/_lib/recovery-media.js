@@ -69,6 +69,32 @@ export function recoveryMediaState(row = {}) {
   };
 }
 
+export function mediaRepairReview(row = {}) {
+  const attachmentState = safeJson(row.attachment_json || row.attachments, {});
+  const files = attachmentFiles(attachmentState);
+  const truth = recoveryMediaState(row);
+  const unresolvedFiles = files.filter((file) => {
+    const reason = String(file?.reviewReason || '').trim();
+    const url = String(file?.url || '').trim();
+    return Boolean(reason) || file?.durable !== true || !url;
+  });
+  const reasons = [...new Set(unresolvedFiles
+    .map((file) => String(file?.reviewReason || '').trim())
+    .filter(Boolean))];
+  const declaredReviewCount = Math.max(0, Number(attachmentState.reviewCount || 0));
+  const reviewCount = Math.max(
+    declaredReviewCount,
+    unresolvedFiles.length,
+    truth.reviewRequired ? 1 : 0,
+  );
+  return {
+    ...truth,
+    complete: !truth.reviewRequired,
+    reviewCount,
+    reasons,
+  };
+}
+
 export function whopRecoveryError(error, {
   experienceId = null,
   sourceKey = null,
