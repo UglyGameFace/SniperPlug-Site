@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. Branch `fix/whop-media-repair-state-sync` now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, and temporary-workflow cleanup are complete; PR review, production deployment, and the owner’s exact-media retest remain.
+**Active — merge and production retest pending.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. PR #16 now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, normal PR CI, review, conflict inspection, and temporary-workflow cleanup are complete.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -40,8 +40,11 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Full Node 22 build passes on the follow-up branch before its implementation commit is pushed.
 - [x] Temporary patch workflow and trigger are removed from the final branch.
 - [x] Follow-up branch is based on current `main` with no open competing pull request.
-- [ ] Final changed-file, conflict, duplicate-path, and review-thread inspection passes.
-- [ ] Follow-up PR is merged.
+- [x] Normal PR #16 `Verify SniperPlug` build and full regression suite pass (workflow run #820).
+- [x] Script load order proves the canonical renderer and draft lifecycle listeners load before the repair client.
+- [x] Final changed-file scope is limited to four task files; no duplicate listener or conflicting implementation path remains.
+- [x] PR #16 is mergeable, zero commits behind `main`, and Qodo recommends the event-bridge approach with no action-required finding.
+- [ ] PR #16 is squash-merged.
 - [ ] Cloudflare production deployment contains the merged repair commit.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.
 - [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.
