@@ -1,0 +1,145 @@
+name: Apply Whop OAuth canonical redirect repair
+
+on:
+  push:
+    branches:
+      - fix/whop-oauth-canonical-redirect
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply canonical redirect repair
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          whop_path = Path('functions/_lib/whop.js')
+          whop = whop_path.read_text()
+          old_config = """function config(request, env) {\n  const clientId = String(env?.WHOP_CLIENT_ID || '').trim();\n  const tokenSecret = String(env?.WHOP_TOKEN_SECRET || '').trim();\n  if (!clientId) throw new HttpError(503, 'WHOP_CLIENT_ID is not configured.');\n  if (!tokenSecret) throw new HttpError(503, 'WHOP_TOKEN_SECRET is not configured.');\n  const origin = new URL(request.url).origin;\n  const redirectUri = String(env?.WHOP_REDIRECT_URI || `${origin}/api/whop/oauth/callback`).trim();\n  const scopes = String(env?.WHOP_OAUTH_SCOPES || DEFAULT_SCOPES).trim();\n  return { clientId, tokenSecret, redirectUri, scopes };\n}\n"""
+          new_config = """const OAUTH_CALLBACK_PATH = '/api/whop/oauth/callback';\nconst PRODUCTION_OAUTH_ORIGIN = 'https://sniperplug.com';\nconst PREVIEW_OAUTH_ORIGIN = 'https://agent-whop-guide-importer.sniperplug.pages.dev';\nconst LOCAL_OAUTH_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);\n\nfunction callbackUrl(origin) {\n  return `${origin}${OAUTH_CALLBACK_PATH}`;\n}\n\nexport function resolveWhopRedirectUri(request, env = {}) {\n  const requestUrl = new URL(request.url);\n  const hostname = requestUrl.hostname.toLowerCase();\n  if (hostname === 'sniperplug.com' || hostname === 'www.sniperplug.com') {\n    return callbackUrl(PRODUCTION_OAUTH_ORIGIN);\n  }\n  if (hostname === 'agent-whop-guide-importer.sniperplug.pages.dev') {\n    return callbackUrl(PREVIEW_OAUTH_ORIGIN);\n  }\n  if (LOCAL_OAUTH_HOSTS.has(hostname)) {\n    const configured = String(env?.WHOP_REDIRECT_URI || '').trim();\n    if (!configured) return callbackUrl(requestUrl.origin);\n    let configuredUrl;\n    try {\n      configuredUrl = new URL(configured);\n    } catch {\n      throw new HttpError(503, 'WHOP_REDIRECT_URI must be an absolute localhost callback URL during local development.');\n    }\n    if (\n      !LOCAL_OAUTH_HOSTS.has(configuredUrl.hostname.toLowerCase())\n      || configuredUrl.pathname !== OAUTH_CALLBACK_PATH\n      || configuredUrl.search\n      || configuredUrl.hash\n    ) {\n      throw new HttpError(503, `Local WHOP_REDIRECT_URI must end exactly in ${OAUTH_CALLBACK_PATH}.`);\n    }\n    return configuredUrl.toString();\n  }\n  throw new HttpError(503, 'Whop OAuth is not available on this host. Open the canonical SniperPlug Control Center instead.', {\n    code: 'whop_oauth_unregistered_host',\n    host: hostname,\n    controlCenter: `${PRODUCTION_OAUTH_ORIGIN}/control-center/`,\n    expectedRedirectUri: callbackUrl(PRODUCTION_OAUTH_ORIGIN),\n  });\n}\n\nfunction config(request, env) {\n  const clientId = String(env?.WHOP_CLIENT_ID || '').trim();\n  const tokenSecret = String(env?.WHOP_TOKEN_SECRET || '').trim();\n  if (!clientId) throw new HttpError(503, 'WHOP_CLIENT_ID is not configured.');\n  if (!tokenSecret) throw new HttpError(503, 'WHOP_TOKEN_SECRET is not configured.');\n  const redirectUri = resolveWhopRedirectUri(request, env);\n  const scopes = String(env?.WHOP_OAUTH_SCOPES || DEFAULT_SCOPES).trim();\n  return { clientId, tokenSecret, redirectUri, scopes };\n}\n"""
+          if new_config not in whop:
+              if old_config not in whop:
+                  raise SystemExit('Whop config anchor missing')
+              whop = whop.replace(old_config, new_config, 1)
+              whop_path.write_text(whop)
+
+          control_path = Path('functions/api/control.js')
+          control = control_path.read_text()
+          callback_anchor = """async function oauthCallback(request, env) {\n  try {\n    await finishWhopOAuth(request, env);\n    return redirect(`${new URL(request.url).origin}/control-center/?whop=connected#whop-importer`);\n  } catch (error) {\n    const url = new URL('/control-center/', request.url);\n    url.searchParams.set('whop', 'error');\n    url.searchParams.set('message', String(error?.message || 'Whop login failed.').slice(0, 180));\n    url.hash = 'whop-importer';\n    return redirect(url.toString());\n  }\n}\n"""
+          start_helper = """async function oauthStart(request, env, admin) {\n  if (request.method !== 'GET') return methodNotAllowed(['GET']);\n  try {\n    return redirect(await beginWhopOAuth(request, env, admin));\n  } catch (error) {\n    const url = new URL('/control-center/', request.url);\n    url.searchParams.set('whop', 'error');\n    url.searchParams.set('message', String(error?.message || 'Whop login could not start.').slice(0, 180));\n    url.hash = 'whop-importer';\n    return redirect(url.toString());\n  }\n}\n\n"""
+          if start_helper not in control:
+              if callback_anchor not in control:
+                  raise SystemExit('OAuth callback anchor missing')
+              control = control.replace(callback_anchor, start_helper + callback_anchor, 1)
+          old_dispatch = """    if (currentAction === 'oauth-start') {\n      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);\n      return redirect(await beginWhopOAuth(context.request, context.env, admin));\n    }\n"""
+          new_dispatch = """    if (currentAction === 'oauth-start') return await oauthStart(context.request, context.env, admin);\n"""
+          if new_dispatch not in control:
+              if old_dispatch not in control:
+                  raise SystemExit('OAuth start dispatch anchor missing')
+              control = control.replace(old_dispatch, new_dispatch, 1)
+          control_path.write_text(control)
+
+          audit_path = Path('tools/audit-runtime-config.mjs')
+          audit = audit_path.read_text()
+          import_anchor = """import { fileURLToPath } from 'node:url';\n"""
+          import_line = import_anchor + "import { resolveWhopRedirectUri } from '../functions/_lib/whop.js';\n"
+          if "import { resolveWhopRedirectUri }" not in audit:
+              if import_anchor not in audit:
+                  raise SystemExit('Runtime audit import anchor missing')
+              audit = audit.replace(import_anchor, import_line, 1)
+          assertion_anchor = """assert.ok(existsSync(join(root, 'functions/api/whop/oauth/callback.js')), 'Origin-aware Whop OAuth callback route is missing.');\n"""
+          assertions = assertion_anchor + """assert.equal(\n  resolveWhopRedirectUri(new Request('https://sniperplug.com/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'http://localhost:8788/api/whop/oauth/callback' }),\n  'https://sniperplug.com/api/whop/oauth/callback',\n  'Production OAuth must ignore stale environment redirect overrides.',\n);\nassert.equal(\n  resolveWhopRedirectUri(new Request('https://www.sniperplug.com/api/control?action=oauth-start'), {}),\n  'https://sniperplug.com/api/whop/oauth/callback',\n  'The www host must use the canonical production callback.',\n);\nassert.equal(\n  resolveWhopRedirectUri(new Request('https://agent-whop-guide-importer.sniperplug.pages.dev/api/control?action=oauth-start'), {}),\n  'https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback',\n  'The stable preview host must use its exact registered callback.',\n);\nassert.equal(\n  resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), {}),\n  'http://localhost:8788/api/whop/oauth/callback',\n  'Local development must derive its callback from the local origin.',\n);\nassert.equal(\n  resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'http://127.0.0.1:8788/api/whop/oauth/callback' }),\n  'http://127.0.0.1:8788/api/whop/oauth/callback',\n  'A valid local-only callback override must remain available for development.',\n);\nassert.throws(\n  () => resolveWhopRedirectUri(new Request('https://sniperplug.pages.dev/api/control?action=oauth-start'), {}),\n  /not available on this host/i,\n  'Unregistered Pages hosts must fail locally instead of reaching Whop with an invalid redirect.',\n);\nassert.throws(\n  () => resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'https://evil.example/api/whop/oauth/callback' }),\n  /must end exactly|localhost callback/i,\n  'Local overrides must not permit an external callback host.',\n);\n"""
+          if 'Production OAuth must ignore stale environment redirect overrides' not in audit:
+              if assertion_anchor not in audit:
+                  raise SystemExit('Runtime audit assertion anchor missing')
+              audit = audit.replace(assertion_anchor, assertions, 1)
+          log_anchor = """console.log('✓ Preview and Production OAuth callbacks are explicit and documented.');\n"""
+          log_line = log_anchor + "console.log('✓ Production OAuth ignores stale redirect overrides and unknown hosts fail before contacting Whop.');\n"
+          if 'Production OAuth ignores stale redirect overrides' not in audit:
+              if log_anchor not in audit:
+                  raise SystemExit('Runtime audit log anchor missing')
+              audit = audit.replace(log_anchor, log_line, 1)
+          audit_path.write_text(audit)
+
+          docs_path = Path('docs/WHOP_IMPORTER.md')
+          docs = docs_path.read_text()
+          docs_anchor = """The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. The callback URL is derived from the current site origin through the dedicated `/api/whop/oauth/callback` route.\n"""
+          docs_replacement = """The repository ships the public Whop client ID and OAuth scopes through `wrangler.toml`. Production always uses the exact canonical callback `https://sniperplug.com/api/whop/oauth/callback`; the stable preview host uses its separately registered callback. A stale `WHOP_REDIRECT_URI` Cloudflare variable is intentionally ignored outside localhost so it cannot break production OAuth. Unknown Pages or custom hosts fail inside SniperPlug before contacting Whop.\n"""
+          if docs_replacement not in docs:
+              if docs_anchor not in docs:
+                  raise SystemExit('Whop docs callback anchor missing')
+              docs = docs.replace(docs_anchor, docs_replacement, 1)
+          callback_block = """Register both exact callback URLs in the Whop application:\n\n```text\nPreview:    https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback\nProduction: https://sniperplug.com/api/whop/oauth/callback\n```\n"""
+          callback_note = callback_block + "\nDo not add `www`, a trailing slash, a branch-preview URL, or the bare `sniperplug.pages.dev` host. Whop requires an exact redirect URI match. `WHOP_REDIRECT_URI` is only a local-development override and should not be configured as a Cloudflare Production or Preview variable.\n"
+          if 'Do not add `www`' not in docs:
+              if callback_block not in docs:
+                  raise SystemExit('Whop docs callback block missing')
+              docs = docs.replace(callback_block, callback_note, 1)
+          docs_path.write_text(docs)
+
+          task_path = Path('ACTIVE_TASK.md')
+          task = task_path.read_text()
+          task = task.replace(
+              '**Active — actual R2 uploader repaired and deployed; exact production retest pending.**',
+              '**Active — OAuth reconnect blocker repaired on follow-up branch; production retest pending.**'
+          )
+          if '**Active — OAuth reconnect blocker repaired on follow-up branch; production retest pending.**' not in task:
+              task = task.replace(
+                  '**Active — underlying R2 upload repair in progress.**',
+                  '**Active — OAuth reconnect blocker repaired on follow-up branch; production retest pending.**'
+              )
+          finding_anchor = "- Media enhancement copies files sequentially, so buffering only unknown-length files under the existing 50 MB ceiling does not create unbounded per-request concurrency.\n"
+          findings = "- The owner’s production reconnect reached Whop’s raw `redirect_uri is invalid` response.\n- `config()` preferred `WHOP_REDIRECT_URI` over the request host even though the production documentation says the callback is origin/canonical-host aware. A stale localhost or old Pages value could therefore break every production reconnect.\n- Whop requires each OAuth redirect URI to match an app whitelist entry exactly.\n"
+          if 'redirect_uri is invalid' not in task:
+              if finding_anchor in task:
+                  task = task.replace(finding_anchor, finding_anchor + findings)
+              else:
+                  task += '\n## OAuth reconnect finding\n' + findings
+          change_anchor = "- Add regression coverage for known-length identity preservation, chunked Blob fallback, and both declared and streamed oversize rejection.\n"
+          changes = "- Resolve production and stable-preview OAuth callbacks from an explicit canonical-host allowlist and ignore stale environment overrides outside localhost.\n- Reject unregistered hosts before redirecting to Whop and return start-up errors to the Control Center instead of a raw API response.\n- Add runtime regressions for production, www canonicalization, preview, localhost, stale overrides, external local overrides, and unknown Pages hosts.\n"
+          if 'canonical-host allowlist' not in task:
+              if change_anchor in task:
+                  task = task.replace(change_anchor, change_anchor + changes)
+              else:
+                  task += '\n## OAuth reconnect changes\n' + changes
+          validation_anchor = "- [ ] Owner retest returns the exact runtime result beside the selected guide.\n"
+          validation = "- [ ] Canonical OAuth redirect regression and full Node 22 build pass.\n- [ ] OAuth repair PR review, cleanup, merge, and Cloudflare deployment pass.\n- [ ] Production Connect Whop opens consent/callback without `redirect_uri is invalid`.\n"
+          if 'Canonical OAuth redirect regression' not in task:
+              if validation_anchor in task:
+                  task = task.replace(validation_anchor, validation + validation_anchor)
+              else:
+                  task += '\n## OAuth reconnect validation\n' + validation
+          task_path.write_text(task)
+          PY
+      - name: Validate OAuth and importer paths
+        run: |
+          node --check functions/_lib/whop.js
+          node --check functions/api/control.js
+          node --check tools/audit-runtime-config.mjs
+          node tools/audit-runtime-config.mjs
+          node tools/test-recovery-media-truth.mjs
+          node tools/test-media-hard-free.mjs
+      - name: Validate full Node 22 build
+        run: npm run build
+      - name: Commit validated OAuth repair
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md docs/WHOP_IMPORTER.md functions/_lib/whop.js functions/api/control.js tools/audit-runtime-config.mjs
+          if git diff --cached --quiet; then
+            echo "No OAuth repair changes required"
+            exit 0
+          fi
+          git commit -m "Keep Whop OAuth on canonical registered callbacks"
+          git push
