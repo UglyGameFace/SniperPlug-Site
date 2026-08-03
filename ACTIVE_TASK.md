@@ -4,7 +4,7 @@
 Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
 
 ## Status
-**Active — review repairs and production retest pending.** PR #15 is merged, but its review exposed one remaining correctness defect: applying the server-confirmed guide bypassed the canonical saved-guide renderer, marked the editor dirty, and left publish/attachment controls stale. PR #16 now routes repaired guides through the existing saved-guide path. Focused regression, JavaScript syntax, full Node 22 build, normal PR CI, review, conflict inspection, and temporary-workflow cleanup are complete.
+**Active — merged; exact production media retest pending.** PR #16 is squash-merged at `28b1047cb96f5abe579f79ddcaecca9c16379866`. Implementation, focused regression, full Node 22 validation, review repair, cleanup, conflict inspection, and post-merge production privacy checks are complete. The active task remains locked until the exact Whop guide reports its live Pages identity and either repairs the media or exposes the remaining source, size, storage, or runtime blocker.
 
 ## Confirmed findings
 - The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
@@ -37,21 +37,20 @@ Make **Repair media from Whop** repair the selected guide transparently and stop
 - [x] Real editor placement and event path inspected.
 - [x] Existing repair endpoint, import path, media mirror path, binding guard, callers, and tests inspected.
 - [x] Inline status and structured diagnostics implemented.
-- [x] Regression assertions added.
+- [x] Regression assertions added and synchronized with the reviewed execution path.
 - [x] Full Node 22 build and regression suite pass on PR #15 (workflow run #815).
 - [x] Canonical repair-state regression passes on the follow-up branch.
 - [x] `node --check` passes for both modified Control Center clients.
-- [x] Full Node 22 build passes on the follow-up branch before its implementation commit is pushed.
-- [x] Temporary patch workflow and trigger are removed from the final branch.
-- [x] Follow-up branch is based on current `main` with no open competing pull request.
-- [x] Normal PR #16 `Verify SniperPlug` build and full regression suite pass (workflow run #820).
 - [x] Script load order proves the canonical renderer and draft lifecycle listeners load before the repair client.
+- [x] Qodo findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.
+- [x] Focused Whop recovery-media regression passes after the review repairs.
+- [x] Final clean-head `Verify SniperPlug` full build and regression suite pass (workflow run #831).
+- [x] Temporary patch workflows and triggers are removed from the final branch.
 - [x] Final changed-file scope is limited to four task files; no duplicate listener or conflicting implementation path remains.
-- [x] PR #16 was mergeable and zero commits behind `main` before the final review pass.
-- [ ] Qodo review findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.
-- [ ] Focused regression, JavaScript syntax, and full Node 22 build pass after the review repairs.
-- [ ] PR #16 is squash-merged.
-- [ ] Cloudflare production deployment contains the merged repair commit.
+- [x] PR #16 was mergeable, zero commits behind `main`, and squash-merged.
+- [x] Merge commit: `28b1047cb96f5abe579f79ddcaecca9c16379866`.
+- [x] Post-merge production privacy workflow confirmed `sniperplug.pages.dev` returns the owner lock and the custom domain blocks anonymous guide access.
+- [ ] Live repair result reports the active Pages branch/commit containing merge `28b1047c`.
 - [ ] Owner retest returns the exact runtime result beside the selected guide.
 - [ ] The exact media item is copied successfully or its remaining source/size/runtime blocker is identified and addressed.
 
