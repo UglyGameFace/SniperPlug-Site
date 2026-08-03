@@ -36,7 +36,7 @@ assert.ok(page.includes('/assets/js/control-center-v2.js'), 'Consolidated fast i
 assert.ok(!page.includes('/assets/js/control-center.js') && !page.includes('/assets/js/control-center-performance.js') && !page.includes('/assets/js/control-center-density.js') && !page.includes('/assets/js/control-center-hardening.js') && !page.includes('/assets/js/bulk-publish.js'), 'Legacy runtimes can still attach duplicate handlers and observers.');
 assert.equal((runtime.match(/root\.addEventListener\('click'/g) || []).length, 1, 'Controls do not share one delegated click path.');
 assert.equal((runtime.match(/root\.addEventListener\('change'/g) || []).length, 1, 'Controls do not share one delegated change path.');
-assert.ok(runtime.includes('requestIdleCallback') && runtime.includes('appendRemaining') && runtime.includes('appendCount(Math.min(12'), 'Large content scans do not yield between render chunks.');
+assert.ok(runtime.includes('POST_PAGE_SIZE = 10') && runtime.includes("dataset.action = 'post-load-more'") && runtime.includes('state.postRenderLimit'), 'Large content scans do not stay behind explicit bounded pagination.');
 assert.ok(runtime.includes('contentVisibility') && runtime.includes('containIntrinsicSize'), 'Offscreen source and group cards lost their layout optimization.');
 assert.ok(!runtime.includes("card.dataset.type = post.contentType || 'forum';\n    card.style.contentVisibility"), 'Post review cards still use unstable mobile content-visibility.');
 assert.ok(runtime.includes('state.sourceCards') && runtime.includes('updateSourceDecision'), 'Source decisions still require full source-tree rerenders.');
@@ -46,7 +46,7 @@ assert.ok(runtime.includes('experienceIds: unique'), 'Bulk source decisions are 
 assert.equal((runtime.match(/source-decision/g) || []).length, 1, 'The source-decision browser path is duplicated.');
 assert.ok(!runtime.includes('MutationObserver') && !lifecycle.includes('MutationObserver'), 'Broad mutation observation can recreate input lag.');
 assert.ok(runtime.includes('requestAnimationFrame(filterSources)') && runtime.includes('requestAnimationFrame(filterGuides)'), 'Search filtering is not frame-coalesced.');
-assert.ok(runtime.includes('GUIDE_PAGE_SIZE = 60') && runtime.includes('filteredGuideIds') && runtime.includes('guide-load-more'), 'The review queue still renders every guide at once.');
+assert.ok(runtime.includes('GUIDE_PAGE_SIZE = 24') && runtime.includes('filteredGuideIds') && runtime.includes('guide-load-more'), 'The review queue still renders every guide at once.');
 assert.ok(runtime.includes('guide-detail&id=') && runtime.includes('state.guideDetails'), 'Exact guide bodies are not fetched lazily.');
 assert.ok(guides.includes('listAdminGuideSummaries') && guides.includes('adminGuide'), 'Dashboard guide summaries and on-demand detail loading are missing.');
 assert.ok(reconciliation.includes('importer_maintenance') && reconciliation.includes('15 * 60_000'), 'Expensive cleanup is not durably throttled across Worker cold starts.');

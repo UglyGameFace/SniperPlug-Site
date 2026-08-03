@@ -1,66 +1,72 @@
 # Active Task
 
 ## Task
-Issue #19 — Back up Whop imports before clear-and-resync.
+Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — PR #21 validated; merge, production deployment, and live recovery exercise pending.** Branch `feat/whop-backup-reset-restore` adds bounded signed R2 recovery archives, manifest-only D1 state, verified reset authorization, JSON-batched offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.
+**Active — backup engine merged/deployed; PR #22 mobile workflow repair under final validation.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`. Production build, private-guide privacy, affiliate-readiness, and retired-route checks passed. Live Samsung Internet testing then exposed a frozen, repetitive Control Center, so the same task remains open until PR #22 is deployed and the real backup/download/clear-resync/restore exercise succeeds.
 
 ## Confirmed findings
-- Reconnecting Whop replaces OAuth access but does not clear `whop_sources`, `whop_posts`, imported guides, course-video mappings, or R2 records.
-- Existing scans upserted current items but did not hide rows that disappeared from Whop.
-- Imported guides live separately from post snapshots, so clearing posts alone leaves old drafts visible.
-- The existing guide snapshot helper protects one in-flight save only; it is not persistent recovery and cannot survive lost Whop access.
-- Media cleanup previously considered only active draft/published guides, so a reset could eventually delete R2 objects unless verified backups pin them explicitly.
-- One D1 row or query per imported method would exceed Cloudflare Free-plan request limits for ordinary large sources.
-- An unconditional migration `ALTER TABLE` would fail when runtime repair had already added the stale-post column.
+- Reconnecting Whop replaces OAuth access but does not clear saved source/post/guide/video/media state.
+- A safe reset needs a durable recovery archive that remains restorable after Whop access is lost.
+- The first production recovery panel competed with the normal import flow and loaded backup history automatically.
+- Unlocking the page also started dashboard, bulk history, recent actions, and Whop discovery together.
+- Discovery could rerun itself up to eight times only 350 ms apart while rebuilding source-group DOM.
+- Opening an approved source immediately started a content scan.
+- Source and post views eventually rendered every card, producing a large control wall and freezing Samsung Internet.
+- Mobile blur, shadows, animation, and smooth scrolling increased paint work during the same heavy operations.
 
-## Implemented on PR #21
-- D1 manifest/history/reset schema plus idempotent runtime repair for `whop_posts.stale_at` and its index.
-- Exact snapshots of sources, current and stale posts, categories, guides, course-video mappings, and media ledger records.
-- One checksum-verified, HMAC-signed R2 recovery archive per backup; D1 stores only manifest, archive identity, history, and one-time reset state.
-- A 10 MB archive ceiling and bounded `json_each` restore batches below D1 string and parameter limits.
-- Archive read-back, signature, checksum, identity, count, and schema verification before a backup becomes verified.
-- A second live-scope checksum after archive persistence so concurrent changes prevent verification.
-- Short-lived one-time reset authorization bound to the verified scope and destructive options.
-- A final live-scope checksum immediately before deletion so newer work forces a fresh backup.
-- Exact Whop source authorization/readability preflight before clear-and-resync deletion begins.
-- Published guides preserved by default; published deletion requires explicit opt-in and a stronger typed phrase.
-- Owner-only JSON download and restore without a Whop session; newer guides remain conflicts instead of being overwritten.
-- Retry-safe partial restore messaging and idempotent inserts for sources, posts, categories, guides, media ledger rows, and course videos.
-- Current scans revive returned rows, mark missing rows stale, and hide stale rows from normal review.
-- Preserved published guides reattach to fresh source keys after successful scans so later imports update rather than duplicate.
-- Verified backups pin both their archive and referenced R2 media during normal cleanup.
-- Reset success is reported independently from optional resync/disconnect failures, with the recovery backup kept actionable.
-- Failed or corrupt backup attempts expose Delete only and do not require archive verification to leave history.
-- One guarded Control Center panel for backup history, download, restore, clear/resync, reset-all, and backup deletion.
-- Migration `0004` remains safe whether it runs before or after runtime additive repair.
+## Implemented and merged in PR #21
+- Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
+- Exact source, current/stale post, category, guide, course-video, and media-ledger snapshots.
+- Read-back verification, owner-bound signatures, current-state checks, one-time reset authorization, and typed confirmation.
+- Published-guide preservation by default and conflict-safe offline restore.
+- R2 archive/media pinning, stale-post filtering, preserved-guide reattachment, and retry-safe restore behavior.
+- Owner-only backup history, JSON download, restore, safe clear/resync, reset-all, and deletion.
+
+## Implemented on PR #22
+- No automatic source discovery or content scan on unlock.
+- Explicit `Load sources` action; later passes are manual `Refresh sources` actions.
+- Removed the eight-pass 350 ms discovery loop.
+- Source groups remain collapsed and render 12 sources at a time with explicit Load more.
+- Choosing or approving a source no longer scans it; `Review content` is a separate action.
+- Content review renders 10 cards at a time with explicit Load more.
+- Guide review renders 24 summaries at a time with existing lazy detail loading.
+- Bulk-job and recent-action history load only when the bulk workflow is opened.
+- Backup history loads only when the recovery workflow is opened.
+- Backup, restore, and clear/resync now live together in one collapsed safety center at the end of the ordered workflow.
+- One action selector chooses backup-only or safe clear/resync; advanced destructive options stay collapsed.
+- The new Continue action shares all busy/valid locks to prevent duplicate mobile taps.
+- Mobile removes expensive blur/shadow/smooth-scroll work and disables busy animations.
+- Permanent regressions enforce bounded pagination, manual scanning, lazy history, one recovery center, and mobile action locks.
 
 ## Validation
-- [x] Focused backup/reset/restore regression passes.
-- [x] Existing Whop scan/import/media/recovery regressions pass.
-- [x] Clean-head full Node 22 build passes on PR #21 (workflow run #846).
-- [x] Changed-file scope is limited to 12 Issue #19 files; no temporary workflow or trigger remains.
-- [x] Duplicate asset loading and duplicate client mounting are covered by regression checks.
-- [x] Branch is zero commits behind `main` and GitHub reports it mergeable.
-- [x] Qodo recommends the bounded R2 archive/manifest-only D1 design and raised no inline review thread.
-- [x] Cloudflare branch preview deployed successfully during PR validation.
-- [ ] PR #21 is squash-merged.
-- [ ] Cloudflare production deployment contains the merge commit.
+- [x] PR #21 focused backup/reset/restore audit passed.
+- [x] PR #21 clean-head full Node 22 suite passed and both Qodo findings were resolved.
+- [x] PR #21 squash-merged and production post-merge checks passed.
+- [x] PR #22 focused mobile-flow audit passed.
+- [x] PR #22 complete existing Node 22 build passed after replacing render-all behavior with bounded pagination.
+- [x] PR #22 follow-up busy-lock/lazy-history audit and complete build passed.
+- [x] PR #22 cleanup leaves only permanent runtime/UI/regression files; no patch scripts or self-mutating workflows remain.
+- [ ] PR #22 clean-head CI and review pass.
+- [ ] PR #22 is squash-merged and Cloudflare production contains the merge commit.
+- [ ] Samsung Internet opens/unlocks without freezing and performs no automatic source/content scan.
 - [ ] Production backup creation and JSON download succeed on real imported content.
-- [ ] Production clear-and-resync removes stale state while preserving published guides.
-- [ ] Production restore succeeds without relying on current Whop access and reports any newer-guide conflicts truthfully.
+- [ ] Production clear-and-resync preserves published guides and removes stale state.
+- [ ] Production restore works without relying on current Whop access and reports conflicts truthfully.
 
 ## Definition of Done
+- The Control Center presents one understandable ordered workflow on mobile and desktop.
+- Unlocking performs only the minimum overview work and never starts a source/content scan.
+- Large source, post, and guide collections remain behind explicit bounded pagination.
+- Backup and recovery are one non-repetitive safety center, not a competing workflow.
 - No destructive Whop reset can start without a newly verified restorable backup.
 - Backup download and restore work after Whop access is removed.
 - Published guides remain by default and newer guides are never overwritten silently.
-- R2 archives and media referenced only by a verified backup remain protected.
-- Fresh scans stop showing disappeared old posts and reconnect preserved published guides.
-- Targeted tests, full build, cleanup, review, deployment, and live validation pass.
+- Targeted tests, full build, cleanup, review, deployment, Samsung Internet validation, and live recovery validation pass.
 
 ## Backlog
-- Issue #20 — full website duplication audit after this task reaches Definition of Done.
+- Issue #20 — full website duplication audit after Issue #19 reaches Definition of Done.
 - Universal owner-authorized proxy/play/download support for non-Course Whop videos.
 
 ## Scope lock
