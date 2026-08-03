@@ -1,96 +1,67 @@
 # Active Task
 
 ## Task
-Make **Repair media from Whop** repair the selected guide transparently and stop leaving the owner staring at the same saved warning with no visible result.
+Issue #19 — Back up Whop imports before clear-and-resync.
 
 ## Status
-**Active — OAuth repair merged and deployed; owner reconnect and exact media retest pending.** PR #16 fixed repair-result visibility and editor synchronization. PR #17 fixed the actual R2 media-write path. The owner’s production reconnect then exposed a stale redirect override that sent Whop an invalid callback. PR #18 now pins production OAuth to the canonical registered callback and is squash-merged at `bc96d9a8a02c0388fd56c40a971cdb8bb0fdc9a7`. Focused OAuth tests, the full Node 22 suite, review, cleanup, merge, and post-merge Cloudflare checks are complete. The task remains locked until Connect Whop succeeds and the exact guide repairs or reports a new concrete blocker.
+**Active — PR #21 validated; merge, production deployment, and live recovery exercise pending.** Branch `feat/whop-backup-reset-restore` adds bounded signed R2 recovery archives, manifest-only D1 state, verified reset authorization, JSON-batched offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.
 
 ## Confirmed findings
-- The Cloudflare dashboard screenshot confirms an R2 binding named `SNIPERPLUG_MEDIA` points to `sniperplug-media`; the dashboard binding itself should not be deleted or recreated.
-- The warning inside Guide Markdown is saved guide content from the original failed import, not a live binding-status widget.
-- Repair errors were rendered only in `[data-global-status]` near the top of the Control Center while the repair button and guide editor are far below it. On mobile, a failed request therefore looked like the button did nothing.
-- The browser discarded structured API error details, including the exact unresolved media reason.
-- The repair action was restricted to old storage-related warning text and could disappear after the server replaced that warning with another media-copy failure.
-- The server did not identify the exact Cloudflare Pages branch/commit that handled the repair request, so a deployment/environment mismatch could not be distinguished from an R2 copy failure.
-- PR #15's `applyGuide()` dispatched an artificial `input` event after mutating fields directly, which made draft safety report unsaved changes even though the server had already saved the guide.
-- The same direct mutation skipped `renderGuideEditor()`, leaving publish eligibility, attachment-resolution visibility, editor status, heading, preview, list cache, and action buttons on the pre-repair state.
-- The first PR #16 implementation allowed the fallback reload warning to be overwritten by an unconditional success message.
-- The first PR #16 event listener marked incomplete guide payloads handled even when `renderGuideEditor()` returned without applying them.
-- The production screenshots for `IMG_7082.jpeg` and `image.png` still showed `Provided readable stream must have a known length`, proving the media bytes never reached R2.
-- `mirrorWhopMedia()` passed `response.body.pipeThrough(new TransformStream(...))` into `R2Bucket.put()`. The wrapper removed the response body's fixed-length identity even when Whop supplied `Content-Length`.
-- Media enhancement copies files sequentially, so buffering only unknown-length files under the existing 50 MB ceiling does not create unbounded per-request concurrency.
-- The owner’s production reconnect reached Whop’s raw `redirect_uri is invalid` response.
-- `config()` preferred `WHOP_REDIRECT_URI` over the request host even though the production documentation says the callback is origin/canonical-host aware. A stale localhost or old Pages value could therefore break every production reconnect.
-- Whop requires each OAuth redirect URI to match an app whitelist entry exactly.
+- Reconnecting Whop replaces OAuth access but does not clear `whop_sources`, `whop_posts`, imported guides, course-video mappings, or R2 records.
+- Existing scans upserted current items but did not hide rows that disappeared from Whop.
+- Imported guides live separately from post snapshots, so clearing posts alone leaves old drafts visible.
+- The existing guide snapshot helper protects one in-flight save only; it is not persistent recovery and cannot survive lost Whop access.
+- Media cleanup previously considered only active draft/published guides, so a reset could eventually delete R2 objects unless verified backups pin them explicitly.
+- One D1 row or query per imported method would exceed Cloudflare Free-plan request limits for ordinary large sources.
+- An unconditional migration `ALTER TABLE` would fail when runtime repair had already added the stale-post column.
 
-## Implemented changes
-- Added safe Pages deployment diagnostics (`CF_PAGES_COMMIT_SHA`, `CF_PAGES_BRANCH`, and `CF_PAGES_URL`) to repair success and failure responses.
-- Missing-binding errors now say the active Function cannot see the binding, rather than incorrectly claiming the dashboard has no binding.
-- Incomplete repairs return the newest server-confirmed guide state and the exact unresolved reasons.
-- Added an inline live status directly above the guide action buttons.
-- Preserved API error details in the browser and displayed the exact deployment identity beside the guide.
-- Updated the editor immediately from the newest server guide on both success and incomplete repair, preventing obsolete warning text from remaining on screen.
-- Kept Repair media available for any generated Media or Attachment review warning.
-- Added targeted regression and syntax checks for the server and browser repair paths.
-- Route every server-confirmed repair result through `updateGuideListItem()` and `renderGuideEditor(guide, 'saved')`, reusing the canonical list, derived-control, `sniperplug:guide-loaded`, and clean-snapshot path.
-- Remove the direct field mutation and synthetic `input` event that falsely dirtied the editor.
-- Fail visibly instead of silently applying a partial client state if the canonical renderer is unavailable.
-- Make `renderGuideEditor()` return explicit applied/not-applied truth and acknowledge the event only after a successful render and list refresh.
-- Preserve the reload-safety error instead of overwriting it with success, including incomplete-repair responses that return a newer guide.
-- Send known-length Whop fetch bodies to R2 untouched so Workers preserves their runtime fixed-length metadata.
-- Convert only unknown-length/chunked responses into a byte-capped fixed-size `Blob` before `R2Bucket.put()`.
-- Use the R2 write result as the authoritative stored size, reject null or oversized writes, and preserve reservation rollback/deletion behavior.
-- Record the upload mode in R2 custom metadata for live diagnosis.
-- Add regression coverage for known-length identity preservation, chunked Blob fallback, and both declared and streamed oversize rejection.
-- Resolve production and stable-preview OAuth callbacks from an explicit canonical-host allowlist and ignore stale environment overrides outside localhost.
-- Reject unregistered hosts before redirecting to Whop and return start-up errors to the Control Center instead of a raw API response.
-- Add runtime regressions for production, www canonicalization, preview, localhost, stale overrides, external local overrides, and unknown Pages hosts.
+## Implemented on PR #21
+- D1 manifest/history/reset schema plus idempotent runtime repair for `whop_posts.stale_at` and its index.
+- Exact snapshots of sources, current and stale posts, categories, guides, course-video mappings, and media ledger records.
+- One checksum-verified, HMAC-signed R2 recovery archive per backup; D1 stores only manifest, archive identity, history, and one-time reset state.
+- A 10 MB archive ceiling and bounded `json_each` restore batches below D1 string and parameter limits.
+- Archive read-back, signature, checksum, identity, count, and schema verification before a backup becomes verified.
+- A second live-scope checksum after archive persistence so concurrent changes prevent verification.
+- Short-lived one-time reset authorization bound to the verified scope and destructive options.
+- A final live-scope checksum immediately before deletion so newer work forces a fresh backup.
+- Exact Whop source authorization/readability preflight before clear-and-resync deletion begins.
+- Published guides preserved by default; published deletion requires explicit opt-in and a stronger typed phrase.
+- Owner-only JSON download and restore without a Whop session; newer guides remain conflicts instead of being overwritten.
+- Retry-safe partial restore messaging and idempotent inserts for sources, posts, categories, guides, media ledger rows, and course videos.
+- Current scans revive returned rows, mark missing rows stale, and hide stale rows from normal review.
+- Preserved published guides reattach to fresh source keys after successful scans so later imports update rather than duplicate.
+- Verified backups pin both their archive and referenced R2 media during normal cleanup.
+- Reset success is reported independently from optional resync/disconnect failures, with the recovery backup kept actionable.
+- Failed or corrupt backup attempts expose Delete only and do not require archive verification to leave history.
+- One guarded Control Center panel for backup history, download, restore, clear/resync, reset-all, and backup deletion.
+- Migration `0004` remains safe whether it runs before or after runtime additive repair.
 
 ## Validation
-- [x] Real editor placement and event path inspected.
-- [x] Existing repair endpoint, import path, media mirror path, binding guard, callers, and tests inspected.
-- [x] Inline status and structured diagnostics implemented.
-- [x] Regression assertions added and synchronized with the reviewed execution path.
-- [x] Full Node 22 build and regression suite pass on PR #15 (workflow run #815).
-- [x] Canonical repair-state regression passes on the follow-up branch.
-- [x] `node --check` passes for both modified Control Center clients.
-- [x] Script load order proves the canonical renderer and draft lifecycle listeners load before the repair client.
-- [x] Qodo findings for warning preservation and incomplete-guide acknowledgement are repaired and resolved.
-- [x] Focused Whop recovery-media regression passes after the review repairs.
-- [x] Final clean-head `Verify SniperPlug` full build and regression suite pass for PR #16 (workflow run #831).
-- [x] PR #16 was squash-merged at `28b1047cb96f5abe579f79ddcaecca9c16379866`.
-- [x] Focused R2 hard-free/media upload regression passes on the uploader-fix branch.
-- [x] Known-length response identity, unknown-length Blob fallback, and both oversize paths are covered.
-- [x] Recovery-media regression and full Node 22 build pass on PR #17 (workflow run #834).
-- [x] Temporary patch workflows and triggers are removed from the final branches.
-- [x] Final PR #17 changed-file scope is limited to three task files with no competing PR or duplicate uploader path.
-- [x] Qodo recommends the split known-length/Blob strategy and raised no review thread.
-- [x] PR #17 was mergeable, zero commits behind `main`, and squash-merged at `ee4dc0fc2f882a733bc0b8e16392f4bab6beba5c`.
-- [x] Canonical OAuth redirect regression and full Node 22 build pass for PR #18 (workflow run #837).
-- [x] Production, www, stable preview, localhost, stale override, hostile override, and unknown-host OAuth cases are covered.
-- [x] Qodo recommends the explicit callback allowlist and raised no review thread.
-- [x] PR #18 changed-file scope is limited to five OAuth-task files and was squash-merged at `bc96d9a8a02c0388fd56c40a971cdb8bb0fdc9a7`.
-- [x] Post-merge Cloudflare production privacy workflow passed after propagation for PR #18.
-- [ ] Production Connect Whop opens consent/callback without `redirect_uri is invalid`.
-- [ ] Live repair result reports the active Pages branch/commit containing the repaired uploader and OAuth commits.
-- [ ] Owner retest replaces the saved media warning with a durable `/media/...` Markdown URL.
-- [ ] Any remaining source, permission, size, timeout, or storage blocker is identified from the exact live result and addressed.
+- [x] Focused backup/reset/restore regression passes.
+- [x] Existing Whop scan/import/media/recovery regressions pass.
+- [x] Clean-head full Node 22 build passes on PR #21 (workflow run #846).
+- [x] Changed-file scope is limited to 12 Issue #19 files; no temporary workflow or trigger remains.
+- [x] Duplicate asset loading and duplicate client mounting are covered by regression checks.
+- [x] Branch is zero commits behind `main` and GitHub reports it mergeable.
+- [x] Qodo recommends the bounded R2 archive/manifest-only D1 design and raised no inline review thread.
+- [x] Cloudflare branch preview deployed successfully during PR validation.
+- [ ] PR #21 is squash-merged.
+- [ ] Cloudflare production deployment contains the merge commit.
+- [ ] Production backup creation and JSON download succeed on real imported content.
+- [ ] Production clear-and-resync removes stale state while preserving published guides.
+- [ ] Production restore succeeds without relying on current Whop access and reports any newer-guide conflicts truthfully.
 
 ## Definition of Done
-- Pressing Repair media always produces a visible result beside the button on mobile and desktop.
-- The result identifies whether the active Function sees R2 and which Pages commit/branch handled the request.
-- A successful repair replaces the warning with the server-confirmed media Markdown immediately.
-- An incomplete repair shows the exact reason and newest saved guide state; it never reports success or appears inert.
-- Repaired server state refreshes the guide list, editor status, preview, publish controls, attachment resolution, and draft clean snapshot through the canonical renderer.
-- Known-length and chunked Whop media both reach R2 through payload types Cloudflare accepts.
-- Production OAuth always sends an exact registered callback and never trusts stale Cloudflare redirect overrides.
-- Targeted tests, full build, deployment validation, cleanup, and conflict inspection pass.
+- No destructive Whop reset can start without a newly verified restorable backup.
+- Backup download and restore work after Whop access is removed.
+- Published guides remain by default and newer guides are never overwritten silently.
+- R2 archives and media referenced only by a verified backup remain protected.
+- Fresh scans stop showing disappeared old posts and reconnect preserved published guides.
+- Targeted tests, full build, cleanup, review, deployment, and live validation pass.
 
 ## Backlog
-- Universal owner-authorized proxy/play/download support for non-Course Whop videos remains required after this active reconnect/media repair reaches Definition of Done.
-- Large-video archival storage remains deferred unless the exact repair result proves this file exceeds the current 50 MB automatic-copy ceiling.
-- Newegg affiliate application work remains paused until this active media repair task reaches Definition of Done.
+- Issue #20 — full website duplication audit after this task reaches Definition of Done.
+- Universal owner-authorized proxy/play/download support for non-Course Whop videos.
 
 ## Scope lock
-No unrelated implementation begins until this media repair task is production-validated, unless the user explicitly sends the required FORCE SWITCH instruction.
+No unrelated implementation begins until Issue #19 reaches Definition of Done unless the owner explicitly switches priorities.

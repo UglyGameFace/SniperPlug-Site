@@ -5,6 +5,7 @@ import { prepareGuideBody } from './integrity.js';
 import { listExperienceItemsLite, sourceKeyForWhopItem } from './whop-items.js';
 import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
+import { ensureWhopBackupSchema, reattachPreservedWhopGuides } from './whop-backups.js';
 
 const SCAN_LEASE_MS = 5 * 60_000;
 const D1_BATCH_SIZE = 100;
@@ -199,6 +200,7 @@ async function verifySavedScan(db, experienceId, scanMarker, posts) {
 }
 
 export async function scanApprovedSource(env, whopSession, experience) {
+  await ensureWhopBackupSchema(env);
   const db = requireDatabase(env);
   const experienceId = String(experience?.id || '');
   await requireApprovedSource(env, experienceId);
@@ -219,8 +221,8 @@ export async function scanApprovedSource(env, whopSession, experience) {
       INSERT INTO whop_posts (
         source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
         source_created_at, source_updated_at, source_fingerprint, integrity_json,
-        decision, decision_updated_at, last_scanned_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+        decision, decision_updated_at, last_scanned_at, stale_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
       ON CONFLICT(source_key) DO UPDATE SET
         experience_id = excluded.experience_id,
         post_id = excluded.post_id,
@@ -243,13 +245,20 @@ export async function scanApprovedSource(env, whopSession, experience) {
           WHEN whop_posts.source_fingerprint IS NOT excluded.source_fingerprint THEN NULL
           ELSE whop_posts.decision_updated_at
         END,
-        last_scanned_at = excluded.last_scanned_at
+        last_scanned_at = excluded.last_scanned_at,
+        stale_at = NULL
     `).bind(
       post.sourceKey, post.experienceId, post.postId, post.title, post.excerpt, post.body,
       JSON.stringify(post.author || {}), JSON.stringify(post.attachments), post.sourceCreatedAt,
       post.sourceUpdatedAt, post.sourceFingerprint, JSON.stringify(post.integrity), post.scanDecision, scanMarker,
     ));
     if (statements.length) await runStatementBatches(db, statements);
+    await db.prepare(`
+      UPDATE whop_posts
+      SET stale_at = ?
+      WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL
+    `).bind(scanMarker, experienceId, scanMarker).run();
+    await reattachPreservedWhopGuides(env, experienceId);
     return verifySavedScan(db, experienceId, scanMarker, posts);
   } finally {
     await releaseScanLease(db, experienceId, leaseToken).catch(() => null);
@@ -328,9 +337,10 @@ export async function savePostDecision(env, sourceKeys, decision) {
 }
 
 export async function listSavedPosts(env, experienceId) {
+  await ensureWhopBackupSchema(env);
   const db = requireDatabase(env);
   const rows = await db.prepare(`
-    SELECT * FROM whop_posts WHERE experience_id = ?
+    SELECT * FROM whop_posts WHERE experience_id = ? AND stale_at IS NULL
     ORDER BY source_updated_at DESC, title ASC
   `).bind(experienceId).all();
   return (rows.results || []).map(rowToItem);
