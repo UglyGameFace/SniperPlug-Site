@@ -112,6 +112,44 @@ function rowToItem(row) {
   };
 }
 
+export function summarizePostForClient(item) {
+  const integrity = item?.integrity || {};
+  const policy = integrity.policy || integrity.sourceMeta?.importPolicy || null;
+  const attachments = Array.isArray(item?.attachments) ? item.attachments : [];
+  return {
+    sourceKey: item?.sourceKey || '',
+    experienceId: item?.experienceId || '',
+    postId: item?.postId || '',
+    contentType: item?.contentType || 'forum',
+    title: item?.title || 'Untitled Whop item',
+    excerpt: item?.excerpt || '',
+    author: item?.author || null,
+    attachments: attachments
+      .filter((file) => ['course-thumbnail', 'hosted-video'].includes(file?.role))
+      .map((file) => ({
+        id: file.id || null,
+        filename: file.filename || null,
+        contentType: file.contentType || null,
+        url: file.url || null,
+        role: file.role || null,
+        durationSeconds: file.durationSeconds || null,
+        uploadStatus: file.uploadStatus || null,
+      })),
+    attachmentCount: attachments.length,
+    sourceCreatedAt: item?.sourceCreatedAt || null,
+    sourceUpdatedAt: item?.sourceUpdatedAt || null,
+    sourceFingerprint: item?.sourceFingerprint || null,
+    integrity: {
+      blocked: integrity.blocked === true,
+      code: integrity.code || null,
+      error: integrity.error || null,
+      autoPublishEligible: integrity.autoPublishEligible === true,
+      policy: policy ? { code: policy.code || null, reason: policy.reason || null } : null,
+    },
+    decision: item?.decision || 'pending',
+  };
+}
+
 async function runStatementBatches(db, statements) {
   const results = [];
   for (let index = 0; index < statements.length; index += D1_BATCH_SIZE) {
@@ -334,6 +372,16 @@ export async function savePostDecision(env, sourceKeys, decision) {
     });
   }
   return result.changed;
+}
+
+export async function savedPostDetail(env, sourceKey) {
+  await ensureWhopBackupSchema(env);
+  const key = String(sourceKey || '').trim();
+  if (!key) throw new HttpError(422, 'Choose a valid Whop content item.');
+  const db = requireDatabase(env);
+  const row = await db.prepare('SELECT * FROM whop_posts WHERE source_key = ? AND stale_at IS NULL').bind(key).first();
+  if (!row) throw new HttpError(404, 'That Whop content item is no longer available in the current scan.');
+  return rowToItem(row);
 }
 
 export async function listSavedPosts(env, experienceId) {

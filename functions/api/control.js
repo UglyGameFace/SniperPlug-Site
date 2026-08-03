@@ -33,7 +33,9 @@ import { getMediaStorageStatus, runMediaStorageMaintenance } from '../_lib/media
 import {
   listSavedPosts,
   savePostDecision,
+  savedPostDetail,
   scanApprovedSource,
+  summarizePostForClient,
 } from '../_lib/posts.js';
 import { assertGuidePublishable } from '../_lib/publish.js';
 import {
@@ -289,7 +291,7 @@ async function scan(request, env, admin) {
     sourceType,
     suggestedCategory,
     source: await sourceDecision(env, experience, experience.id),
-    posts,
+    posts: posts.map(summarizePostForClient),
     counts: {
       total: posts.length,
       approved: posts.filter((post) => post.decision === 'approved').length,
@@ -386,9 +388,14 @@ export async function onRequest(context) {
     if (currentAction === 'guide-detail') return await guideDetail(context.request, context.env);
     if (currentAction === 'guide-save') return await guideSave(context.request, context.env, context);
     if (currentAction === 'guide-status') return await guideStatus(context.request, context.env, context);
+    if (currentAction === 'post-detail') {
+      if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
+      return json({ post: await savedPostDetail(context.env, new URL(context.request.url).searchParams.get('sourceKey') || '') });
+    }
     if (currentAction === 'posts') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-      return json({ posts: await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '') });
+      const posts = await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '');
+      return json({ posts: posts.map(summarizePostForClient) });
     }
     throw new HttpError(404, 'Unknown Control Center action.');
   } catch (error) {
