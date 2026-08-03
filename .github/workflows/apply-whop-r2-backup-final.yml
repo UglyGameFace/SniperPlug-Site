@@ -1,0 +1,125 @@
+name: Apply Whop R2 backup archive finalization
+
+on:
+  push:
+    branches:
+      - feat/whop-backup-reset-restore
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Finalize query-efficient backup archive paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service_path = Path('functions/_lib/whop-backups.js')
+          service = service_path.read_text()
+          service = service.replace('function jsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {', 'export function backupJsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {')
+          service = service.replace('for (const group of jsonBatches(rows))', 'for (const group of backupJsonBatches(rows))')
+          service = service.replace('for (const batch of jsonBatches(guideRows))', 'for (const batch of backupJsonBatches(guideRows))')
+
+          optional_anchor = """async function optionalRows(db, sql, bindings = [], missing = '') {\n  try {\n    const result = await db.prepare(sql).bind(...bindings).all();\n    return result.results || [];\n  } catch (error) {\n    if (missing && missingTable(error, missing)) return [];\n    throw error;\n  }\n}\n\n"""
+          optional_add = optional_anchor + """async function optionalRowsByJsonValues(db, sql, values, missing = '') {\n  const output = [];\n  for (const group of backupJsonBatches(values)) {\n    output.push(...await optionalRows(db, sql, [stableBackupJson(group)], missing));\n  }\n  return output;\n}\n\n"""
+          if 'optionalRowsByJsonValues' not in service:
+              if optional_anchor not in service: raise SystemExit('optional rows helper anchor missing')
+              service = service.replace(optional_anchor, optional_add, 1)
+
+          old_categories = """  const categories = categorySlugs.length\n    ? await optionalRows(\n      db,\n      'SELECT * FROM guide_categories WHERE slug IN (SELECT value FROM json_each(?)) ORDER BY slug',\n      [stableBackupJson(categorySlugs)],\n      'guide_categories',\n    )\n    : [];\n\n  const guideIds = guides.map((row) => Number(row.id)).filter((id) => Number.isFinite(id) && id > 0);\n  const courseVideos = guideIds.length\n    ? await optionalRows(\n      db,\n      'SELECT * FROM course_video_sources WHERE guide_id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY video_key',\n      [stableBackupJson(guideIds)],\n      'course_video_sources',\n    )\n    : [];\n"""
+          new_categories = """  const categories = categorySlugs.length\n    ? await optionalRowsByJsonValues(\n      db,\n      'SELECT * FROM guide_categories WHERE slug IN (SELECT value FROM json_each(?)) ORDER BY slug',\n      categorySlugs,\n      'guide_categories',\n    )\n    : [];\n\n  const guideIds = guides.map((row) => Number(row.id)).filter((id) => Number.isFinite(id) && id > 0);\n  const courseVideos = guideIds.length\n    ? await optionalRowsByJsonValues(\n      db,\n      'SELECT * FROM course_video_sources WHERE guide_id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY video_key',\n      guideIds,\n      'course_video_sources',\n    )\n    : [];\n"""
+          if new_categories not in service:
+              if old_categories not in service: raise SystemExit('scope category/video JSON anchor missing')
+              service = service.replace(old_categories, new_categories, 1)
+          old_media = """  const mediaObjects = mediaKeys.length\n    ? await optionalRows(\n      db,\n      'SELECT * FROM media_objects WHERE storage_key IN (SELECT value FROM json_each(?)) ORDER BY storage_key',\n      [stableBackupJson(mediaKeys)],\n      'media_objects',\n    )\n    : [];\n"""
+          new_media = """  const mediaObjects = mediaKeys.length\n    ? await optionalRowsByJsonValues(\n      db,\n      'SELECT * FROM media_objects WHERE storage_key IN (SELECT value FROM json_each(?)) ORDER BY storage_key',\n      mediaKeys,\n      'media_objects',\n    )\n    : [];\n"""
+          if new_media not in service:
+              if old_media not in service: raise SystemExit('scope media JSON anchor missing')
+              service = service.replace(old_media, new_media, 1)
+
+          old_restore = """  for (const batch of backupJsonBatches(guideRows)) {\n    await db.prepare(`\n      INSERT OR IGNORE INTO guides (${GUIDE_COLUMNS.join(', ')})\n      SELECT\n        json_extract(value, '$.slug'), json_extract(value, '$.title'),\n        json_extract(value, '$.description'), json_extract(value, '$.category_slug'),\n        json_extract(value, '$.body_markdown'), json_extract(value, '$.status'),\n        json_extract(value, '$.featured'), json_extract(value, '$.sort_order'),\n        json_extract(value, '$.source_key'), json_extract(value, '$.source_group'),\n        json_extract(value, '$.source_experience_id'), json_extract(value, '$.source_post_id'),\n        json_extract(value, '$.source_fingerprint'), json_extract(value, '$.attachment_json'),\n        json_extract(value, '$.integrity_json'), json_extract(value, '$.author_json'),\n        json_extract(value, '$.source_created_at'), json_extract(value, '$.source_updated_at'),\n        json_extract(value, '$.imported_at'), json_extract(value, '$.updated_at'),\n        json_extract(value, '$.published_at')\n      FROM json_each(?)\n    `).bind(stableBackupJson(batch)).run();\n    const currentRows = await currentGuidesForBatch(db, batch);\n    const currentByKey = new Map();\n    for (const current of currentRows) {\n      currentByKey.set(guideLookupKey(current), current);\n      if (current.source_experience_id && current.source_post_id) currentByKey.set(`post:${current.source_experience_id}:${current.source_post_id}`, current);\n    }\n    for (const snapshot of batch) {\n      const current = currentByKey.get(guideLookupKey(snapshot)) || null;\n      if (!current) {\n        conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: null, title: snapshot.title, reason: 'slug-or-constraint-conflict' });\n        continue;\n      }\n      guideIdMap.set(Number(snapshot.id), Number(current.id));\n      const existedBefore = currentRows.some((row) => Number(row.id) === Number(current.id) && Number(row.id) === Number(snapshot.id));\n      if (guideEquivalent(current, snapshot)) {\n        if (existedBefore) unchanged.push(Number(current.id));\n        else restored.push(Number(current.id));\n      } else {\n        conflicts.push({\n          backupGuideId: Number(snapshot.id),\n          currentGuideId: Number(current.id),\n          title: current.title,\n          currentUpdatedAt: current.updated_at,\n          backupUpdatedAt: snapshot.updated_at,\n        });\n      }\n    }\n  }\n"""
+          new_restore = """  for (const batch of backupJsonBatches(guideRows)) {\n    const beforeRows = await currentGuidesForBatch(db, batch);\n    const beforeByKey = new Map();\n    for (const row of beforeRows) {\n      beforeByKey.set(guideLookupKey(row), row);\n      if (row.source_experience_id && row.source_post_id) beforeByKey.set(`post:${row.source_experience_id}:${row.source_post_id}`, row);\n    }\n    await db.prepare(`\n      INSERT OR IGNORE INTO guides (${GUIDE_COLUMNS.join(', ')})\n      SELECT\n        json_extract(value, '$.slug'), json_extract(value, '$.title'),\n        json_extract(value, '$.description'), json_extract(value, '$.category_slug'),\n        json_extract(value, '$.body_markdown'), json_extract(value, '$.status'),\n        json_extract(value, '$.featured'), json_extract(value, '$.sort_order'),\n        json_extract(value, '$.source_key'), json_extract(value, '$.source_group'),\n        json_extract(value, '$.source_experience_id'), json_extract(value, '$.source_post_id'),\n        json_extract(value, '$.source_fingerprint'), json_extract(value, '$.attachment_json'),\n        json_extract(value, '$.integrity_json'), json_extract(value, '$.author_json'),\n        json_extract(value, '$.source_created_at'), json_extract(value, '$.source_updated_at'),\n        json_extract(value, '$.imported_at'), json_extract(value, '$.updated_at'),\n        json_extract(value, '$.published_at')\n      FROM json_each(?)\n    `).bind(stableBackupJson(batch)).run();\n    const currentRows = await currentGuidesForBatch(db, batch);\n    const currentByKey = new Map();\n    for (const row of currentRows) {\n      currentByKey.set(guideLookupKey(row), row);\n      if (row.source_experience_id && row.source_post_id) currentByKey.set(`post:${row.source_experience_id}:${row.source_post_id}`, row);\n    }\n    for (const snapshot of batch) {\n      const key = guideLookupKey(snapshot);\n      const postKey = snapshot.source_experience_id && snapshot.source_post_id\n        ? `post:${snapshot.source_experience_id}:${snapshot.source_post_id}`\n        : '';\n      const before = beforeByKey.get(key) || (postKey ? beforeByKey.get(postKey) : null) || null;\n      const current = currentByKey.get(key) || (postKey ? currentByKey.get(postKey) : null) || null;\n      if (before) {\n        if (guideEquivalent(before, snapshot)) {\n          unchanged.push(Number(before.id));\n          guideIdMap.set(Number(snapshot.id), Number(before.id));\n        } else {\n          conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: Number(before.id), title: before.title, currentUpdatedAt: before.updated_at, backupUpdatedAt: snapshot.updated_at });\n        }\n        continue;\n      }\n      if (current && guideEquivalent(current, snapshot)) {\n        restored.push(Number(current.id));\n        guideIdMap.set(Number(snapshot.id), Number(current.id));\n      } else {\n        conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: current ? Number(current.id) : null, title: current?.title || snapshot.title, reason: current ? 'current-guide-differs' : 'slug-or-constraint-conflict' });\n      }\n    }\n  }\n"""
+          if new_restore not in service:
+              if old_restore not in service: raise SystemExit('guide restore classification anchor missing')
+              service = service.replace(old_restore, new_restore, 1)
+          service_path.write_text(service)
+
+          endpoint_path = Path('functions/api/whop-backups.js')
+          endpoint = endpoint_path.read_text()
+          endpoint = endpoint.replace('function downloadResponse(backupIdValue, payload) {', 'function downloadResponse(backupIdValue, archiveJson) {')
+          endpoint = endpoint.replace('return new Response(JSON.stringify(payload), {', "return new Response(String(archiveJson || ''), {")
+          old_download = """        const id = backupId(context.request);\n        return downloadResponse(id, await exportWhopImportBackup(context.env, id));\n"""
+          new_download = """        const id = backupId(context.request);\n        const exported = await exportWhopImportBackup(context.env, id);\n        return downloadResponse(id, exported.archiveJson);\n"""
+          if new_download not in endpoint:
+              if old_download not in endpoint: raise SystemExit('direct archive download anchor missing')
+              endpoint = endpoint.replace(old_download, new_download, 1)
+          endpoint_path.write_text(endpoint)
+
+          media_path = Path('functions/_lib/media-storage.js')
+          media = media_path.read_text()
+          old_pin = """  try {\n    const backupRows = await db.prepare(`\n      SELECT DISTINCT media.storage_key\n      FROM whop_import_backup_media AS media\n      JOIN whop_import_backups AS backup ON backup.backup_id = media.backup_id\n      WHERE backup.status = 'verified' AND backup.deleted_at IS NULL\n    `).all();\n    for (const row of backupRows.results || []) {\n      const key = validMediaStorageKey(row.storage_key);\n      if (key) keys.add(key);\n    }\n  } catch (error) {\n    if (!/no such table/i.test(String(error?.message || ''))) throw error;\n  }\n"""
+          new_pin = """  try {\n    const backupRows = await db.prepare(`\n      SELECT archive_key, manifest_json\n      FROM whop_import_backups\n      WHERE status = 'verified' AND deleted_at IS NULL\n    `).all();\n    for (const row of backupRows.results || []) {\n      const archiveKey = validMediaStorageKey(row.archive_key);\n      if (archiveKey) keys.add(archiveKey);\n      const manifest = safeJson(row.manifest_json, {});\n      for (const value of Array.isArray(manifest?.mediaKeys) ? manifest.mediaKeys : []) {\n        const key = validMediaStorageKey(value);\n        if (key) keys.add(key);\n      }\n    }\n  } catch (error) {\n    if (!/no such table|no such column/i.test(String(error?.message || ''))) throw error;\n  }\n"""
+          if new_pin not in media:
+              if old_pin not in media: raise SystemExit('backup media pin anchor missing')
+              media = media.replace(old_pin, new_pin, 1)
+          media_path.write_text(media)
+
+          Path('tools/audit-whop-backups.mjs').write_text("""import assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nimport { dirname, join } from 'node:path';\nimport { spawnSync } from 'node:child_process';\nimport { fileURLToPath } from 'node:url';\nimport {\n  backupJsonBatches,\n  deleteBackupConfirmationPhrase,\n  resetConfirmationPhrase,\n  restoreConfirmationPhrase,\n  stableBackupJson,\n} from '../functions/_lib/whop-backups.js';\n\nconst root = join(dirname(fileURLToPath(import.meta.url)), '..');\nconst read = (path) => readFileSync(join(root, path), 'utf8');\nconst migration = read('migrations/0004_whop_import_backups.sql');\nconst service = read('functions/_lib/whop-backups.js');\nconst endpoint = read('functions/api/whop-backups.js');\nconst posts = read('functions/_lib/posts.js');\nconst mediaStorage = read('functions/_lib/media-storage.js');\nconst html = read('control-center/index.html');\nconst client = read('assets/js/control-center-whop-backups.js');\nconst css = read('assets/css/whop-backups.css');\nconst docs = read('docs/WHOP_IMPORTER.md');\nconst packageJson = JSON.parse(read('package.json'));\nconst task = read('ACTIVE_TASK.md');\n\nassert.equal(stableBackupJson({ z: 1, a: { d: 2, b: 1 } }), '{\"a\":{\"b\":1,\"d\":2},\"z\":1}');\nassert.equal(resetConfirmationPhrase({ scope: 'source', experienceId: 'exp_ABC123xyz' }), 'CLEAR SOURCE 123XYZ');\nassert.equal(resetConfirmationPhrase({ scope: 'all' }, true), 'RESET WHOP IMPORTER INCLUDING PUBLISHED');\nassert.equal(restoreConfirmationPhrase('wib_abcdefgh123456'), 'RESTORE 123456');\nassert.equal(deleteBackupConfirmationPhrase('wib_abcdefgh123456'), 'DELETE BACKUP 123456');\nconst batches = backupJsonBatches([{ body: 'a'.repeat(800_000) }, { body: 'b'.repeat(800_000) }]);\nassert.equal(batches.length, 2, 'JSON restore batches can exceed the D1 2 MB value limit.');\n\nfor (const column of ['archive_key', 'archive_checksum', 'archive_bytes']) assert.ok(migration.includes(column), `Migration is missing ${column}.`);\nassert.ok(!migration.includes('whop_import_backup_rows') && !migration.includes('whop_import_backup_media'), 'Backups still create one D1 row per imported method or media item.');\nassert.ok(migration.includes('ALTER TABLE whop_posts ADD COLUMN stale_at TEXT'));\nassert.ok(posts.includes('stale_at = NULL') && posts.includes('SET stale_at = ?') && posts.includes('AND stale_at IS NULL'));\nassert.ok(posts.includes('reattachPreservedWhopGuides(env, experienceId)'));\n\nassert.ok(service.includes('export const WHOP_BACKUP_SCHEMA_VERSION = 2'));\nassert.ok(service.includes('const MAX_BACKUP_BYTES = 10_000_000'));\nassert.ok(service.includes('prepareMediaCopy') && service.includes('SNIPERPLUG_MEDIA.put') && service.includes('completeMediaCopy'));\nassert.ok(service.includes('new Blob([archiveJson]') && service.includes('archive_checksum'));\nassert.ok(service.includes('verifyValue(backupSignatureValue') && service.includes("row.owner_session_id || ''"));\nassert.ok(service.includes('stableScope.contentChecksum !== snapshot.contentChecksum'));\nassert.ok(service.includes("code: 'backup_scope_changed_during_create'"));\nassert.ok(service.includes('FROM json_each(?)'), 'Restore does not use D1 JSON batching.');\nassert.ok(service.includes('backupJsonBatches') && service.includes('JSON_BATCH_BYTES = 1_400_000'));\nassert.ok(!service.includes('whop_import_backup_rows') && !service.includes('whop_import_backup_media'));\nassert.ok(service.includes("AND status != 'published'") && service.includes('deletePublished'));\nassert.ok(service.includes('current.contentChecksum !== verified.manifest.contentChecksum'));\nassert.ok(service.includes('guideEquivalent(before, snapshot)') && service.includes('current-guide-differs'));\nassert.ok(service.includes('SET deleted_at = ?') && service.includes("archiveCleanup: 'grace-period'"));\n\nassert.ok(mediaStorage.includes('SELECT archive_key, manifest_json') && mediaStorage.includes('manifest?.mediaKeys'));\nassert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'));\nassert.ok(endpoint.includes('exported.archiveJson') && endpoint.includes("new Response(String(archiveJson || '')"));\nassert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, id, body)'));\nassert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish'));\nassert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"));\n\nassert.ok(html.includes('data-whop-backup-panel') && html.includes('data-backup-dialog'));\nassert.equal((html.match(/control-center-whop-backups\\.js/g) || []).length, 1);\nassert.equal((html.match(/whop-backups\\.css/g) || []).length, 1);\nassert.ok(client.includes("root.dataset.whopBackupMounted === 'true'"));\nassert.ok(client.indexOf('createBackup({ authorizeReset: true })') < client.indexOf("post('reset'"));\nassert.ok(client.includes("backup.status === 'verified'") && client.includes('quiet: true, force: true'));\nassert.ok(client.includes("warning ? 'warning' : 'ok'"));\nassert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width: 720px)'));\n\nassert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'));\nassert.ok(docs.includes('R2 recovery archive'));\nassert.ok(packageJson.scripts.audit.includes('audit-whop-backups.mjs'));\nassert.ok(task.includes('Issue #19') && task.includes('R2'));\n\nfor (const file of [\n  'functions/_lib/whop-backups.js',\n  'functions/api/whop-backups.js',\n  'functions/_lib/posts.js',\n  'functions/_lib/media-storage.js',\n  'assets/js/control-center-whop-backups.js',\n  'tools/audit-whop-backups.mjs',\n]) {\n  const syntax = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });\n  assert.equal(syntax.status, 0, `${file} has invalid JavaScript syntax:\\n${syntax.stderr}`);\n}\n\nconsole.log('\\nSNIPERPLUG WHOP BACKUP / RESET / RESTORE AUDIT PASSED\\n');\nconsole.log('✓ Complete signed backups live in bounded R2 archives, not one D1 query per method.');\nconsole.log('✓ D1 stores the verified manifest and uses bounded JSON batches for restore.');\nconsole.log('✓ Reset requires a current verified archive and preserves published guides by default.');\nconsole.log('✓ Backup archives and their referenced media remain pinned through the cleanup grace model.');\nconsole.log('✓ Stale posts disappear from review and preserved published guides reconnect after fresh scans.');\n""")
+
+          docs_path = Path('docs/WHOP_IMPORTER.md')
+          docs = docs_path.read_text()
+          docs = docs.replace(
+              'SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes every source/post/guide/course-video/media reference to D1, reads the snapshot back, verifies every checksum, and only then issues a short-lived reset authorization.',
+              'SniperPlug first snapshots the selected source or entire importer, signs the manifest, writes one bounded R2 recovery archive, reads that archive back, verifies its signature and checksums, and only then issues a short-lived reset authorization. D1 stores only the verified manifest, archive identity, history, and one-time reset state so the workflow remains inside Cloudflare Free-plan query limits.',
+          )
+          docs = docs.replace(
+              'Backups include saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and R2 media ledger references.',
+              'The R2 recovery archive includes saved source decisions, current and stale post snapshots, complete guide Markdown and publication state, referenced categories, course-video mappings, and media ledger references.',
+          )
+          docs_path.write_text(docs)
+
+          task_path = Path('ACTIVE_TASK.md')
+          task = task_path.read_text()
+          task = task.replace(
+              'persistent signed backups, verified reset authorization, offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.',
+              'bounded signed R2 recovery archives, manifest-only D1 state, verified reset authorization, JSON-batched offline restore, current-scan stale filtering, R2 backup pins, and one canonical Control Center recovery panel.',
+          )
+          marker = '- Exact snapshots of sources, posts, categories, guides, course-video mappings, and media ledger records.\n'
+          extra = ('- Store the complete recovery payload as one checksum-verified R2 archive while D1 keeps only manifest/history/reset state, avoiding one query per imported method.\n'
+                   '- Restore large source sets through bounded `json_each` batches below D1 string and parameter limits.\n')
+          if 'checksum-verified R2 archive' not in task:
+              if marker not in task: raise SystemExit('active task R2 archive anchor missing')
+              task = task.replace(marker, marker + extra, 1)
+          task_path.write_text(task)
+          PY
+      - name: Run focused R2 backup regression
+        run: |
+          node --check functions/_lib/whop-backups.js
+          node --check functions/api/whop-backups.js
+          node --check functions/_lib/posts.js
+          node --check functions/_lib/media-storage.js
+          node --check assets/js/control-center-whop-backups.js
+          node tools/audit-whop-backups.mjs
+      - name: Run full Node 22 build
+        run: npm run build
+      - name: Commit validated R2 archive implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ACTIVE_TASK.md docs/WHOP_IMPORTER.md functions/_lib/whop-backups.js functions/api/whop-backups.js functions/_lib/media-storage.js tools/audit-whop-backups.mjs
+          if git diff --cached --quiet; then
+            echo "No R2 archive changes required"
+            exit 0
+          fi
+          git commit -m "Keep Whop backups inside Cloudflare free query limits"
+          git push
