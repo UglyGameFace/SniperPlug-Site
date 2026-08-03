@@ -9,7 +9,7 @@ import {
   requireDatabase,
   requireSameOrigin,
 } from '../_lib/http.js';
-import { whopRecoveryError } from '../_lib/recovery-media.js';
+import { mediaRepairReview, whopRecoveryError } from '../_lib/recovery-media.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 function guideId(value) {
@@ -65,6 +65,14 @@ export async function onRequest(context) {
     if (!row.source_key || !row.source_experience_id) {
       throw new HttpError(422, 'This guide is not linked to a recoverable Whop item.');
     }
+    if (!context.env?.SNIPERPLUG_MEDIA) {
+      throw new HttpError(503, 'Repair media cannot run because this deployment does not have the SNIPERPLUG_MEDIA R2 binding. Bind the sniperplug-media bucket to both Production and Preview, redeploy SniperPlug, then retry.', {
+        code: 'media_storage_not_connected',
+        binding: 'SNIPERPLUG_MEDIA',
+        bucket: 'sniperplug-media',
+        guideId: id,
+      });
+    }
 
     const { whop, experience } = await liveExperience(context.request, context.env, admin, row);
     const output = await importApprovedPosts(context.env, whop, {
@@ -83,7 +91,21 @@ export async function onRequest(context) {
 
     const repaired = await adminGuide(context.env, id);
     if (!repaired) throw new HttpError(409, 'The media repair finished but the guide could not be reloaded.');
-    return json({ repaired: true, action: result.action, guide: repaired, import: output });
+
+    const review = mediaRepairReview(repaired);
+    if (!review.complete) {
+      const count = Math.max(1, review.reviewCount);
+      const reason = review.reasons[0] || 'The source still did not provide a permanent copy that SniperPlug can safely publish.';
+      throw new HttpError(409, `Whop was re-fetched, but ${count} media ${count === 1 ? 'item is' : 'items are'} still unresolved. ${reason}`, {
+        code: 'media_repair_incomplete',
+        guideId: id,
+        reviewCount: count,
+        reasons: review.reasons,
+        action: result.action,
+      });
+    }
+
+    return json({ repaired: true, complete: true, action: result.action, guide: repaired, import: output });
   } catch (error) {
     return handleError(error);
   }
