@@ -1,9 +1,9 @@
 PRAGMA foreign_keys = ON;
 
-ALTER TABLE whop_posts ADD COLUMN stale_at TEXT;
-
-CREATE INDEX IF NOT EXISTS idx_whop_posts_current
-  ON whop_posts (experience_id, stale_at, source_updated_at DESC);
+-- `whop_posts.stale_at` and its index are added idempotently by
+-- ensureWhopBackupSchema(). SQLite does not support ADD COLUMN IF NOT EXISTS,
+-- so keeping an unconditional ALTER here would make this migration fail when
+-- the production runtime repaired the column before migrations were applied.
 
 CREATE TABLE IF NOT EXISTS whop_import_backups (
   backup_id TEXT PRIMARY KEY,
