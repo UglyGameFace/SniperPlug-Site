@@ -4,35 +4,38 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — group-level recovery scope implementation and pre-merge validation are complete on PR #26 (`fix/whop-group-backup-scope`).** Production completion remains unclaimed until PR #26 is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
+**Active — PR #27 (`fix/issue19-whop-oauth-status`) is open, mergeable, and green after live Samsung validation exposed a contradictory Whop OAuth/session state.**
+
+Production completion remains unclaimed until PR #27 is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
 
 ## Scope
 1. Keep the existing signed/checksum-verified R2 archive format and exact-source/all-importer restore behavior authoritative.
-2. Add a first-class **one saved Whop group** backup choice to the existing safety center.
-3. A group backup must include every saved source assigned to that group without forcing the owner to tap each source manually.
-4. Preserve independent verification, download, restore, deletion, media pinning, and size limits for every child source archive.
-5. Do not invent a destructive group reset. Group scope is backup-only; destructive clear/resync remains exact-source or whole-importer only.
-6. Preserve Samsung/mobile bounded rendering, lazy work, cache-busting, and the single safety-center workflow.
-7. Validate targeted backup/mobile audits, JavaScript syntax, full Node 22 build/regression suite, cleanup, conflict inspection, deployment, and live Samsung behavior.
+2. Preserve the merged one-group backup workflow: one independently verified exact-source archive per saved source in the selected group.
+3. Keep destructive clear/resync limited to one exact source or the whole importer; group scope remains backup-only.
+4. Keep owner and paid-customer authentication isolated and fail closed while OAuth is incomplete.
+5. Make callback status truthful: a stale OAuth error may not remain red after the current Whop connection is verified.
+6. Preserve Samsung/mobile bounded rendering, lazy work, cache safety, and the single recovery workflow.
+7. Validate targeted auth/recovery/mobile audits, JavaScript syntax, full Node 22 build/regression suite, cleanup, conflict inspection, deployment, and live Samsung behavior.
 
 ## Findings
-- Live Samsung testing confirms the repaired safety center loads and existing verified backup history is usable.
-- The prior scope picker exposed only `One saved Whop source` and `Entire Whop importer`; it had no group-level choice.
-- Saved source records already carry `default_group`, and `listSourceOptions()` already exposes `groupKey` for the built-in Black Box and Hidden Files groupings.
-- The durable backup table intentionally allows only `scope IN ('all', 'source')`, and each signed R2 archive has a 10 MB safety ceiling.
-- Adding a durable `group` archive scope would require a D1 constraint/schema migration and could turn a large group into one oversized recovery blob.
-- The safer execution path is one owner group action that sequentially creates the existing independently verified **source** backup for every saved source in that group. This reuses the proven archive/restore implementation and keeps partial success recoverable if one source fails.
+- PR #26 merged to `main` and the live Control Center immediately showed the new production runtime.
+- Live Samsung screenshot at 09:36 EDT showed **Connected & verified**, a freshly verified connection time, and 15 currently accessible approved sources while the global banner still said **“Whop did not return a valid customer identity.”**
+- Whop OAuth `/oauth/userinfo` returns the authenticated user ID in OIDC `sub` (for example `user_xxxxx`). The customer callback incorrectly required `profile.id`.
+- The callback therefore could exchange/store valid OAuth tokens and then fail only during customer-session promotion. This explains how the same page could have a working verified Whop session and an identity error simultaneously.
+- `customer-pending` sessions were accepted by the shared `requireAdmin()` path. If customer promotion failed, the pending browser cookie could still reach general Control Center APIs before paid entitlement promotion completed.
+- Failed customer promotion also left the pending cookie/session in place instead of clearing it.
+- The browser replayed `?whop=error&message=...` on every refresh. The old callback query was never consumed, so even a later healthy dashboard could keep rendering the stale red message.
 
-## Changes in PR #26
-- Backup API overview returns saved group choices with canonical labels and exact saved-source counts.
-- Control Center scope picker includes `One saved Whop group` plus a dedicated group selector.
-- Group selection creates a verified source backup for every saved source in that group, one request at a time, with visible per-source progress.
-- Successful child backups remain independently downloadable/restorable even if another source fails; partial failure is reported truthfully.
-- Group scope explicitly disables the destructive clear/resync action and advanced destructive options.
-- Existing source and entire-importer backup/reset paths are unchanged.
-- Durable backup schema remains `all/source`; no migration, alternate archive format, compatibility shim, or duplicate backup engine was introduced.
-- Samsung cache key for the three coupled Control Center runtime assets moves together to `v=20260811.1`.
-- Permanent backup/mobile audits enforce the group selector, per-source verified orchestration, no group-reset bypass, unchanged durable schema, and synchronized cache version.
+## Current changes in PR #27
+- Customer OAuth identity now accepts the OIDC `sub` user identifier, with the former `id` shape retained only as a compatibility fallback.
+- Customer login starts OAuth directly from its isolated pending session instead of routing that pending session through the general Control Center authorization gate.
+- Customer OAuth-start failures still redirect back to the Control Center with bounded error context instead of dropping the browser on an API failure page.
+- `requireAdmin()` now rejects `customer-pending` sessions from all normal Control Center APIs.
+- Failed customer OAuth now best-effort revokes/deletes the pending Whop session and clears the pending browser cookie.
+- A small canonical Control Center callback-status runtime is injected before the main runtime. It consumes `whop`/`message` query parameters once, removes them with `history.replaceState`, and reconciles the message against the current dashboard connection state.
+- A stale callback error is suppressed when the dashboard is currently **Connected & verified**; a real current error remains visible when Whop is still disconnected.
+- Paid-importer regression coverage enforces OIDC `sub`, pending-session isolation, failed-login cleanup, one-shot callback query handling, live-state reconciliation, and JavaScript syntax.
+- An executable callback-query regression verifies that unrelated query parameters and the `#whop-importer` anchor survive cleanup.
 
 ## Existing implemented recovery foundation
 - Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
@@ -41,38 +44,42 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - Published-guide preservation by default and conflict-safe offline restore.
 - R2 archive/media pinning, stale-post filtering, preserved-guide reattachment, and retry-safe restore behavior.
 - Owner-only backup history, JSON download, restore, safe clear/resync, reset-all, and deletion.
-- No automatic source discovery/content scan on unlock; bounded mobile pagination and summary-only list payloads.
-- Mobile source/post/guide budgets remain 6/4/8, with frame-bounded indexing and lazy exact post detail.
+- One saved Whop group backup creates independently verified child source archives and reports partial failure without discarding successful copies.
+- No automatic source discovery/content scan on unlock; mobile source/post/guide budgets remain bounded at 6/4/8.
 
 ## Validation
-- [x] Previous PR #21 backup/reset/restore implementation validation passed.
-- [x] Previous PRs #22–#24 mobile-flow, cache, streamed-data, Node 22, Cloudflare preview, and production privacy/affiliate checks passed.
-- [x] Live Samsung safety center opens and shows verified backup history without the former unresponsive-page loop.
-- [x] Group-scope targeted backup audit passes and explicitly confirms one independently verified archive per saved source.
-- [x] Group-scope mobile/cache regression passes.
-- [x] JavaScript syntax validation passes as part of the Whop/content and backup audits.
-- [x] Full Node 22.23.1 `npm run build` and complete existing regression suite pass in GitHub Actions run #887.
-- [x] `npm install --ignore-scripts` reports zero vulnerabilities.
-- [x] Branch is 0 commits behind `main` and only six intended files changed.
-- [x] PR #26 is mergeable; no inline review threads exist.
-- [x] PR comments contain only expected skipped Vercel deployment telemetry and Qodo's billing-paused notice, with no code finding.
-- [ ] PR #26 merges and the production Cloudflare Pages deployment propagates.
-- [ ] Samsung Internet can select Black Box/Hidden Files as a whole group and create every child source backup with truthful success/failure counts.
+- [x] PR #26 merged to `main`.
+- [x] PR #26 Node 22 build/regression suite passed before merge.
+- [x] Live Samsung confirmed production reports the Whop connection as connected/verified and can load current readable sources.
+- [x] Root cause traced through importer login → pending session → OAuth callback → customer promotion → Control Center session gate → dashboard startup.
+- [x] Official Whop OAuth userinfo contract checked: user identity is `sub`.
+- [x] PR #27 branch is 0 commits behind current `main` and PR is mergeable.
+- [x] PR #27 full Node 22.23.1 `npm run build` / complete audit suite passed in GitHub Actions run #891.
+- [x] Targeted paid-importer/OAuth audit passed on PR #27 head.
+- [x] Executable Whop callback-flash regression passed on PR #27 head.
+- [x] Existing Whop backup/reset/restore, source-access truth, Control Center hardening/mobile/network, private-guide auth, recovery, media, discovery, and publishing regressions all passed on PR #27 head.
+- [x] `npm install --ignore-scripts` reported zero vulnerabilities on PR #27 head.
+- [x] PR #27 has no inline review threads; comments contain only expected skipped Vercel telemetry and Qodo's billing-paused notice, with no code finding.
+- [x] Diff/conflict inspection shows only the active-task record, OAuth/session/status runtime changes, focused documentation, and permanent regressions; no recovery-schema or source-reader changes.
+- [ ] PR #27 merges and Cloudflare production deployment propagates.
+- [ ] Samsung reload no longer replays the stale red identity error when the connection is verified.
+- [ ] Customer Whop login promotes to a final paid customer session or fails closed without leaving a usable pending session.
+- [ ] Samsung can select Black Box/Hidden Files as a whole group and create every child source backup with truthful success/failure counts.
 - [ ] Production JSON download succeeds on real imported content.
 - [ ] Production clear-and-resync preserves published guides and removes stale state.
 - [ ] Production restore works without relying on current Whop access and reports conflicts truthfully.
 
 ## Cleanup / conflict inspection
-- No new backup table, D1 scope value, migration, archive schema version, or second restore path.
-- No group-wide destructive reset is added.
-- Existing exact-source restore/download semantics remain the recovery unit of record.
-- Existing 10 MB per-archive ceiling remains intact rather than becoming a group-sized blob.
-- Diff contains exactly: this task record, backup browser runtime, Control Center HTML, backup overview endpoint, and two permanent audit files.
-- No unrelated Whop reader, publishing, discovery, or website redesign work is part of PR #26.
+- No alternate OAuth implementation or second paid-access engine was added.
+- Pending OAuth no longer needs a general-admin exception.
+- Failed pending sessions are actively removed rather than preserved as compatibility state.
+- The callback-status runtime has one responsibility: consume server callback flash state before the main Control Center runtime and reconcile it to live connection truth.
+- Existing recovery archive schema, group backup orchestration, restore path, source decisions, paid-entitlement checks, and destructive reset boundaries are unchanged.
+- PR #27 is 0 commits behind `main`; its current diff spans 10 intentional files and contains no unrelated feature work.
 
 ## Current branch / PR
-- Branch: `fix/whop-group-backup-scope`
-- PR #26 — `Back up every saved Whop source by group`
+- Branch: `fix/issue19-whop-oauth-status`
+- PR #27 — `Fix stale Whop identity errors and pending OAuth access`
 
 ## Definition of Done
 - The Control Center presents one understandable ordered workflow on mobile and desktop.
@@ -80,6 +87,8 @@ Issue #19 — Back up Whop imports before clear-and-resync, including a usable m
 - A group backup verifies every successful child source independently and reports partial failures without discarding good recovery copies.
 - Group selection cannot trigger destructive reset semantics accidentally.
 - No destructive reset can start without a newly verified restorable backup.
+- Whop callback identity and status cannot contradict the currently verified server state.
+- Incomplete customer OAuth cannot enter general Control Center APIs.
 - Backup download and restore work after Whop access is removed.
 - Published guides remain by default and newer guides are never overwritten silently.
 - Targeted tests, full build, cleanup, review, deployment, Samsung Internet validation, and live recovery validation pass.

@@ -212,7 +212,11 @@ export async function readAdminSession(request, env) {
 export async function requireAdmin(request, env) {
   const session = await readAdminSession(request, env);
   if (!session) throw new HttpError(401, 'Sign in to the SniperPlug Control Center first.');
-  if (session.kind === 'customer-pending') return session;
+  if (session.kind === 'customer-pending') {
+    throw new HttpError(401, 'Finish signing in with Whop before opening the Control Center.', {
+      code: 'customer_oauth_pending',
+    });
+  }
   if (isCustomerSession(session)) {
     const access = await assertPaidImporterAccess(request, env, session);
     return { ...session, access };
