@@ -10,6 +10,8 @@ const access = read('functions/_lib/paid-access.js');
 const auth = read('functions/_lib/auth.js');
 const login = read('functions/api/importer-login.js');
 const callback = read('functions/api/whop/oauth/callback.js');
+const middleware = read('functions/_middleware.js');
+const flash = read('assets/js/control-center-whop-flash.js');
 const guard = read('assets/js/control-center-network-guard.js');
 const example = read('.dev.vars.example');
 
@@ -35,11 +37,18 @@ assert.ok(callback.includes('DELETE FROM whop_sessions WHERE admin_session_id = 
 assert.ok(callback.includes("browserSession?.kind !== 'customer-pending'") && callback.includes('disconnectWhop') && callback.includes('clearAdminSession()'), 'Failed customer OAuth can leave a pending cookie or encrypted Whop session behind.');
 assert.ok(guard.includes('/api/importer-login') && guard.includes('Private owner password'), 'The customer Whop login and owner fallback are not clearly separated in the UI.');
 
+assert.ok(middleware.includes('/assets/js/control-center-whop-flash.js?v=20260811.1'), 'The one-shot OAuth callback status runtime is not injected before the Control Center runtime.');
+assert.ok(flash.includes("url.searchParams.delete('whop')") && flash.includes("url.searchParams.delete('message')") && flash.includes('history.replaceState'), 'OAuth callback query state can replay forever after refresh.');
+assert.ok(flash.includes("'sniperplug:dashboard-refreshed'") && flash.includes("whopState === 'connected'"), 'Callback messages are not reconciled against the current verified Whop connection.');
+assert.ok(flash.includes("callbackState === 'error' && whopState === 'disconnected'"), 'A real current OAuth error is not preserved when Whop remains disconnected.');
+
 for (const file of [
   'functions/_lib/paid-access.js',
   'functions/_lib/auth.js',
+  'functions/_middleware.js',
   'functions/api/importer-login.js',
   'functions/api/whop/oauth/callback.js',
+  'assets/js/control-center-whop-flash.js',
   'assets/js/control-center-network-guard.js',
 ]) {
   const result = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
@@ -50,6 +59,7 @@ console.log('\nSNIPERPLUG PAID IMPORTER ACCESS AUDIT PASSED\n');
 console.log('✓ Customers sign in with individual Whop identities instead of sharing the owner password.');
 console.log('✓ Whop OIDC userinfo binds customer sessions from the canonical `sub` identity.');
 console.log('✓ Unfinished or failed customer OAuth cannot become a general Control Center session.');
+console.log('✓ OAuth callback messages are one-shot and cannot contradict a currently verified connection after refresh.');
 console.log('✓ Current importer-product access and linked Discord identity are verified server-side.');
 console.log('✓ Every configured Discord server confirms live membership before customer access is allowed.');
 console.log('✓ Revoked, expired, unlinked, departed, or unverifiable customers fail closed.');
