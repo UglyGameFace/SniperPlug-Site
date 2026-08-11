@@ -253,10 +253,17 @@
     const backups = state.overview?.backups || [];
     if (elements.empty) elements.empty.hidden = backups.length > 0;
     if (!(elements.history instanceof HTMLElement)) return;
-    elements.history.innerHTML = backups.map((backup) => `
+    elements.history.innerHTML = backups.map((backup) => {
+      const sourceSuffix = String(backup.experienceId || '').slice(-6);
+      const backupSuffix = String(backup.backupId || '').slice(-6);
+      const label = String(backup.displayLabel || backup.label || (backup.scope === 'source' ? 'Whop source' : 'Entire Whop importer'));
+      const identity = backup.scope === 'source'
+        ? `${backup.groupLabel ? `${backup.groupLabel} · ` : ''}Source ID …${sourceSuffix} · Backup ID …${backupSuffix}`
+        : `Entire importer · Backup ID …${backupSuffix}`;
+      return `
       <article class="whop-backup-row" data-backup-id="${escapeHtml(backup.backupId)}">
         <div class="whop-backup-main">
-          <div><strong>${escapeHtml(backup.label)}</strong><span>${escapeHtml(backup.scope === 'source' ? `One source · …${String(backup.experienceId || '').slice(-6)}` : 'Entire importer')}</span></div>
+          <div><strong>${escapeHtml(label)}</strong><span>${escapeHtml(identity)}</span></div>
           <span class="state-pill" data-state="${escapeHtml(backup.status)}">${escapeHtml(backup.status)}</span>
         </div>
         <div class="whop-backup-meta">
@@ -277,7 +284,8 @@
           </div>`}
         ${backup.restoredAt ? `<small>Last restored ${escapeHtml(formatDate(backup.restoredAt))} · ${Number(backup.restoreCount || 0)} restore(s)</small>` : ''}
       </article>
-    `).join('');
+    `;
+    }).join('');
   }
 
   function syncControls() {
@@ -496,7 +504,7 @@
     openDialog({
       type: 'restore',
       backupId: id,
-      title: `Restore “${backup.label}”?`,
+      title: `Restore “${backup.displayLabel || backup.label}”?`,
       copy: 'Restore works without current Whop access. Newer guides are preserved and reported as conflicts instead of being overwritten.',
       counts: backup.counts,
       phrase: backup.restorePhrase,
@@ -510,7 +518,7 @@
     openDialog({
       type: 'delete',
       backupId: id,
-      title: `Delete backup “${backup.label}”?`,
+      title: `Delete backup “${backup.displayLabel || backup.label}”?`,
       copy: 'This removes the recovery snapshot and releases its media pins. Existing live guides are not changed.',
       counts: backup.counts,
       phrase: backup.deletePhrase,
