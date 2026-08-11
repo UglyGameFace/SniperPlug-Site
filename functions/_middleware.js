@@ -7,7 +7,10 @@ const REQUIRED_CONTROL_CONFIGURATION = [
   'WHOP_TOKEN_SECRET',
 ];
 
-const SOURCE_ACCESS_SCRIPT = '<script src="/assets/js/control-center-source-access.js?v=20260731.1" defer></script>';
+const CONTROL_CENTER_RUNTIME_SCRIPTS = Object.freeze([
+  '/assets/js/control-center-source-access.js?v=20260731.1',
+  '/assets/js/control-center-whop-flash.js?v=20260811.1',
+]);
 
 function missingControlConfiguration(env) {
   return REQUIRED_CONTROL_CONFIGURATION.filter((name) => {
@@ -68,9 +71,10 @@ async function injectControlCenterRuntime(original, pathname) {
   if (!isControlCenterPage(pathname) || !contentType.includes('text/html')) return new Response(original.body, original);
 
   const html = await original.text();
-  const injected = html.includes('/assets/js/control-center-source-access.js')
-    ? html
-    : html.replace('</head>', `  ${SOURCE_ACCESS_SCRIPT}\n</head>`);
+  const missingScripts = CONTROL_CENTER_RUNTIME_SCRIPTS.filter((src) => !html.includes(src.split('?')[0]));
+  const injected = missingScripts.length
+    ? html.replace('</head>', `${missingScripts.map((src) => `  <script src="${src}" defer></script>`).join('\n')}\n</head>`)
+    : html;
   const headers = new Headers(original.headers);
   headers.delete('content-length');
   headers.delete('etag');
