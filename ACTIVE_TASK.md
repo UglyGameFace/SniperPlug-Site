@@ -4,95 +4,87 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — backup engine and all four Samsung mobile repairs merged/deployed; final live Samsung and recovery validation pending.** PR #21 merged as `2124770e6679fce9d21cafb2b0efe90edda16d0c`, PR #22 as `f7f0fab1ab5c44ec058a4665a6070cedf489cdcd`, PR #23 as `95078f2eb1e802dae4255cbf8d1e11d06fa3f2ac`, and PR #24 as `63e50964d109e2772a591c5e970ba0b9c338e4d4`. Production Node 22, private-guide privacy, and affiliate-readiness checks passed after the final deployment. The remaining gates require the owner’s authenticated Samsung Internet session and real imported Whop content.
+**Active — existing backup/recovery engine and Samsung mobile repairs are deployed; live validation exposed one missing recovery scope, now being repaired on `fix/whop-group-backup-scope`.** Production completion remains unclaimed until the group-scope repair passes targeted/full validation, merges/deploys, and the owner completes the remaining real backup/download/reset/restore checks.
 
-## Confirmed findings
-- Reconnecting Whop replaces OAuth access but does not clear saved source/post/guide/video/media state.
-- A safe reset needs a durable recovery archive that remains restorable after Whop access is lost.
-- The first production recovery panel competed with the normal import flow and loaded backup history automatically.
-- Unlocking also started dashboard, bulk history, recent actions, and Whop discovery together.
-- Discovery could rerun itself up to eight times only 350 ms apart while rebuilding source-group DOM.
-- Opening an approved source immediately started a content scan.
-- Source and post views eventually rendered every card, producing a large control wall and freezing Samsung Internet.
-- Mobile blur, shadows, animation, and smooth scrolling increased paint work during the same heavy operations.
-- The original Control Center HTML kept old asset-version query strings, so Samsung Internet could continue serving the frozen pre-repair runtime after deployment.
-- Even after bounded card rendering, the scan API still returned every post with its complete Markdown body and full attachment payload, forcing Samsung Internet to parse and map all hidden content before showing the first page.
-- Unlock still mapped all guide summaries and rendered Whop, categories, and guide cards in one synchronous burst.
+## Scope
+1. Keep the existing signed/checksum-verified R2 archive format and exact-source/all-importer restore behavior authoritative.
+2. Add a first-class **one saved Whop group** backup choice to the existing safety center.
+3. A group backup must include every saved source assigned to that group without forcing the owner to tap each source manually.
+4. Preserve independent verification, download, restore, deletion, media pinning, and size limits for every child source archive.
+5. Do not invent a destructive group reset. Group scope is backup-only; destructive clear/resync remains exact-source or whole-importer only.
+6. Preserve Samsung/mobile bounded rendering, lazy work, cache-busting, and the single safety-center workflow.
+7. Validate targeted backup/mobile audits, JavaScript syntax, full Node 22 build/regression suite, cleanup, conflict inspection, deployment, and live Samsung behavior.
 
-## Implemented and merged in PR #21
+## Findings
+- Live Samsung testing confirms the repaired safety center loads and existing verified backup history is usable.
+- The current scope picker exposes only `One saved Whop source` and `Entire Whop importer`; it has no group-level choice.
+- Saved source records already carry `default_group`, and `listSourceOptions()` already exposes `groupKey` for the built-in Black Box and Hidden Files groupings.
+- The backup API overview already returns each saved source and its `groupKey`; the missing behavior is primarily orchestration/UI rather than missing source ownership data.
+- Durable backup rows intentionally allow only `scope IN ('all', 'source')`, and each signed R2 archive has a 10 MB safety ceiling.
+- Adding a new durable `group` archive scope would require a D1 constraint/schema migration and could turn a large group into one oversized recovery blob.
+- The safer execution path is to treat a group selection as one owner action that sequentially creates the existing, independently verified **source** backup for every saved source in that group. This reuses the proven archive/restore implementation and keeps partial success recoverable if one source fails.
+
+## Changes on `fix/whop-group-backup-scope`
+- Backup API overview now returns saved group choices with canonical labels and exact saved-source counts.
+- Control Center scope picker now includes `One saved Whop group` plus a dedicated group selector.
+- Group selection creates a verified source backup for every saved source in that group, one request at a time, with visible per-source progress.
+- Successful child backups remain independently downloadable/restorable even if another source in the group fails; partial failure is reported truthfully.
+- Group scope explicitly disables the destructive clear/resync action and advanced destructive options.
+- Existing source and entire-importer backup/reset paths are unchanged.
+- Durable backup schema remains `all/source`; no migration, alternate archive format, compatibility shim, or duplicate backup engine was introduced.
+- Samsung cache key for the three coupled Control Center runtime assets moves together to `v=20260811.1`.
+- Permanent backup/mobile audits are being extended to enforce the group selector, per-source verified orchestration, no group-reset bypass, unchanged durable schema, and synchronized cache version.
+
+## Existing implemented recovery foundation
 - Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
 - Exact source, current/stale post, category, guide, course-video, and media-ledger snapshots.
 - Read-back verification, owner-bound signatures, current-state checks, one-time reset authorization, and typed confirmation.
 - Published-guide preservation by default and conflict-safe offline restore.
 - R2 archive/media pinning, stale-post filtering, preserved-guide reattachment, and retry-safe restore behavior.
 - Owner-only backup history, JSON download, restore, safe clear/resync, reset-all, and deletion.
-
-## Implemented and merged in PR #22
-- No automatic source discovery or content scan on unlock.
-- Explicit `Load sources` action; later passes are manual `Refresh sources` actions.
-- Removed the eight-pass 350 ms discovery loop.
-- Source groups remain collapsed and render 12 matching sources at a time with explicit Load more.
-- Search/filtering runs before source pagination, so matches beyond the original first page remain visible.
-- Rerendering one filtered group replaces only that group’s detached source-card index entries.
-- Choosing or approving a source no longer scans it; `Review content` is a separate action.
-- Content review renders 10 cards at a time with explicit Load more.
-- Guide review renders 24 summaries at a time with existing lazy detail loading.
-- Bulk-job and recent-action history load only when the bulk workflow is opened.
-- Backup history loads only when the recovery workflow is opened.
-- Backup, restore, and clear/resync live together in one collapsed safety center at the end of the ordered workflow.
-- One action selector chooses backup-only or safe clear/resync; advanced destructive options stay collapsed.
-- The new Continue action shares all busy/valid locks to prevent duplicate mobile taps.
-- Mobile removes expensive blur/shadow/smooth-scroll work and disables busy animations.
-- Permanent regressions enforce bounded pagination, manual scanning, lazy history, one recovery center, filtered pagination, and mobile action locks.
-
-## Implemented and merged in PR #23
-- `control-center-hardening.css`, `control-center-v2.js`, and `control-center-whop-backups.js` share the forced cache key `v=20260803.2`.
-- A permanent regression requires all three repaired runtime assets to move together on future changes.
-- The production HTML cannot silently point Samsung Internet at the old frozen runtime after a repair deployment.
-
-## Implemented and merged in PR #24
-- Scan and saved-post list responses expose lightweight review summaries instead of every complete Markdown body and full attachment payload.
-- The exact post body is fetched from the owner-only detail route only when one Preview is opened.
-- Mobile source, post, and guide pages are reduced to 6, 4, and 8 items respectively; desktop retains 12, 10, and 24.
-- Large post and guide collections are indexed in frame-bounded chunks, and dashboard sections render across separate frames.
-- The repaired runtime assets move together to cache key `v=20260803.3`.
-- Permanent regressions enforce the summary/detail boundary, lazy exact content, frame yielding, responsive page budgets, and synchronized cache versions.
+- No automatic source discovery/content scan on unlock; bounded mobile pagination and summary-only list payloads.
+- Mobile source/post/guide budgets remain 6/4/8, with frame-bounded indexing and lazy exact post detail.
 
 ## Validation
-- [x] PR #21 focused backup/reset/restore audit passed.
-- [x] PR #21 clean-head full Node 22 suite passed and both Qodo findings were resolved.
-- [x] PR #21 squash-merged and production post-merge checks passed.
-- [x] PR #22 focused mobile-flow audit passed.
-- [x] PR #22 complete existing Node 22 build passed after replacing render-all behavior with bounded pagination.
-- [x] PR #22 busy-lock, lazy-history, and filtered-pagination follow-ups passed focused and full builds.
-- [x] PR #22 cleanup left only seven permanent runtime/UI/task/regression files.
-- [x] PR #22 clean-head CI #869, affiliate checks, retired-route checks, Cloudflare preview, and review passed.
-- [x] PR #22 squash-merged and production post-merge Node 22/privacy/affiliate/retired-route checks passed.
-- [x] PR #23 focused cache-version audit and clean-head full Node 22 suite #875 passed.
-- [x] PR #23 final scope was exactly two files; Cloudflare preview deployed and no review threads remained.
-- [x] PR #23 squash-merged and production HTML/Node 22/privacy/affiliate checks passed.
-- [x] PR #24 focused streamed-data mobile audit and full Node 22 suite passed.
-- [x] PR #24 final scope was exactly seven permanent files; all temporary workflows/triggers were removed.
-- [x] PR #24 clean-head CI #884, Cloudflare preview, mergeability, and review-thread cleanup passed.
-- [x] PR #24 squash-merged as `63e50964d109e2772a591c5e970ba0b9c338e4d4`; production Node 22/privacy/affiliate checks passed.
-- [ ] Samsung Internet opens/unlocks and scans a real source without a visible freeze or unresponsive-page warning.
-- [ ] Production backup creation and JSON download succeed on real imported content.
+- [x] Previous PR #21 backup/reset/restore implementation validation passed.
+- [x] Previous PRs #22–#24 mobile-flow, cache, streamed-data, Node 22, Cloudflare preview, and production privacy/affiliate checks passed.
+- [x] Live Samsung safety center opens and shows verified backup history without the former unresponsive-page loop.
+- [ ] Group-scope targeted backup audit passes.
+- [ ] Group-scope mobile/cache regression passes.
+- [ ] JavaScript syntax/static validation passes.
+- [ ] Full Node 22 build and complete existing regression suite pass on clean PR head.
+- [ ] Final branch-vs-main, changed-file, duplicate/conflict, and review-thread inspection pass.
+- [ ] Group-scope repair merges and production Cloudflare deployment propagates.
+- [ ] Samsung Internet can select Black Box/Hidden Files as a whole group and create every child source backup with truthful success/failure counts.
+- [ ] Production JSON download succeeds on real imported content.
 - [ ] Production clear-and-resync preserves published guides and removes stale state.
 - [ ] Production restore works without relying on current Whop access and reports conflicts truthfully.
 
+## Cleanup / safety boundary
+- No new backup table, D1 scope value, migration, archive schema version, or second restore path.
+- No group-wide destructive reset is added.
+- Existing exact-source restore/download semantics remain the recovery unit of record.
+- Existing 10 MB per-archive ceiling remains intact rather than becoming a group-sized blob.
+- No unrelated Whop reader, publishing, discovery, or website redesign work is part of this branch.
+
+## Current branch
+- `fix/whop-group-backup-scope`
+- PR pending after implementation record and focused inspection.
+
 ## Definition of Done
 - The Control Center presents one understandable ordered workflow on mobile and desktop.
-- Unlocking performs only the minimum overview work and never starts a source/content scan.
-- Large source, post, and guide collections remain behind explicit bounded pagination and summary-only list payloads.
-- Backup and recovery are one non-repetitive safety center, not a competing workflow.
-- No destructive Whop reset can start without a newly verified restorable backup.
+- Owner can back up one exact source, one entire saved group, or the entire importer without repetitive per-source tapping.
+- A group backup verifies every successful child source independently and reports partial failures without discarding good recovery copies.
+- Group selection cannot trigger destructive reset semantics accidentally.
+- No destructive reset can start without a newly verified restorable backup.
 - Backup download and restore work after Whop access is removed.
 - Published guides remain by default and newer guides are never overwritten silently.
 - Targeted tests, full build, cleanup, review, deployment, Samsung Internet validation, and live recovery validation pass.
 
 ## Backlog
+- Issue #25 — Read authorized Whop Content / Better Content experiences (`Make Money Here`, Content, Better Content, Hidden Files Onboarding, and other app-specific experiences) after Issue #19 reaches Definition of Done.
 - Issue #20 — full website duplication audit after Issue #19 reaches Definition of Done.
 - Universal owner-authorized proxy/play/download support for non-Course Whop videos.
 
 ## Scope lock
-No unrelated implementation begins until Issue #19 reaches Definition of Done unless the owner explicitly switches priorities.
+No unrelated implementation begins until Issue #19 reaches Definition of Done unless the owner explicitly sends the required FORCE SWITCH instruction.
