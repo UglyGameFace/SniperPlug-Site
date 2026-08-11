@@ -73,6 +73,17 @@ assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)'
 assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish'));
 assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"));
 
+// Backup history must stay human-identifiable even when one group creates many child archives.
+// Existing generic rows are repaired from the saved exact-source catalog before a later reset can
+// delete that source row, and the browser shows both source and backup identity on every card.
+assert.ok(endpoint.includes('async function enrichBackupIdentity'));
+assert.ok(endpoint.includes('UPDATE whop_import_backups SET label = ?'));
+assert.ok(endpoint.includes('displayLabel: effectiveLabel') && endpoint.includes('groupLabel: groupLabel(source?.groupKey)'));
+assert.ok(endpoint.includes("const result = await createWhopImportBackup(env, admin.sid, body)") && endpoint.includes('const [backup] = await enrichBackupIdentity(env, [result.backup], sources)'), 'New backups are not labeled before a destructive reset can remove source metadata.');
+assert.ok(client.includes('backup.displayLabel || backup.label'));
+assert.ok(client.includes('Source ID …${sourceSuffix} · Backup ID …${backupSuffix}'));
+assert.ok(client.includes('Restore “${backup.displayLabel || backup.label}”?') && client.includes('Delete backup “${backup.displayLabel || backup.label}”?'));
+
 // A group backup is deliberately an orchestration of the existing exact-source archive path.
 // That keeps every source independently verified/restorable, preserves the 10 MB per-archive
 // ceiling, and avoids a risky D1 CHECK/schema migration just to add a UI convenience scope.
@@ -122,5 +133,6 @@ console.log('✓ Complete signed backups live in bounded R2 archives, not one D1
 console.log('✓ D1 stores the verified manifest and uses bounded JSON batches for restore.');
 console.log('✓ Reset requires a current verified archive and preserves published guides by default.');
 console.log('✓ Whole-group backup safely creates one independently verified archive per saved source.');
+console.log('✓ Recovery history keeps exact source and backup identities distinguishable on mobile.');
 console.log('✓ Backup archives and their referenced media remain pinned through the cleanup grace model.');
 console.log('✓ Stale posts disappear from review and preserved published guides reconnect after fresh scans.');

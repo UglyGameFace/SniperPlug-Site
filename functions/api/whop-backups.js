@@ -5,6 +5,7 @@ import {
   json,
   methodNotAllowed,
   readJson,
+  requireDatabase,
   requireSameOrigin,
 } from '../_lib/http.js';
 import { scanApprovedSource } from '../_lib/posts.js';
@@ -44,17 +45,60 @@ function downloadResponse(backupIdValue, archiveJson) {
   });
 }
 
-async function overview(env) {
-  const [backups, sourceOptions] = await Promise.all([
-    listWhopImportBackups(env),
-    listSourceOptions(env),
-  ]);
-  const sources = sourceOptions.filter((source) => source.experienceId).map((source) => ({
+function sourceOverview(sourceOptions) {
+  return sourceOptions.filter((source) => source.experienceId).map((source) => ({
     experienceId: source.experienceId,
     label: source.label,
     decision: source.decision,
     groupKey: source.groupKey || null,
   }));
+}
+
+function groupLabel(groupKey) {
+  const key = String(groupKey || '');
+  return DEFAULT_WHOP_GROUPS.find((group) => group.key === key)?.label || null;
+}
+
+async function enrichBackupIdentity(env, backups, sources) {
+  const byExperience = new Map((sources || []).map((source) => [String(source.experienceId || ''), source]));
+  const db = requireDatabase(env);
+  const updates = [];
+  const enriched = (backups || []).map((backup) => {
+    if (backup.scope !== 'source' || !backup.experienceId) {
+      return {
+        ...backup,
+        displayLabel: backup.label || 'Entire Whop importer',
+        groupKey: null,
+        groupLabel: null,
+      };
+    }
+    const source = byExperience.get(String(backup.experienceId)) || null;
+    const effectiveLabel = String(source?.label || backup.label || `Whop source · …${String(backup.experienceId).slice(-6)}`).trim();
+    if (source?.label && source.label !== backup.label && backup.backupId) {
+      updates.push(db.prepare(`
+        UPDATE whop_import_backups SET label = ?
+        WHERE backup_id = ? AND deleted_at IS NULL
+      `).bind(source.label, backup.backupId));
+    }
+    return {
+      ...backup,
+      label: effectiveLabel,
+      displayLabel: effectiveLabel,
+      groupKey: source?.groupKey || null,
+      groupLabel: groupLabel(source?.groupKey),
+    };
+  });
+  if (updates.length) await db.batch(updates);
+  return enriched;
+}
+
+async function overview(env) {
+  const [backupRows, sourceOptions] = await Promise.all([
+    listWhopImportBackups(env),
+    listSourceOptions(env),
+  ]);
+  const sources = sourceOverview(sourceOptions);
+  const backups = await enrichBackupIdentity(env, backupRows, sources);
   const groups = DEFAULT_WHOP_GROUPS.map((group) => {
     const sourceCount = sources.filter((source) => source.groupKey === group.key).length;
     return sourceCount > 0 ? {
@@ -71,7 +115,10 @@ async function postAction(request, env, admin, currentAction) {
   const body = await readJson(request, { maxBytes: 250_000 });
   if (currentAction === 'preview') return json(await previewWhopReset(env, admin.sid, body));
   if (currentAction === 'create') {
-    return json(await createWhopImportBackup(env, admin.sid, body));
+    const result = await createWhopImportBackup(env, admin.sid, body);
+    const sources = sourceOverview(await listSourceOptions(env));
+    const [backup] = await enrichBackupIdentity(env, [result.backup], sources);
+    return json({ ...result, backup });
   }
   if (currentAction === 'authorize-reset') {
     return json({ authorization: await authorizeWhopReset(env, backupId(request, body), body) });
