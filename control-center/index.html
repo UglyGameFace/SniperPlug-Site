@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.14">
-  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260803.3">
+  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260811.1">
   <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/whop-backups.css?v=20260803.1">
@@ -54,8 +54,9 @@
       <section class="control-panel" id="whop-backups" data-whop-backup-panel>
         <header class="panel-head"><div><span class="eyebrow">Backup & reset</span><h2>Keep every imported method recoverable</h2><p>Create signed recovery snapshots, clear stale importer state safely, and restore methods even after Whop access is gone.</p></div><button class="btn ghost panel-action" type="button" data-refresh-backups>Refresh backups</button></header>
         <div class="whop-backup-tools">
-          <label><span>Backup/reset scope</span><select data-backup-scope><option value="source" selected>One saved Whop source</option><option value="all">Entire Whop importer</option></select></label>
-          <label><span>Saved source</span><select data-backup-source><option value="">Loading saved sources…</option></select></label>
+          <label><span>Backup/reset scope</span><select data-backup-scope><option value="source" selected>One saved Whop source</option><option value="group">One saved Whop group</option><option value="all">Entire Whop importer</option></select></label>
+          <label data-backup-source-field><span>Saved source</span><select data-backup-source><option value="">Loading saved sources…</option></select></label>
+          <label data-backup-group-field hidden><span>Saved group</span><select data-backup-group><option value="">Loading saved groups…</option></select></label>
         </div>
         <div class="whop-reset-options">
           <label class="rights-check"><input type="checkbox" data-reset-resync checked><span>After clearing one source, reconnect it and scan only the current Whop posts.</span></label>
@@ -206,9 +207,9 @@
   </div>
 
   <script src="/assets/js/control-center-network-guard.js?v=20260730.14" defer></script>
-  <script src="/assets/js/control-center-v2.js?v=20260803.3" defer></script>
+  <script src="/assets/js/control-center-v2.js?v=20260811.1" defer></script>
   <script src="/assets/js/control-center-lifecycle.js?v=20260730.14" defer></script>
-  <script src="/assets/js/control-center-whop-backups.js?v=20260803.3" defer></script>
+  <script src="/assets/js/control-center-whop-backups.js?v=20260811.1" defer></script>
   <script src="/assets/js/control-center-integrity-fix.js?v=20260730.14" defer></script>
 </body>
 </html>
