@@ -1,9 +1,13 @@
-import { createAdminSession } from '../../../_lib/auth.js';
+import {
+  clearAdminSession,
+  createAdminSession,
+  readAdminSession,
+} from '../../../_lib/auth.js';
 import { appendCookie, HttpError, redirect, requireDatabase } from '../../../_lib/http.js';
-import { finishWhopOAuth } from '../../../_lib/whop.js';
+import { disconnectWhop, finishWhopOAuth } from '../../../_lib/whop.js';
 
 function customerUserId(profile) {
-  const id = String(profile?.id || '').trim();
+  const id = String(profile?.sub || profile?.id || '').trim();
   if (!/^user_[A-Za-z0-9_-]+$/.test(id)) throw new HttpError(403, 'Whop did not return a valid customer identity.');
   return id;
 }
@@ -47,17 +51,25 @@ async function promoteCustomerSession(env, pendingSid, profile) {
   return session.cookie;
 }
 
+function oauthErrorRedirect(request, error) {
+  const url = new URL('/control-center/', request.url);
+  url.searchParams.set('whop', 'error');
+  url.searchParams.set('message', String(error?.message || 'Whop login failed.').slice(0, 180));
+  url.hash = 'whop-importer';
+  return redirect(url.toString());
+}
+
 export async function onRequest(context) {
+  const browserSession = await readAdminSession(context.request, context.env).catch(() => null);
   try {
     const result = await finishWhopOAuth(context.request, context.env);
     const customerCookie = await promoteCustomerSession(context.env, result.adminSessionId, result.profile);
     const response = redirect(`${new URL(context.request.url).origin}/control-center/?whop=connected#whop-importer`);
     return customerCookie ? appendCookie(response, customerCookie) : response;
   } catch (error) {
-    const url = new URL('/control-center/', context.request.url);
-    url.searchParams.set('whop', 'error');
-    url.searchParams.set('message', String(error?.message || 'Whop login failed.').slice(0, 180));
-    url.hash = 'whop-importer';
-    return redirect(url.toString());
+    const response = oauthErrorRedirect(context.request, error);
+    if (browserSession?.kind !== 'customer-pending') return response;
+    await disconnectWhop(context.request, context.env, browserSession).catch(() => null);
+    return appendCookie(response, clearAdminSession());
   }
 }
