@@ -4,9 +4,9 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — PR #26 is merged to `main`; live Samsung validation exposed an OAuth/session-state defect that is now being repaired on `fix/issue19-whop-oauth-status`.**
+**Active — PR #27 (`fix/issue19-whop-oauth-status`) is open, mergeable, and green after live Samsung validation exposed a contradictory Whop OAuth/session state.**
 
-Production completion remains unclaimed until this follow-up is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
+Production completion remains unclaimed until PR #27 is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
 
 ## Scope
 1. Keep the existing signed/checksum-verified R2 archive format and exact-source/all-importer restore behavior authoritative.
@@ -26,14 +26,16 @@ Production completion remains unclaimed until this follow-up is merged/deployed 
 - Failed customer promotion also left the pending cookie/session in place instead of clearing it.
 - The browser replayed `?whop=error&message=...` on every refresh. The old callback query was never consumed, so even a later healthy dashboard could keep rendering the stale red message.
 
-## Current changes
+## Current changes in PR #27
 - Customer OAuth identity now accepts the OIDC `sub` user identifier, with the former `id` shape retained only as a compatibility fallback.
 - Customer login starts OAuth directly from its isolated pending session instead of routing that pending session through the general Control Center authorization gate.
+- Customer OAuth-start failures still redirect back to the Control Center with bounded error context instead of dropping the browser on an API failure page.
 - `requireAdmin()` now rejects `customer-pending` sessions from all normal Control Center APIs.
 - Failed customer OAuth now best-effort revokes/deletes the pending Whop session and clears the pending browser cookie.
 - A small canonical Control Center callback-status runtime is injected before the main runtime. It consumes `whop`/`message` query parameters once, removes them with `history.replaceState`, and reconciles the message against the current dashboard connection state.
 - A stale callback error is suppressed when the dashboard is currently **Connected & verified**; a real current error remains visible when Whop is still disconnected.
-- Paid-importer regression coverage now enforces OIDC `sub`, pending-session isolation, failed-login cleanup, one-shot callback query handling, live-state reconciliation, and JavaScript syntax.
+- Paid-importer regression coverage enforces OIDC `sub`, pending-session isolation, failed-login cleanup, one-shot callback query handling, live-state reconciliation, and JavaScript syntax.
+- An executable callback-query regression verifies that unrelated query parameters and the `#whop-importer` anchor survive cleanup.
 
 ## Existing implemented recovery foundation
 - Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
@@ -51,11 +53,15 @@ Production completion remains unclaimed until this follow-up is merged/deployed 
 - [x] Live Samsung confirmed production reports the Whop connection as connected/verified and can load current readable sources.
 - [x] Root cause traced through importer login → pending session → OAuth callback → customer promotion → Control Center session gate → dashboard startup.
 - [x] Official Whop OAuth userinfo contract checked: user identity is `sub`.
-- [x] Follow-up branch is based on current `main` and is 0 commits behind.
-- [ ] Follow-up targeted paid-access/OAuth audit passes in CI.
-- [ ] Full Node 22 build/regression suite passes on the follow-up PR head.
-- [ ] Follow-up diff/review/conflict inspection is clean.
-- [ ] Follow-up merges and Cloudflare production deployment propagates.
+- [x] PR #27 branch is 0 commits behind current `main` and PR is mergeable.
+- [x] PR #27 full Node 22.23.1 `npm run build` / complete audit suite passed in GitHub Actions run #891.
+- [x] Targeted paid-importer/OAuth audit passed on PR #27 head.
+- [x] Executable Whop callback-flash regression passed on PR #27 head.
+- [x] Existing Whop backup/reset/restore, source-access truth, Control Center hardening/mobile/network, private-guide auth, recovery, media, discovery, and publishing regressions all passed on PR #27 head.
+- [x] `npm install --ignore-scripts` reported zero vulnerabilities on PR #27 head.
+- [x] PR #27 has no inline review threads; comments contain only expected skipped Vercel telemetry and Qodo's billing-paused notice, with no code finding.
+- [x] Diff/conflict inspection shows only the active-task record, OAuth/session/status runtime changes, focused documentation, and permanent regressions; no recovery-schema or source-reader changes.
+- [ ] PR #27 merges and Cloudflare production deployment propagates.
 - [ ] Samsung reload no longer replays the stale red identity error when the connection is verified.
 - [ ] Customer Whop login promotes to a final paid customer session or fails closed without leaving a usable pending session.
 - [ ] Samsung can select Black Box/Hidden Files as a whole group and create every child source backup with truthful success/failure counts.
@@ -68,11 +74,12 @@ Production completion remains unclaimed until this follow-up is merged/deployed 
 - Pending OAuth no longer needs a general-admin exception.
 - Failed pending sessions are actively removed rather than preserved as compatibility state.
 - The callback-status runtime has one responsibility: consume server callback flash state before the main Control Center runtime and reconcile it to live connection truth.
-- Existing recovery archive schema, group backup orchestration, restore path, and destructive reset boundaries are unchanged.
+- Existing recovery archive schema, group backup orchestration, restore path, source decisions, paid-entitlement checks, and destructive reset boundaries are unchanged.
+- PR #27 is 0 commits behind `main`; its current diff spans 10 intentional files and contains no unrelated feature work.
 
 ## Current branch / PR
 - Branch: `fix/issue19-whop-oauth-status`
-- PR: not opened yet
+- PR #27 — `Fix stale Whop identity errors and pending OAuth access`
 
 ## Definition of Done
 - The Control Center presents one understandable ordered workflow on mobile and desktop.
