@@ -10,9 +10,13 @@
     app: root.querySelector('[data-control-app]'),
     status: $('[data-backup-status]'),
     scope: $('[data-backup-scope]'),
+    sourceField: $('[data-backup-source-field]'),
     source: $('[data-backup-source]'),
+    groupField: $('[data-backup-group-field]'),
+    group: $('[data-backup-group]'),
     create: $('[data-create-whop-backup]'),
     reset: $('[data-reset-whop-importer]'),
+    resetOptions: $('.whop-reset-options'),
     refresh: $('[data-refresh-backups]'),
     history: $('[data-backup-history]'),
     empty: $('[data-backup-empty]'),
@@ -35,6 +39,22 @@
     pending: null,
     loaded: false,
   };
+
+  function syncActionPresentation() {
+    if (!(elements.action instanceof HTMLSelectElement) || !(elements.continue instanceof HTMLButtonElement)) return;
+    const groupSelected = selectedScope().scope === 'group';
+    const resetOption = elements.action.querySelector('option[value="reset"]');
+    if (resetOption) resetOption.disabled = groupSelected;
+    if (groupSelected && elements.action.value === 'reset') elements.action.value = 'backup';
+    if (elements.resetOptions instanceof HTMLElement) {
+      elements.resetOptions.hidden = groupSelected || elements.action.value !== 'reset';
+    }
+    elements.continue.textContent = elements.action.value === 'reset'
+      ? 'Review safe clear & resync'
+      : groupSelected
+        ? 'Back up whole group'
+        : 'Create backup';
+  }
 
   function structureRecoveryPanel() {
     if (panel.dataset.structured === 'true') return;
@@ -60,7 +80,7 @@
     const intro = panel.querySelector('.panel-head p');
     const eyebrow = panel.querySelector('.panel-head .eyebrow');
     if (heading) heading.textContent = 'One safety center';
-    if (intro) intro.textContent = 'Choose a source, choose one action, then review the matching recovery history below.';
+    if (intro) intro.textContent = 'Choose one source, a whole saved group, or the entire importer, then choose the recovery action.';
     if (eyebrow) eyebrow.textContent = 'Safety · Backup & recovery';
     if (elements.refresh) elements.refresh.textContent = 'Refresh history';
 
@@ -81,7 +101,7 @@
     elements.continue = continueButton;
     actionRow.append(label, continueButton);
 
-    const resetOptions = panel.querySelector('.whop-reset-options');
+    const resetOptions = elements.resetOptions;
     if (resetOptions) {
       resetOptions.before(actionRow);
       const advanced = document.createElement('details');
@@ -97,8 +117,8 @@
     if (elements.reset) elements.reset.hidden = true;
 
     select.addEventListener('change', () => {
-      if (resetOptions) resetOptions.hidden = select.value !== 'reset';
-      continueButton.textContent = select.value === 'reset' ? 'Review safe clear & resync' : 'Create backup';
+      syncActionPresentation();
+      syncControls();
     });
     continueButton.addEventListener('click', () => {
       if (select.value === 'reset') previewReset();
@@ -177,9 +197,12 @@
   }
 
   function selectedScope() {
-    const scope = elements.scope?.value === 'source' ? 'source' : 'all';
-    const experienceId = scope === 'source' ? String(elements.source?.value || '') : null;
-    return { scope, experienceId };
+    const requested = String(elements.scope?.value || 'source');
+    if (requested === 'group') {
+      return { scope: 'group', groupKey: String(elements.group?.value || '') };
+    }
+    if (requested === 'all') return { scope: 'all', experienceId: null };
+    return { scope: 'source', experienceId: String(elements.source?.value || '') };
   }
 
   function countsMarkup(counts = {}) {
@@ -205,6 +228,16 @@
       ? sources.map((source) => `<option value="${escapeHtml(source.experienceId)}">${escapeHtml(source.label)} · …${escapeHtml(source.experienceId.slice(-6))}</option>`).join('')
       : '<option value="">No saved Whop sources</option>';
     if (sources.some((source) => source.experienceId === current)) elements.source.value = current;
+  }
+
+  function renderGroups() {
+    if (!(elements.group instanceof HTMLSelectElement)) return;
+    const current = elements.group.value;
+    const groups = state.overview?.groups || [];
+    elements.group.innerHTML = groups.length
+      ? groups.map((group) => `<option value="${escapeHtml(group.groupKey)}">${escapeHtml(group.label)} · ${Number(group.sourceCount || 0).toLocaleString()} saved source${Number(group.sourceCount || 0) === 1 ? '' : 's'}</option>`).join('')
+      : '<option value="">No saved Whop groups</option>';
+    if (groups.some((group) => group.groupKey === current)) elements.group.value = current;
   }
 
   function escapeHtml(value) {
@@ -250,17 +283,27 @@
   function syncControls() {
     const scope = selectedScope();
     const sourceRequired = scope.scope === 'source';
+    const groupRequired = scope.scope === 'group';
+    if (elements.sourceField instanceof HTMLElement) elements.sourceField.hidden = !sourceRequired;
+    if (elements.groupField instanceof HTMLElement) elements.groupField.hidden = !groupRequired;
     if (elements.source instanceof HTMLSelectElement) elements.source.disabled = state.busy || !sourceRequired;
+    if (elements.group instanceof HTMLSelectElement) elements.group.disabled = state.busy || !groupRequired;
     if (elements.resync instanceof HTMLInputElement) {
       elements.resync.disabled = state.busy || !sourceRequired;
       if (!sourceRequired) elements.resync.checked = false;
     }
-    const valid = !sourceRequired || Boolean(scope.experienceId);
+    for (const input of [elements.includePublished, elements.disconnect]) {
+      if (!(input instanceof HTMLInputElement)) continue;
+      input.disabled = state.busy || groupRequired;
+      if (groupRequired) input.checked = false;
+    }
+    const valid = sourceRequired ? Boolean(scope.experienceId) : groupRequired ? Boolean(scope.groupKey) : true;
     if (elements.create instanceof HTMLButtonElement) elements.create.disabled = state.busy || !valid;
-    if (elements.reset instanceof HTMLButtonElement) elements.reset.disabled = state.busy || !valid;
+    if (elements.reset instanceof HTMLButtonElement) elements.reset.disabled = state.busy || !valid || groupRequired;
     if (elements.refresh instanceof HTMLButtonElement) elements.refresh.disabled = state.busy;
     if (elements.continue instanceof HTMLButtonElement) elements.continue.disabled = state.busy || !valid;
     if (elements.action instanceof HTMLSelectElement) elements.action.disabled = state.busy;
+    syncActionPresentation();
     if (elements.confirm instanceof HTMLButtonElement) {
       const phrase = String(elements.phrase?.textContent || '');
       elements.confirm.disabled = state.busy || !state.pending || String(elements.confirmation?.value || '').trim() !== phrase;
@@ -274,6 +317,7 @@
       state.overview = await requestJson('overview');
       state.loaded = true;
       renderSources();
+      renderGroups();
       renderHistory();
       syncControls();
       if (!quiet) show(`Backup history ready. ${state.overview.backups.filter((backup) => backup.status === 'verified').length} verified backup(s) available.`, 'ok');
@@ -308,8 +352,53 @@
     syncControls();
   }
 
+  async function createGroupBackup(groupKey) {
+    const group = (state.overview?.groups || []).find((entry) => entry.groupKey === groupKey) || null;
+    const sources = (state.overview?.sources || []).filter((source) => source.groupKey === groupKey && source.experienceId);
+    if (!group || !sources.length) throw new Error('Choose a saved Whop group that contains at least one source.');
+    const backups = [];
+    const failures = [];
+    for (let index = 0; index < sources.length; index += 1) {
+      const source = sources[index];
+      show(`Backing up ${group.label}: source ${index + 1} of ${sources.length} · ${source.label}`, 'working');
+      try {
+        const result = await post('create', {
+          scope: 'source',
+          experienceId: source.experienceId,
+          authorizeReset: false,
+          deletePublished: false,
+          resync: false,
+          disconnectWhop: false,
+        });
+        if (!result?.backup || result.backup.status !== 'verified') throw new Error('The source backup was not verified.');
+        backups.push(result.backup);
+      } catch (error) {
+        failures.push({
+          experienceId: source.experienceId,
+          label: source.label,
+          error: String(error?.message || 'Backup failed.').slice(0, 240),
+        });
+      }
+    }
+    if (!backups.length) {
+      throw new Error(`No ${group.label} source backups were verified. ${failures[0]?.error || 'Try again after refreshing recovery history.'}`);
+    }
+    return {
+      group: true,
+      groupKey,
+      groupLabel: group.label,
+      sourceCount: sources.length,
+      backups,
+      failures,
+    };
+  }
+
   async function createBackup({ authorizeReset = false } = {}) {
     const scope = selectedScope();
+    if (scope.scope === 'group') {
+      if (authorizeReset) throw new Error('Whole-group backup does not perform destructive resets. Back up the group, then clear an exact source only if needed.');
+      return createGroupBackup(scope.groupKey);
+    }
     const body = {
       ...scope,
       authorizeReset,
@@ -325,7 +414,15 @@
     try {
       const result = await createBackup();
       await loadOverview({ quiet: true, force: true });
-      show(`Verified backup created: ${result.backup.backupId}. Download it now or keep it for one-click restore.`, 'ok');
+      if (result.group) {
+        const failed = result.failures.length;
+        show(
+          `${result.groupLabel} backup finished: ${result.backups.length}/${result.sourceCount} source backups verified.${failed ? ` ${failed} source${failed === 1 ? '' : 's'} need another try; every successful backup remains restorable.` : ' Every source is independently downloadable and restorable.'}`,
+          failed ? 'warning' : 'ok',
+        );
+      } else {
+        show(`Verified backup created: ${result.backup.backupId}. Download it now or keep it for one-click restore.`, 'ok');
+      }
     } catch (error) {
       show(error.message, 'error');
     } finally {
@@ -335,6 +432,10 @@
 
   async function previewReset() {
     const scope = selectedScope();
+    if (scope.scope === 'group') {
+      show('Whole-group recovery is backup-only for safety. Create the group backup first, then clear/resync one exact source if you need a destructive reset.', 'warning');
+      return;
+    }
     setBusy(true);
     try {
       const preview = await post('preview', {
@@ -446,6 +547,7 @@
 
   elements.scope?.addEventListener('change', syncControls);
   elements.source?.addEventListener('change', syncControls);
+  elements.group?.addEventListener('change', syncControls);
   elements.confirmation?.addEventListener('input', syncControls);
   elements.create?.addEventListener('click', createManualBackup);
   elements.reset?.addEventListener('click', previewReset);
