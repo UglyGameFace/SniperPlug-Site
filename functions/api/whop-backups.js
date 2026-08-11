@@ -8,7 +8,7 @@ import {
   requireSameOrigin,
 } from '../_lib/http.js';
 import { scanApprovedSource } from '../_lib/posts.js';
-import { listSourceOptions, saveSourceDecision } from '../_lib/source-policy.js';
+import { DEFAULT_WHOP_GROUPS, listSourceOptions, saveSourceDecision } from '../_lib/source-policy.js';
 import {
   authorizeWhopReset,
   createWhopImportBackup,
@@ -45,19 +45,25 @@ function downloadResponse(backupIdValue, archiveJson) {
 }
 
 async function overview(env) {
-  const [backups, sources] = await Promise.all([
+  const [backups, sourceOptions] = await Promise.all([
     listWhopImportBackups(env),
     listSourceOptions(env),
   ]);
-  return json({
-    backups,
-    sources: sources.filter((source) => source.experienceId).map((source) => ({
-      experienceId: source.experienceId,
-      label: source.label,
-      decision: source.decision,
-      groupKey: source.groupKey || null,
-    })),
-  });
+  const sources = sourceOptions.filter((source) => source.experienceId).map((source) => ({
+    experienceId: source.experienceId,
+    label: source.label,
+    decision: source.decision,
+    groupKey: source.groupKey || null,
+  }));
+  const groups = DEFAULT_WHOP_GROUPS.map((group) => {
+    const sourceCount = sources.filter((source) => source.groupKey === group.key).length;
+    return sourceCount > 0 ? {
+      groupKey: group.key,
+      label: group.label,
+      sourceCount,
+    } : null;
+  }).filter(Boolean);
+  return json({ backups, sources, groups });
 }
 
 async function postAction(request, env, admin, currentAction) {

@@ -16,6 +16,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 const migration = read('migrations/0004_whop_import_backups.sql');
 const service = read('functions/_lib/whop-backups.js');
 const endpoint = read('functions/api/whop-backups.js');
+const sourcePolicy = read('functions/_lib/source-policy.js');
 const posts = read('functions/_lib/posts.js');
 const mediaStorage = read('functions/_lib/media-storage.js');
 const html = read('control-center/index.html');
@@ -72,6 +73,23 @@ assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)'
 assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish'));
 assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"));
 
+// A group backup is deliberately an orchestration of the existing exact-source archive path.
+// That keeps every source independently verified/restorable, preserves the 10 MB per-archive
+// ceiling, and avoids a risky D1 CHECK/schema migration just to add a UI convenience scope.
+assert.ok(sourcePolicy.includes('export const DEFAULT_WHOP_GROUPS'));
+assert.ok(endpoint.includes('DEFAULT_WHOP_GROUPS') && endpoint.includes('sourceCount'));
+assert.ok(endpoint.includes('groupKey: source.groupKey || null'));
+assert.ok(html.includes('<option value="group">One saved Whop group</option>'));
+assert.ok(html.includes('data-backup-group-field') && html.includes('data-backup-group'));
+assert.ok(client.includes("return { scope: 'group', groupKey:"));
+assert.ok(client.includes('async function createGroupBackup(groupKey)'));
+assert.ok(client.includes("scope: 'source'") && client.includes('experienceId: source.experienceId'));
+assert.ok(client.includes("result.backup.status !== 'verified'"), 'Group orchestration can accept an unverified child backup.');
+assert.ok(client.includes('resetOption.disabled = groupSelected'));
+assert.ok(client.includes('Whole-group recovery is backup-only for safety'));
+assert.ok(service.includes("!['all', 'source'].includes(scope)"), 'Group UI must not bypass the proven source/all archive schema.');
+assert.ok(migration.includes("CHECK (scope IN ('all', 'source'))"), 'Group UI unexpectedly changed the durable backup scope schema.');
+
 assert.ok(html.includes('data-whop-backup-panel') && html.includes('data-backup-dialog'));
 assert.equal((html.match(/control-center-whop-backups\.js/g) || []).length, 1);
 assert.equal((html.match(/whop-backups\.css/g) || []).length, 1);
@@ -103,5 +121,6 @@ console.log('\nSNIPERPLUG WHOP BACKUP / RESET / RESTORE AUDIT PASSED\n');
 console.log('✓ Complete signed backups live in bounded R2 archives, not one D1 query per method.');
 console.log('✓ D1 stores the verified manifest and uses bounded JSON batches for restore.');
 console.log('✓ Reset requires a current verified archive and preserves published guides by default.');
+console.log('✓ Whole-group backup safely creates one independently verified archive per saved source.');
 console.log('✓ Backup archives and their referenced media remain pinned through the cleanup grace model.');
 console.log('✓ Stale posts disappear from review and preserved published guides reconnect after fresh scans.');

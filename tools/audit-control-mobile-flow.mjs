@@ -30,10 +30,12 @@ assert.ok(control.includes("textContent = state.discovery ? 'Refresh sources' : 
 assert.ok(backups.includes('structureRecoveryPanel'));
 assert.ok(backups.includes('dataset.backupAction'));
 assert.ok(backups.includes('elements.continue = continueButton') && backups.includes('elements.continue.disabled = state.busy || !valid'));
+assert.ok(backups.includes('data-backup-group') || page.includes('data-backup-group'));
+assert.ok(backups.includes("scope === 'group'") && backups.includes('Back up whole group'));
 assert.ok(!backups.includes('new MutationObserver'));
 assert.ok(css.includes('.whop-recovery-workflow'));
 assert.ok(css.includes('@media(max-width:720px)'));
 for (const asset of ['control-center-hardening.css', 'control-center-v2.js', 'control-center-whop-backups.js']) {
-  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260803.3`), `${asset} cache version was not bumped with the mobile repair.`);
+  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260811.1`), `${asset} cache version was not bumped with the group recovery repair.`);
 }
 console.log('CONTROL CENTER MOBILE FLOW AUDIT PASSED');
