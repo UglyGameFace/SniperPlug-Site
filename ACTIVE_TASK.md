@@ -4,9 +4,9 @@
 Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
 
 ## Status
-**Active — PR #27 is merged. Live Samsung validation exposed a recovery-history identity usability defect, now being repaired on `fix/issue19-backup-history-identity`.**
+**Active — PR #28 (`fix/issue19-backup-history-identity`) is open, mergeable, 0 commits behind `main`, and green after repairing the live Samsung recovery-history identity defect.**
 
-Production completion remains unclaimed until this follow-up is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
+Production completion remains unclaimed until PR #28 is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
 
 ## Scope
 1. Keep the existing signed/checksum-verified R2 archive format and exact-source/all-importer restore behavior authoritative.
@@ -53,11 +53,16 @@ Production completion remains unclaimed until this follow-up is merged/deployed 
 - [x] Live Samsung confirmed production Whop connection/source loading works after PR #27.
 - [x] Recovery-history identity root cause traced through group orchestration → `createWhopImportBackup` → generic stored label → overview → `renderHistory`.
 - [x] Identity repair uses the existing exact-source catalog and leaves signed recovery content untouched.
-- [ ] Targeted Whop backup audit and JavaScript syntax pass on the follow-up branch.
-- [ ] Full Node 22 build/regression suite and zero-vulnerability install pass on the follow-up branch.
-- [ ] Branch is 0 commits behind `main`, mergeable, and review-clean.
-- [ ] Follow-up merges and Cloudflare production deployment propagates.
-- [ ] Samsung recovery history shows a distinguishable exact-source label plus separate source/backup IDs for every child backup.
+- [x] PR #28 Verify SniperPlug run #896 passed on Node 22.23.2.
+- [x] Full `npm run build` / complete regression suite passed on PR #28.
+- [x] Targeted Whop backup/reset/restore audit passed and explicitly confirms exact source + backup identity remains distinguishable on mobile.
+- [x] JavaScript syntax validation passed for Functions, browser scripts, and audits.
+- [x] Control Center mobile-flow, hardening, network, source-access truth, OAuth/customer access, private-guide auth, recovery/media, discovery, publishing, scan persistence, import concurrency, and guide-versioning regressions all passed.
+- [x] `npm install --ignore-scripts` reported zero vulnerabilities.
+- [x] PR #28 is 0 commits behind `main`, mergeable, and changes only four intended files.
+- [x] PR #28 has no inline review threads; comments contain only expected skipped Vercel telemetry and Qodo's billing-paused notice, with no code finding.
+- [ ] PR #28 merges and Cloudflare production deployment propagates.
+- [ ] Samsung recovery history shows a distinguishishable exact-source label plus separate source/backup IDs for every child backup.
 - [ ] Production JSON download succeeds on real imported content.
 - [ ] Production clear-and-resync preserves published guides and removes stale state.
 - [ ] Production restore works without relying on current Whop access and reports conflicts truthfully.
@@ -67,10 +72,11 @@ Production completion remains unclaimed until this follow-up is merged/deployed 
 - No alternate backup engine, archive version, D1 scope value, restore path, reset path, or compatibility shim was added.
 - Existing archive signature/checksum inputs remain unchanged.
 - Existing 10 MB per-archive ceiling and independently restorable child-source archives remain unchanged.
+- Diff is limited to the active-task record, recovery-history renderer, backup overview/create identity reconciliation, and the permanent backup audit.
 
 ## Current branch / PR
 - Branch: `fix/issue19-backup-history-identity`
-- PR: not opened yet
+- PR #28 — `Make Whop recovery backups identifiable by source`
 
 ## Definition of Done
 - The Control Center presents one understandable ordered workflow on mobile and desktop.
