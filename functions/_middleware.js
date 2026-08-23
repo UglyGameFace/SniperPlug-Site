@@ -1,3 +1,5 @@
+import { clearAdminSession, readAdminSession } from './_lib/auth.js';
+import { appendCookie } from './_lib/http.js';
 import { privateGuidePageGate } from './_lib/private-guides.js';
 
 const REQUIRED_CONTROL_CONFIGURATION = [
@@ -66,6 +68,37 @@ function retiredPublicDealRedirect(url, pathname) {
   });
 }
 
+async function legacyCustomerSessionGate(request, env, pathname) {
+  if (!pathname.startsWith('/api/')) return null;
+  const session = await readAdminSession(request, env).catch(() => null);
+  if (!session || session.kind === 'owner') return null;
+
+  const url = new URL(request.url);
+  const sessionAction = pathname === '/api/control' && url.searchParams.get('action') === 'session';
+  if (sessionAction && ['POST', 'DELETE'].includes(request.method)) return null;
+
+  const response = sessionAction && request.method === 'GET'
+    ? new Response(JSON.stringify({ authenticated: false }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'private, no-store, max-age=0',
+      },
+    })
+    : new Response(JSON.stringify({
+      error: 'Unlock the SniperPlug Control Center with the owner password.',
+      code: 'CONTROL_CENTER_PASSWORD_REQUIRED',
+    }), {
+      status: 401,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'private, no-store, max-age=0',
+      },
+    });
+
+  return appendCookie(response, clearAdminSession());
+}
+
 async function injectControlCenterRuntime(original, pathname) {
   const contentType = String(original.headers.get('content-type') || '').toLowerCase();
   if (!isControlCenterPage(pathname) || !contentType.includes('text/html')) return new Response(original.body, original);
@@ -126,6 +159,9 @@ export async function onRequest(context) {
     const missing = missingControlConfiguration(context.env);
     if (missing.length) return secureResponse(configurationError(missing), url, pathname);
   }
+
+  const legacyCustomer = await legacyCustomerSessionGate(context.request, context.env, pathname);
+  if (legacyCustomer) return secureResponse(legacyCustomer, url, pathname);
 
   // Fail closed before Pages can resolve a stale static deal page, old click-out,
   // or nested function. No retired public route may expose a fake deal or a
