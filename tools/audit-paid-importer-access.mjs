@@ -13,35 +13,43 @@ const callback = read('functions/api/whop/oauth/callback.js');
 const middleware = read('functions/_middleware.js');
 const flash = read('assets/js/control-center-whop-flash.js');
 const guard = read('assets/js/control-center-network-guard.js');
+const controlPage = read('control-center/index.html');
 const example = read('.dev.vars.example');
 
 for (const setting of ['WHOP_IMPORTER_PRODUCT_ID', 'WHOP_API_KEY', 'SNIPERPLUG_REQUIRED_DISCORD_GUILD_IDS', 'DISCORD_BOT_TOKEN']) {
-  assert.ok(access.includes(setting), `${setting} is not enforced by paid access.`);
+  assert.ok(access.includes(setting), `${setting} is not enforced by the retained paid-access verifier.`);
   assert.ok(example.includes(setting), `${setting} is missing from the deployment example.`);
 }
-assert.ok(access.includes('/memberships') && access.includes("['active', 'trialing', 'completed']"), 'Current paid membership is not verified server-side.');
-assert.ok(access.includes('requireWhopSession(request, env, adminSession)'), 'Paid customer entitlement checks can use an expired OAuth access token instead of the refreshable session.');
-assert.ok(access.includes('/social_accounts') && access.includes("service || '').toLowerCase() === 'discord'"), 'The Discord identity linked to Whop is not resolved server-side.');
-assert.ok(access.includes('/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(discordUserId)}'), 'Live Discord guild membership is not checked.');
-assert.ok(access.includes("code: 'paid_access_discord_membership_required'"), 'Missing required Discord membership does not fail clearly.');
-assert.ok(access.includes('Access remains locked') && !access.includes('allowed: true'), 'Temporary entitlement failures may fail open.');
+assert.ok(access.includes('/memberships') && access.includes("['active', 'trialing', 'completed']"), 'Current paid membership verification was accidentally removed.');
+assert.ok(access.includes('/social_accounts') && access.includes("service || '').toLowerCase() === 'discord'"), 'Linked Discord verification was accidentally removed.');
+assert.ok(access.includes('/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(discordUserId)}'), 'Live Discord guild verification was accidentally removed.');
+assert.ok(access.includes('Access remains locked') && !access.includes('allowed: true'), 'Retained entitlement checks may fail open.');
 
-assert.ok(auth.includes("session.kind === 'customer-pending'") && auth.includes("code: 'customer_oauth_pending'"), 'An unfinished customer OAuth session can still enter general Control Center APIs.');
-assert.ok(!auth.includes("if (session.kind === 'customer-pending') return session"), 'Pending customer OAuth still bypasses paid-access authorization.');
-assert.ok(auth.includes('assertPaidImporterAccess(request, env, session)'), 'Customer API requests do not re-check paid access.');
-assert.ok(auth.includes("kind: 'owner'"), 'The private owner fallback is not explicit.');
-assert.ok(login.includes("kind: 'customer-pending'") && login.includes('beginWhopOAuth(context.request, context.env, result.session)'), 'Customer login does not bootstrap OAuth directly inside its isolated pending session.');
-assert.ok(!login.includes('/api/control?action=oauth-start'), 'Pending customer sessions still depend on a general Control Center authorization bypass.');
-assert.ok(callback.includes('profile?.sub || profile?.id'), 'OAuth userinfo does not accept the OIDC `sub` user identifier returned by Whop.');
-assert.ok(callback.includes('whop-user:${userId}') && callback.includes("kind: 'customer'"), 'OAuth completion is not bound to the exact Whop user.');
-assert.ok(callback.includes('DELETE FROM whop_sessions WHERE admin_session_id = ?'), 'Temporary customer OAuth sessions are not removed after promotion.');
-assert.ok(callback.includes("browserSession?.kind !== 'customer-pending'") && callback.includes('disconnectWhop') && callback.includes('clearAdminSession()'), 'Failed customer OAuth can leave a pending cookie or encrypted Whop session behind.');
-assert.ok(guard.includes('/api/importer-login') && guard.includes('Private owner password'), 'The customer Whop login and owner fallback are not clearly separated in the UI.');
+assert.ok(controlPage.includes('data-login-form') && controlPage.includes('Control Center password'), 'The owner password form is missing from the Control Center.');
+assert.ok(controlPage.indexOf('data-login-form') < controlPage.indexOf('data-control-app'), 'The password gate must precede the hidden Control Center application.');
+assert.ok(!guard.includes('data-customer-whop-login'), 'A Whop customer-login button is being injected ahead of the password gate.');
+assert.ok(!guard.includes('ownerForm.before(customer)'), 'The network guard can still insert an alternate login above the password form.');
+assert.ok(guard.includes("document.querySelector('[data-whop-connect]')") && guard.includes("whopConnect.href = '/api/importer-login'"), 'Whop account connect/switch must only be wired to the post-unlock Whop panel.');
 
+assert.ok(login.includes('requireAdmin(context.request, context.env)'), 'The Whop account chooser can start without an authenticated Control Center session.');
+assert.ok(login.includes("admin.kind !== 'owner'"), 'The Whop account chooser does not explicitly require the password-unlocked owner session.');
+assert.ok(login.includes('disconnectWhop(context.request, context.env, admin)'), 'Connecting another Whop account does not unlink the currently saved Whop session first.');
+assert.ok(login.includes("searchParams.set('prompt', 'login')") && login.includes("searchParams.set('max_age', '0')"), 'Whop reconnect does not force a fresh login/account selection opportunity.');
+assert.ok(!login.includes('createAdminSession') && !login.includes('customer-pending') && !login.includes('appendCookie'), 'The Whop connect route can still mint a Control Center session without the password.');
+
+assert.ok(callback.includes('readAdminSession(context.request, context.env)'), 'OAuth callback does not verify the existing browser Control Center session.');
+assert.ok(callback.includes("browserSession.kind !== 'owner'"), 'OAuth callback is not restricted to the password-unlocked owner session.');
+assert.ok(!callback.includes('promoteCustomerSession') && !callback.includes("kind: 'customer'") && !callback.includes('whop-user:${userId}'), 'OAuth callback can still promote Whop identity into a Control Center login session.');
+
+assert.ok(middleware.includes('legacyCustomerSessionGate'), 'Legacy Whop-created Control Center cookies are not invalidated after the password-first hotfix.');
+assert.ok(middleware.includes("session.kind === 'owner'"), 'API boundary does not distinguish owner sessions from legacy customer sessions.');
+assert.ok(middleware.includes('CONTROL_CENTER_PASSWORD_REQUIRED') && middleware.includes('clearAdminSession()'), 'Legacy customer sessions do not fail closed and clear their cookie.');
+assert.ok(middleware.includes("sessionAction && ['POST', 'DELETE'].includes(request.method)"), 'A stale customer cookie could prevent the owner from entering the password to recover access.');
+
+assert.ok(auth.includes("session.kind === 'customer-pending'"), 'Legacy pending-session handling disappeared unexpectedly; middleware invalidation depends on session kinds remaining explicit.');
 assert.ok(middleware.includes('/assets/js/control-center-whop-flash.js?v=20260811.1'), 'The one-shot OAuth callback status runtime is not injected before the Control Center runtime.');
 assert.ok(flash.includes("url.searchParams.delete('whop')") && flash.includes("url.searchParams.delete('message')") && flash.includes('history.replaceState'), 'OAuth callback query state can replay forever after refresh.');
 assert.ok(flash.includes("'sniperplug:dashboard-refreshed'") && flash.includes("whopState === 'connected'"), 'Callback messages are not reconciled against the current verified Whop connection.');
-assert.ok(flash.includes("callbackState === 'error' && whopState === 'disconnected'"), 'A real current OAuth error is not preserved when Whop remains disconnected.');
 
 for (const file of [
   'functions/_lib/paid-access.js',
@@ -56,11 +64,11 @@ for (const file of [
   assert.equal(result.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
 }
 
-console.log('\nSNIPERPLUG PAID IMPORTER ACCESS AUDIT PASSED\n');
-console.log('✓ Customers sign in with individual Whop identities instead of sharing the owner password.');
-console.log('✓ Whop OIDC userinfo binds customer sessions from the canonical `sub` identity.');
-console.log('✓ Unfinished or failed customer OAuth cannot become a general Control Center session.');
-console.log('✓ OAuth callback messages are one-shot and cannot contradict a currently verified connection after refresh.');
-console.log('✓ Current importer-product access and linked Discord identity are verified server-side.');
-console.log('✓ Every configured Discord server confirms live membership before customer access is allowed.');
-console.log('✓ Revoked, expired, unlinked, departed, or unverifiable customers fail closed.');
+console.log('\nSNIPERPLUG CONTROL CENTER AUTH / WHOP ACCESS AUDIT PASSED\n');
+console.log('✓ The Control Center password is the only route that unlocks the application.');
+console.log('✓ Whop connect/switch is available only after the owner password has unlocked the Control Center.');
+console.log('✓ Direct /api/importer-login requests cannot mint customer or pending admin cookies.');
+console.log('✓ Legacy customer/pending cookies are invalidated and cannot bypass the password gate.');
+console.log('✓ OAuth callbacks cannot promote a Whop identity into a Control Center session.');
+console.log('✓ Reconnecting unlinks the saved Whop session and forces a fresh Whop login opportunity.');
+console.log('✓ Existing paid membership and Discord verification code remains fail-closed if reused elsewhere.');
