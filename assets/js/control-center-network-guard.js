@@ -3,10 +3,36 @@
   window.__sniperplugApiFetchGuardInstalled = true;
 
   const whopConnect = document.querySelector('[data-whop-connect]');
-  if (whopConnect instanceof HTMLAnchorElement) {
-    whopConnect.href = '/api/whop-switch';
-    whopConnect.textContent = 'Connect or switch Whop account';
+  const whopDisconnect = document.querySelector('[data-whop-disconnect]');
+  const whopState = document.querySelector('[data-whop-state]');
+
+  function syncWhopAccountControls() {
+    const state = whopState instanceof HTMLElement ? String(whopState.dataset.state || '') : '';
+    if (whopConnect instanceof HTMLAnchorElement) {
+      whopConnect.href = '/api/whop-switch';
+      whopConnect.textContent = state === 'checking' ? 'Switch Whop account' : 'Connect Whop account';
+      if (state === 'checking' || state === 'disconnected' || !state) whopConnect.hidden = false;
+    }
+    if (whopDisconnect instanceof HTMLButtonElement) {
+      if (state === 'connected') {
+        whopDisconnect.hidden = false;
+        whopDisconnect.textContent = 'Switch Whop account';
+      } else if (state === 'checking') {
+        whopDisconnect.hidden = true;
+      }
+    }
   }
+
+  syncWhopAccountControls();
+  if (whopState instanceof HTMLElement) {
+    new MutationObserver(syncWhopAccountControls).observe(whopState, {
+      attributes: true,
+      attributeFilter: ['data-state'],
+      childList: true,
+      subtree: true,
+    });
+  }
+  document.addEventListener('sniperplug:dashboard-refreshed', syncWhopAccountControls);
 
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target.closest('[data-whop-disconnect]') : null;
