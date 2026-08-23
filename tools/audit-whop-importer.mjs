@@ -126,7 +126,7 @@ const middleware = read('functions/_middleware.js');
 const siteClient = read('assets/js/site.js');
 const privateGuides = read('functions/_lib/private-guides.js');
 
-for (const action of ['session', 'dashboard', 'oauth-start', 'oauth-callback', 'source-check', 'source-decision', 'scan', 'post-decision', 'import', 'category-save', 'guide-save', 'guide-status']) {
+for (const action of ['session', 'dashboard', 'source-check', 'source-decision', 'scan', 'post-decision', 'import', 'category-save', 'guide-save', 'guide-status']) {
   assert.ok(control.includes(`'${action}'`), `Control API is missing action: ${action}`);
 }
 assert.ok(auth.includes('LOGIN_MAX_FAILURES = 5') && auth.includes('admin_login_attempts'), 'Owner login throttling is incomplete.');

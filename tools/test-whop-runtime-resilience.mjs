@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { sealJson } from '../functions/_lib/crypto.js';
 import { HttpError } from '../functions/_lib/http.js';
-import { assertPaidImporterAccess } from '../functions/_lib/paid-access.js';
 import { requireWhopSession, whopApi } from '../functions/_lib/whop.js';
 
 class FakeStatement {
@@ -103,7 +102,7 @@ const baseEnv = { WHOP_CLIENT_ID: 'app_runtime_test', WHOP_TOKEN_SECRET: tokenSe
 // Concurrent refreshes must make exactly one rotating-token request and both callers
 // must receive the newly persisted token.
 {
-  const sid = 'whop-user:user_concurrent';
+  const sid = 'sniperplug-owner';
   const db = new FakeD1([await sessionRow(sid, tokenSecret, { userId: 'user_concurrent' })]);
   const env = { ...baseEnv, SNIPERPLUG_DB: db };
   let refreshCalls = 0;
@@ -121,7 +120,7 @@ const baseEnv = { WHOP_CLIENT_ID: 'app_runtime_test', WHOP_TOKEN_SECRET: tokenSe
     }
     throw new Error(`Unexpected fetch: ${url}`);
   };
-  const admin = { sid, kind: 'customer', whopUserId: 'user_concurrent' };
+  const admin = { sid, kind: 'owner' };
   const [first, second] = await Promise.all([
     requireWhopSession(request, env, admin),
     requireWhopSession(request, env, admin),
@@ -131,47 +130,6 @@ const baseEnv = { WHOP_CLIENT_ID: 'app_runtime_test', WHOP_TOKEN_SECRET: tokenSe
   assert.equal(refreshCalls, 1, 'Concurrent callers spent the rotating refresh token more than once.');
   assert.equal(db.sessions.get(sid)?.token_version, 2);
   assert.equal(db.leases.size, 0, 'Refresh lease was not released.');
-}
-
-// Paid access must refresh an expired customer OAuth token before membership checks.
-{
-  const sid = 'whop-user:user_paidrefresh';
-  const db = new FakeD1([await sessionRow(sid, tokenSecret, { userId: 'user_paidrefresh' })]);
-  const env = {
-    ...baseEnv,
-    SNIPERPLUG_DB: db,
-    WHOP_IMPORTER_PRODUCT_ID: 'prod_runtime',
-    WHOP_API_KEY: 'server-api-key-test',
-    DISCORD_BOT_TOKEN: 'discord-bot-test',
-    SNIPERPLUG_REQUIRED_DISCORD_GUILD_IDS: '123456789012345678',
-  };
-  const seen = [];
-  globalThis.fetch = async (input, options = {}) => {
-    const url = String(input);
-    seen.push({ url, authorization: options?.headers?.authorization || '' });
-    if (url === 'https://api.whop.com/oauth/token') {
-      return new Response(JSON.stringify({
-        access_token: 'access-paid-fresh',
-        refresh_token: 'refresh-paid-fresh',
-        token_type: 'Bearer',
-        expires_in: 3600,
-      }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    if (url.startsWith('https://api.whop.com/api/v1/memberships')) {
-      return new Response(JSON.stringify({ data: [{ id: 'mem_runtime', product_id: 'prod_runtime', status: 'active' }] }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    if (url === 'https://api.whop.com/api/v5/company/users/user_paidrefresh/social_accounts') {
-      return new Response(JSON.stringify([{ service: 'discord', account_id: '111111111111111111', username: 'runtime' }]), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    if (url === 'https://discord.com/api/v10/guilds/123456789012345678/members/111111111111111111') {
-      return new Response(JSON.stringify({ user: { id: '111111111111111111' } }), { status: 200, headers: { 'content-type': 'application/json' } });
-    }
-    throw new Error(`Unexpected fetch: ${url}`);
-  };
-  const value = await assertPaidImporterAccess(request, env, { sid, kind: 'customer', whopUserId: 'user_paidrefresh' });
-  assert.equal(value.owner, false);
-  const membershipCall = seen.find((item) => item.url.includes('/memberships'));
-  assert.equal(membershipCall?.authorization, 'Bearer access-paid-fresh', 'Paid-access check used the expired OAuth token.');
 }
 
 // Whop content GETs retry bounded 429/5xx responses and honor Retry-After without
@@ -245,5 +203,4 @@ const baseEnv = { WHOP_CLIENT_ID: 'app_runtime_test', WHOP_TOKEN_SECRET: tokenSe
 
 console.log('\nSNIPERPLUG WHOP RUNTIME RESILIENCE TEST PASSED\n');
 console.log('✓ Rotating OAuth refresh tokens are serialized across concurrent workers.');
-console.log('✓ Expired paid-customer tokens refresh before entitlement verification.');
 console.log('✓ Whop content reads retry bounded 429/5xx failures and preserve diagnostics.');

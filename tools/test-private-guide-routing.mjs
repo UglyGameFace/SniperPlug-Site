@@ -22,7 +22,7 @@ assert.ok(gatePosition >= 0 && gatePosition < nextPosition, 'Private guide authe
 
 const env = { SNIPERPLUG_SESSION_SECRET: 'private-routing-test-secret-2026' };
 const noNext = () => {
-  throw new Error('Anonymous or customer guide requests reached Pages asset/function routing.');
+  throw new Error('Anonymous guide requests reached Pages asset/function routing.');
 };
 
 const anonymous = await pagesMiddleware({
@@ -37,21 +37,6 @@ assert.match(anonymous.headers.get('content-security-policy') || '', /default-sr
 const anonymousHtml = await anonymous.text();
 assert.match(anonymousHtml, /Unlock the private guides/i);
 assert.doesNotMatch(anonymousHtml, /seller errors|sports betting|casino|auto checkout/i);
-
-const customer = await createAdminSession(env, {
-  sid: 'private-routing-customer',
-  kind: 'customer',
-  whopUserId: 'user_customer',
-});
-const customerResponse = await pagesMiddleware({
-  request: new Request('https://sniperplug.com/guides/private-item', {
-    headers: { cookie: String(customer.cookie).split(';', 1)[0] },
-  }),
-  env,
-  next: noNext,
-});
-assert.equal(customerResponse.status, 403);
-assert.doesNotMatch(await customerResponse.text(), /private source content/i);
 
 const owner = await createAdminSession(env);
 let ownerNextCalls = 0;
@@ -89,6 +74,6 @@ assert.equal(publicResponse.status, 200);
 
 console.log('\nPRIVATE GUIDE ROUTING TEST PASSED\n');
 console.log('✓ Pages routes every private guide URL through Functions before static asset resolution.');
-console.log('✓ Anonymous and customer sessions fail closed without calling the guide route or asset server.');
+console.log('✓ Anonymous sessions fail closed without calling the guide route or asset server.');
 console.log('✓ Owner sessions continue normally and private responses remain no-store and noindex.');
 console.log('✓ Public pages continue through the normal Pages pipeline.');

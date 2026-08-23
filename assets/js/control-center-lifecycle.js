@@ -137,7 +137,7 @@
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (!target) return;
-    const risky = target.closest('.draft-item, [data-refresh-dashboard], [data-logout], [data-whop-disconnect], [data-publish-guide], [data-reject-guide], [data-return-draft]');
+    const risky = target.closest('.draft-item, [data-refresh-dashboard], [data-logout], [data-whop-switch], [data-whop-disconnect], [data-publish-guide], [data-reject-guide], [data-return-draft]');
     const navigation = target.closest('a[href]');
     if ((risky || (navigation && !navigation.closest('[data-open-public]'))) && !confirmDiscard()) {
       event.preventDefault();

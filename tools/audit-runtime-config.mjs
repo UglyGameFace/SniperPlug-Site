@@ -33,37 +33,37 @@ for (const scope of ['forum:read', 'courses:read', 'chat:read', 'member:basic:re
 }
 assert.ok(existsSync(join(root, 'functions/api/whop/oauth/callback.js')), 'Origin-aware Whop OAuth callback route is missing.');
 assert.equal(
-  resolveWhopRedirectUri(new Request('https://sniperplug.com/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'http://localhost:8788/api/whop/oauth/callback' }),
+  resolveWhopRedirectUri(new Request('https://sniperplug.com/api/whop/oauth/start'), { WHOP_REDIRECT_URI: 'http://localhost:8788/api/whop/oauth/callback' }),
   'https://sniperplug.com/api/whop/oauth/callback',
   'Production OAuth must ignore stale environment redirect overrides.',
 );
 assert.equal(
-  resolveWhopRedirectUri(new Request('https://www.sniperplug.com/api/control?action=oauth-start'), {}),
+  resolveWhopRedirectUri(new Request('https://www.sniperplug.com/api/whop/oauth/start'), {}),
   'https://sniperplug.com/api/whop/oauth/callback',
   'The www host must use the canonical production callback.',
 );
 assert.equal(
-  resolveWhopRedirectUri(new Request('https://agent-whop-guide-importer.sniperplug.pages.dev/api/control?action=oauth-start'), {}),
+  resolveWhopRedirectUri(new Request('https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/start'), {}),
   'https://agent-whop-guide-importer.sniperplug.pages.dev/api/whop/oauth/callback',
   'The stable preview host must use its exact registered callback.',
 );
 assert.equal(
-  resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), {}),
+  resolveWhopRedirectUri(new Request('http://localhost:8788/api/whop/oauth/start'), {}),
   'http://localhost:8788/api/whop/oauth/callback',
   'Local development must derive its callback from the local origin.',
 );
 assert.equal(
-  resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'http://127.0.0.1:8788/api/whop/oauth/callback' }),
+  resolveWhopRedirectUri(new Request('http://localhost:8788/api/whop/oauth/start'), { WHOP_REDIRECT_URI: 'http://127.0.0.1:8788/api/whop/oauth/callback' }),
   'http://127.0.0.1:8788/api/whop/oauth/callback',
   'A valid local-only callback override must remain available for development.',
 );
 assert.throws(
-  () => resolveWhopRedirectUri(new Request('https://sniperplug.pages.dev/api/control?action=oauth-start'), {}),
+  () => resolveWhopRedirectUri(new Request('https://sniperplug.pages.dev/api/whop/oauth/start'), {}),
   /not available on this host/i,
   'Unregistered Pages hosts must fail locally instead of reaching Whop with an invalid redirect.',
 );
 assert.throws(
-  () => resolveWhopRedirectUri(new Request('http://localhost:8788/api/control?action=oauth-start'), { WHOP_REDIRECT_URI: 'https://evil.example/api/whop/oauth/callback' }),
+  () => resolveWhopRedirectUri(new Request('http://localhost:8788/api/whop/oauth/start'), { WHOP_REDIRECT_URI: 'https://evil.example/api/whop/oauth/callback' }),
   /must end exactly|localhost callback/i,
   'Local overrides must not permit an external callback host.',
 );

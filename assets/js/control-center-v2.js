@@ -21,7 +21,9 @@
     globalStatus: $('[data-global-status]'),
     whopState: $('[data-whop-state]'),
     whopConnect: $('[data-whop-connect]'),
+    whopSwitch: $('[data-whop-switch]'),
     whopDisconnect: $('[data-whop-disconnect]'),
+    whopSwitchHelp: $('[data-whop-switch-help]'),
     whopConnectionDetail: $('[data-whop-connection-detail]'),
     scopeWarning: $('[data-scope-warning]'),
     sourceOptions: $('[data-source-options]'),
@@ -410,8 +412,12 @@
     const checking = connected && !verified;
     elements.whopState.dataset.state = verified ? 'connected' : checking ? 'checking' : 'disconnected';
     elements.whopState.textContent = verified ? 'Connected & verified' : checking ? 'Checking connection' : 'Not connected';
+    const switchReady = sessionStorage.getItem('sniperplug:whop-switch-ready') === '1';
+    if (verified) sessionStorage.removeItem('sniperplug:whop-switch-ready');
     elements.whopConnect.hidden = connected;
+    elements.whopSwitch.hidden = !connected;
     elements.whopDisconnect.hidden = !connected;
+    if (elements.whopSwitchHelp) elements.whopSwitchHelp.hidden = connected || !switchReady;
     elements.refreshGroups.disabled = !verified;
     if (elements.whopConnectionDetail) {
       const verifiedAt = whop.session?.verifiedAt ? new Date(whop.session.verifiedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
@@ -1794,14 +1800,28 @@ ${filter}`;
       });
       return;
     }
-    if (button === elements.whopDisconnect) {
-      await withButton(button, 'Disconnecting…', async () => {
-        await api('whop-disconnect', { method: 'DELETE', body: '{}' });
+    if (button === elements.whopSwitch) {
+      await withButton(button, 'Preparing account switch…', async () => {
+        await requestJson('/api/whop-switch', { method: 'POST', body: '{}' });
+        sessionStorage.setItem('sniperplug:whop-switch-ready', '1');
         state.discovery = null;
         state.source = null;
         state.experience = null;
         await loadDashboard({ discovery: false });
-        showStatus('Whop disconnected.');
+        if (elements.whopSwitchHelp) elements.whopSwitchHelp.hidden = false;
+        showStatus('Whop disconnected from SniperPlug. Switch accounts on Whop.com, then press Continue with Whop.', 'ok');
+      }).catch((error) => showStatus(error.message, 'error'));
+      return;
+    }
+    if (button === elements.whopDisconnect) {
+      await withButton(button, 'Disconnecting…', async () => {
+        await requestJson('/api/whop-disconnect', { method: 'POST', body: '{}' });
+        sessionStorage.removeItem('sniperplug:whop-switch-ready');
+        state.discovery = null;
+        state.source = null;
+        state.experience = null;
+        await loadDashboard({ discovery: false });
+        showStatus('Whop disconnected from SniperPlug.');
       }).catch((error) => showStatus(error.message, 'error'));
       return;
     }

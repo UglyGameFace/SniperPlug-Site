@@ -3,6 +3,7 @@ import {
   findMuxStaticRendition,
   muxPlayerUrl,
 } from '../_lib/course-video.js';
+import { OWNER_SESSION_ID } from '../_lib/auth.js';
 import { HttpError, requireDatabase } from '../_lib/http.js';
 import { PrivateGuideAuthError, requirePrivateGuideOwner } from '../_lib/private-guides.js';
 import { permanentCourseArchive, whopRecoveryError } from '../_lib/recovery-media.js';
@@ -89,12 +90,8 @@ async function expireSelectedOwnerSession(env) {
   const db = requireDatabase(env);
   await db.prepare(`
     UPDATE whop_sessions SET expires_at = ?, updated_at = ?
-    WHERE admin_session_id = (
-      SELECT admin_session_id FROM whop_sessions
-      ORDER BY CASE WHEN admin_session_id = 'sniperplug-owner' THEN 0 ELSE 1 END, updated_at DESC
-      LIMIT 1
-    )
-  `).bind('1970-01-01T00:00:00.000Z', new Date().toISOString()).run();
+    WHERE admin_session_id = ?
+  `).bind('1970-01-01T00:00:00.000Z', new Date().toISOString(), OWNER_SESSION_ID).run();
 }
 
 async function retrieveLessonWithRefresh(request, env, lessonId) {
