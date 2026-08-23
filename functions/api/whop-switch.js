@@ -29,7 +29,7 @@ export async function onRequest(context) {
     await db.prepare('DELETE FROM whop_sessions').run();
 
     const oauthUrl = new URL(await beginWhopOAuth(context.request, context.env, admin));
-    oauthUrl.searchParams.set('prompt', 'select_account');
+    oauthUrl.searchParams.set('prompt', 'login');
     oauthUrl.searchParams.set('max_age', '0');
     return redirect(oauthUrl.toString());
   } catch (error) {
