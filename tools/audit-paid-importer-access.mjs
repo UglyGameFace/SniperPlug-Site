@@ -9,6 +9,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 const access = read('functions/_lib/paid-access.js');
 const auth = read('functions/_lib/auth.js');
 const login = read('functions/api/importer-login.js');
+const switchRoute = read('functions/api/whop-switch.js');
 const callback = read('functions/api/whop/oauth/callback.js');
 const middleware = read('functions/_middleware.js');
 const flash = read('assets/js/control-center-whop-flash.js');
@@ -29,13 +30,21 @@ assert.ok(controlPage.includes('data-login-form') && controlPage.includes('Contr
 assert.ok(controlPage.indexOf('data-login-form') < controlPage.indexOf('data-control-app'), 'The password gate must precede the hidden Control Center application.');
 assert.ok(!guard.includes('data-customer-whop-login'), 'A Whop customer-login button is being injected ahead of the password gate.');
 assert.ok(!guard.includes('ownerForm.before(customer)'), 'The network guard can still insert an alternate login above the password form.');
-assert.ok(guard.includes("document.querySelector('[data-whop-connect]')") && guard.includes("whopConnect.href = '/api/importer-login'"), 'Whop account connect/switch must only be wired to the post-unlock Whop panel.');
+assert.ok(guard.includes("whopConnect.href = '/api/whop-switch'"), 'Post-unlock Whop connect must use the authoritative account-switch endpoint.');
+assert.ok(guard.includes("closest('[data-whop-disconnect]')") && guard.includes("window.location.assign('/api/whop-switch')"), 'Disconnect can still be intercepted by the legacy in-page handler instead of switching accounts.');
+assert.ok(guard.includes('stopImmediatePropagation()'), 'Disconnect does not preempt the older Control Center listener.');
 
-assert.ok(login.includes('requireAdmin(context.request, context.env)'), 'The Whop account chooser can start without an authenticated Control Center session.');
-assert.ok(login.includes("admin.kind !== 'owner'"), 'The Whop account chooser does not explicitly require the password-unlocked owner session.');
-assert.ok(login.includes('disconnectWhop(context.request, context.env, admin)'), 'Connecting another Whop account does not unlink the currently saved Whop session first.');
-assert.ok(login.includes("searchParams.set('prompt', 'login')") && login.includes("searchParams.set('max_age', '0')"), 'Whop reconnect does not force a fresh login/account selection opportunity.');
-assert.ok(!login.includes('createAdminSession') && !login.includes('customer-pending') && !login.includes('appendCookie'), 'The Whop connect route can still mint a Control Center session without the password.');
+assert.ok(login.includes('requireAdmin(context.request, context.env)'), 'The legacy Whop account chooser can start without an authenticated Control Center session.');
+assert.ok(login.includes("admin.kind !== 'owner'"), 'The legacy Whop account chooser does not explicitly require the password-unlocked owner session.');
+assert.ok(!login.includes('createAdminSession') && !login.includes('customer-pending') && !login.includes('appendCookie'), 'The legacy Whop connect route can still mint a Control Center session without the password.');
+
+assert.ok(switchRoute.includes('requireAdmin(context.request, context.env)'), 'Whop switching can start without an authenticated Control Center session.');
+assert.ok(switchRoute.includes("admin.kind !== 'owner'"), 'Whop switching is not restricted to the password-unlocked owner session.');
+assert.ok(switchRoute.includes('disconnectWhop(context.request, context.env, admin)'), 'Whop switching does not revoke/delete the currently saved owner token first.');
+assert.ok(switchRoute.includes("DELETE FROM whop_sessions") && switchRoute.includes("DELETE FROM whop_oauth_states"), 'Stale Whop rows can survive disconnect and resurrect the previous account.');
+assert.ok(switchRoute.includes("DELETE FROM whop_refresh_leases"), 'Refresh leases are not cleared during an authoritative account switch.');
+assert.ok(switchRoute.includes("searchParams.set('prompt', 'select_account')") && switchRoute.includes("searchParams.set('max_age', '0')"), 'Whop switching does not explicitly request an account chooser/fresh authorization.');
+assert.ok(switchRoute.indexOf("DELETE FROM whop_sessions") < switchRoute.indexOf('beginWhopOAuth('), 'Whop switching can begin before stale sessions are purged.');
 
 assert.ok(callback.includes('readAdminSession(context.request, context.env)'), 'OAuth callback does not verify the existing browser Control Center session.');
 assert.ok(callback.includes("browserSession.kind !== 'owner'"), 'OAuth callback is not restricted to the password-unlocked owner session.');
@@ -56,6 +65,7 @@ for (const file of [
   'functions/_lib/auth.js',
   'functions/_middleware.js',
   'functions/api/importer-login.js',
+  'functions/api/whop-switch.js',
   'functions/api/whop/oauth/callback.js',
   'assets/js/control-center-whop-flash.js',
   'assets/js/control-center-network-guard.js',
@@ -67,8 +77,9 @@ for (const file of [
 console.log('\nSNIPERPLUG CONTROL CENTER AUTH / WHOP ACCESS AUDIT PASSED\n');
 console.log('✓ The Control Center password is the only route that unlocks the application.');
 console.log('✓ Whop connect/switch is available only after the owner password has unlocked the Control Center.');
-console.log('✓ Direct /api/importer-login requests cannot mint customer or pending admin cookies.');
+console.log('✓ Disconnect preempts the legacy UI handler and enters one authoritative switch flow.');
+console.log('✓ Account switching revokes the old token and purges stale sessions, OAuth states, and refresh leases before reconnecting.');
+console.log('✓ The replacement OAuth request explicitly asks Whop for account selection instead of silently reusing the old local session.');
 console.log('✓ Legacy customer/pending cookies are invalidated and cannot bypass the password gate.');
 console.log('✓ OAuth callbacks cannot promote a Whop identity into a Control Center session.');
-console.log('✓ Reconnecting unlinks the saved Whop session and forces a fresh Whop login opportunity.');
 console.log('✓ Existing paid membership and Discord verification code remains fail-closed if reused elsewhere.');
