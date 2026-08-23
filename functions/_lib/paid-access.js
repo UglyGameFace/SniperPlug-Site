@@ -1,5 +1,5 @@
-import { openJson } from './crypto.js';
-import { HttpError, requireDatabase } from './http.js';
+import { requireWhopSession } from './whop.js';
+import { HttpError } from './http.js';
 
 const WHOP_API_BASE = 'https://api.whop.com/api/v1';
 const WHOP_V5_BASE = 'https://api.whop.com/api/v5';
@@ -28,7 +28,6 @@ function customerConfig(env) {
     guildIds: [...new Set(guildIds)],
     whopApiKey: required(env, 'WHOP_API_KEY'),
     discordBotToken: required(env, 'DISCORD_BOT_TOKEN'),
-    tokenSecret: required(env, 'WHOP_TOKEN_SECRET'),
   };
 }
 
@@ -50,19 +49,23 @@ async function jsonFetch(url, options, errorMessage) {
   return { response, body };
 }
 
-async function customerWhopSession(env, adminSession, cfg) {
-  const db = requireDatabase(env);
-  const row = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
-  if (!row) throw new HttpError(401, 'Connect the same Whop account that purchased the importer.', { code: 'paid_access_whop_session_missing' });
-  let access;
-  try { access = await openJson(row.access_cipher, cfg.tokenSecret); } catch { access = null; }
-  if (!access?.token) throw new HttpError(401, 'The saved Whop login cannot be verified. Sign in with Whop again.', { code: 'paid_access_whop_session_invalid' });
-  let profile = {};
-  try { profile = JSON.parse(row.user_json || '{}'); } catch { profile = {}; }
-  const userId = String(profile?.id || adminSession.whopUserId || '').trim();
+async function customerWhopSession(request, env, adminSession) {
+  let session;
+  try {
+    session = await requireWhopSession(request, env, adminSession);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 401) {
+      throw new HttpError(401, 'Connect the same Whop account that purchased the importer.', {
+        code: 'paid_access_whop_session_missing',
+      });
+    }
+    throw error;
+  }
+  const profile = session.profile && typeof session.profile === 'object' ? session.profile : {};
+  const userId = String(profile?.sub || profile?.id || adminSession.whopUserId || '').trim();
   if (!/^user_[A-Za-z0-9_-]+$/.test(userId)) throw new HttpError(403, 'Whop did not provide a valid user identity for this importer session.', { code: 'paid_access_user_missing' });
   if (adminSession.whopUserId && String(adminSession.whopUserId) !== userId) throw new HttpError(403, 'This browser session belongs to a different Whop account.', { code: 'paid_access_identity_mismatch' });
-  return { accessToken: access.token, userId, profile };
+  return { accessToken: session.accessToken, userId, profile };
 }
 
 async function verifyMembership(session, cfg) {
@@ -123,7 +126,7 @@ export async function assertPaidImporterAccess(request, env, adminSession) {
   const cacheKey = `${adminSession.sid}:${cfg.productId}:${cfg.guildIds.join(',')}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
-  const session = await customerWhopSession(env, adminSession, cfg);
+  const session = await customerWhopSession(request, env, adminSession);
   const membership = await verifyMembership(session, cfg);
   const discord = await linkedDiscordAccount(session.userId, cfg);
   const guilds = await verifyDiscordGuilds(discord.id, cfg);

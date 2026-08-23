@@ -8,8 +8,13 @@ import { requiredScopeForType, resolveWhopExperienceType, retrieveExperience } f
 
 const MAX_SOURCES = 100;
 const LEASE_MS = 90_000;
-const OWNER_KEY = 'sniperplug-owner';
 const JOB_VERSION = 4;
+
+function jobOwnerKey(admin) {
+  const sid = String(admin?.sid || '').trim();
+  if (!sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  return sid;
+}
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
@@ -94,11 +99,11 @@ function normalize(row) {
   };
 }
 
-async function rowForOwner(db, id) {
-  return db.prepare('SELECT * FROM bulk_jobs WHERE id = ? AND admin_session_id = ?').bind(id, OWNER_KEY).first();
+async function rowForOwner(db, id, ownerKey) {
+  return db.prepare('SELECT * FROM bulk_jobs WHERE id = ? AND admin_session_id = ?').bind(id, ownerKey).first();
 }
 
-async function cancelLegacyRow(db, row) {
+async function cancelLegacyRow(db, row, ownerKey) {
   if (!row || row.status !== 'active') return row;
   const summary = safeJson(row.summary_json, {});
   if (Number(summary.jobVersion || 0) === JOB_VERSION) return row;
@@ -112,11 +117,12 @@ async function cancelLegacyRow(db, row) {
     legacyCanceled: true,
     legacyCancelReason: 'Canceled automatically because the previous worker did not guarantee exclusive lease ownership through its final save.',
     canceledAt: now,
-  }), row.id, OWNER_KEY).run();
-  return rowForOwner(db, row.id);
+  }), row.id, ownerKey).run();
+  return rowForOwner(db, row.id, ownerKey);
 }
 
-export async function latestBulkJob(env) {
+export async function latestBulkJob(env, admin) {
+  const ownerKey = jobOwnerKey(admin);
   const db = requireDatabase(env);
   await ensureTable(db);
   let row = await db.prepare(`
@@ -124,19 +130,19 @@ export async function latestBulkJob(env) {
     WHERE admin_session_id = ?
     ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC
     LIMIT 1
-  `).bind(OWNER_KEY).first();
-  row = await cancelLegacyRow(db, row);
+  `).bind(ownerKey).first();
+  row = await cancelLegacyRow(db, row, ownerKey);
   return normalize(row);
 }
 
 export async function startBulkJob(env, admin, input) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = jobOwnerKey(admin);
   if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm republication rights before starting the bulk job.');
   const db = requireDatabase(env);
   await ensureTable(db);
   let existing = await db.prepare("SELECT * FROM bulk_jobs WHERE admin_session_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1")
-    .bind(OWNER_KEY).first();
-  existing = await cancelLegacyRow(db, existing);
+    .bind(ownerKey).first();
+  existing = await cancelLegacyRow(db, existing, ownerKey);
   if (existing?.status === 'active') return normalize(existing);
   const ids = sourceIds(input?.sourceIds);
   const now = new Date().toISOString();
@@ -147,8 +153,8 @@ export async function startBulkJob(env, admin, input) {
       results_json, failures_json, summary_json, lease_until,
       created_at, updated_at, completed_at
     ) VALUES (?, ?, 'active', ?, 0, '[]', '[]', ?, NULL, ?, ?, NULL)
-  `).bind(id, OWNER_KEY, JSON.stringify(ids), JSON.stringify({ jobVersion: JOB_VERSION }), now, now).run();
-  return normalize(await rowForOwner(db, id));
+  `).bind(id, ownerKey, JSON.stringify(ids), JSON.stringify({ jobVersion: JOB_VERSION }), now, now).run();
+  return normalize(await rowForOwner(db, id, ownerKey));
 }
 
 function addSummary(summary, result) {
@@ -177,6 +183,13 @@ function emptyPublished() {
 
 function scopeSet(session) {
   return new Set(String(session?.scopes || '').split(/\s+/).filter(Boolean));
+}
+
+function shouldPauseWorkflow(error) {
+  const status = Number(error?.status || 0);
+  const code = String(error?.details?.code || '');
+  return [401, 403, 409, 429, 502, 503, 504].includes(status)
+    || ['guide_import_in_progress', 'guide_import_lease_lost', 'whop_refresh_in_progress'].includes(code);
 }
 
 function permissionMessage(error) {
@@ -271,6 +284,7 @@ async function processCurrentItem(env, whopSession, current) {
     current.guideIds.push(...guideIds);
     if (guideIds.length) mergePublished(current.published, await publishReadyGuides(env, { guideIds }));
   } catch (error) {
+    if (shouldPauseWorkflow(error)) throw error;
     current.itemFailures.push({ sourceKey, message: String(error?.message || 'Item import failed.').slice(0, 400) });
     current.heldPolicy += 1;
   }
@@ -283,7 +297,15 @@ function resultFromCurrent(current) {
   return { ...result, category: 'per-item', itemFailures };
 }
 
-async function persistStep(db, row, leaseToken, { sourceIndex, results, failures, summary, completed }) {
+async function releaseStepLease(db, row, ownerKey, leaseToken) {
+  await db.prepare(`
+    UPDATE bulk_jobs
+    SET lease_until = NULL, updated_at = ?
+    WHERE id = ? AND admin_session_id = ? AND status = 'active' AND lease_until = ?
+  `).bind(new Date().toISOString(), row.id, ownerKey, leaseToken).run();
+}
+
+async function persistStep(db, row, ownerKey, leaseToken, { sourceIndex, results, failures, summary, completed }) {
   const updatedAt = new Date().toISOString();
   const saved = await db.prepare(`
     UPDATE bulk_jobs
@@ -299,7 +321,7 @@ async function persistStep(db, row, leaseToken, { sourceIndex, results, failures
     updatedAt,
     completed ? updatedAt : null,
     row.id,
-    OWNER_KEY,
+    ownerKey,
     leaseToken,
   ).run();
   if (Number(saved.meta?.changes || 0) !== 1) {
@@ -308,12 +330,12 @@ async function persistStep(db, row, leaseToken, { sourceIndex, results, failures
 }
 
 export async function stepBulkJob(env, admin, whopSession, id) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = jobOwnerKey(admin);
   const db = requireDatabase(env);
   await ensureTable(db);
-  let row = await rowForOwner(db, id);
+  let row = await rowForOwner(db, id, ownerKey);
   if (!row) throw new HttpError(404, 'Bulk job not found.');
-  row = await cancelLegacyRow(db, row);
+  row = await cancelLegacyRow(db, row, ownerKey);
   if (row.status !== 'active') return normalize(row);
   const now = new Date();
   const leaseUntil = row.lease_until ? Date.parse(row.lease_until) : 0;
@@ -323,7 +345,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
     UPDATE bulk_jobs SET lease_until = ?, updated_at = ?
     WHERE id = ? AND admin_session_id = ? AND status = 'active'
       AND (lease_until IS NULL OR lease_until < ?)
-  `).bind(nextLease, now.toISOString(), id, OWNER_KEY, now.toISOString()).run();
+  `).bind(nextLease, now.toISOString(), id, ownerKey, now.toISOString()).run();
   if (Number(lease.meta?.changes || 0) !== 1) throw new HttpError(409, 'This bulk job step is already running.');
 
   const ids = safeJson(row.source_ids_json, []);
@@ -357,6 +379,10 @@ export async function stepBulkJob(env, admin, whopSession, id) {
       }
     }
   } catch (error) {
+    if (shouldPauseWorkflow(error)) {
+      await releaseStepLease(db, row, ownerKey, nextLease).catch(() => null);
+      throw error;
+    }
     failures.push({
       experienceId: summary.current?.experienceId || ids[index] || null,
       message: String(error?.message || 'Source processing failed.').slice(0, 500),
@@ -368,20 +394,20 @@ export async function stepBulkJob(env, admin, whopSession, id) {
   }
 
   const completed = index >= ids.length && !summary.current;
-  await persistStep(db, row, nextLease, { sourceIndex: index, results, failures, summary, completed });
-  return normalize(await rowForOwner(db, id));
+  await persistStep(db, row, ownerKey, nextLease, { sourceIndex: index, results, failures, summary, completed });
+  return normalize(await rowForOwner(db, id, ownerKey));
 }
 
 export async function cancelBulkJob(env, admin, id) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = jobOwnerKey(admin);
   const db = requireDatabase(env);
   await ensureTable(db);
   const now = new Date().toISOString();
   await db.prepare(`
     UPDATE bulk_jobs SET status = 'canceled', lease_until = NULL, completed_at = ?, updated_at = ?
     WHERE id = ? AND admin_session_id = ? AND status = 'active'
-  `).bind(now, now, id, OWNER_KEY).run();
-  const row = await rowForOwner(db, id);
+  `).bind(now, now, id, ownerKey).run();
+  const row = await rowForOwner(db, id, ownerKey);
   if (!row) throw new HttpError(404, 'Bulk job not found.');
   return normalize(row);
 }

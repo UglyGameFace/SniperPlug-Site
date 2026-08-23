@@ -20,7 +20,7 @@ Whop-hosted course videos use the exact lesson's current Mux playback credential
 
 ## Cloudflare storage
 
-Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, `migrations/0003_media_hard_free.sql`, and `migrations/0004_whop_import_backups.sql` in order.
+Create a Cloudflare D1 database and bind it to the Pages project as `SNIPERPLUG_DB`. Apply the migrations in this order: `migrations/0001_whop_guides.sql`, `migrations/0002_control_hardening.sql`, `migrations/0003_media_hard_free.sql`, `migrations/0004_course_video_sources.sql`, `migrations/0004_whop_import_backups.sql`, `migrations/0005_whop_capability_cache.sql`, then `migrations/0006_whop_refresh_leases.sql`. The two `0004` files are separate idempotent migrations and both are required.
 
 D1 privately stores OAuth sessions, approved and disapproved source IDs, content decisions, exact previews, categories, drafts, and published guides. Imported source bodies are never committed to this public repository.
 
