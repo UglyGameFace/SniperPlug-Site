@@ -31,6 +31,8 @@ assert.ok(controlPage.indexOf('data-login-form') < controlPage.indexOf('data-con
 assert.ok(!guard.includes('data-customer-whop-login'), 'A Whop customer-login button is being injected ahead of the password gate.');
 assert.ok(!guard.includes('ownerForm.before(customer)'), 'The network guard can still insert an alternate login above the password form.');
 assert.ok(guard.includes("whopConnect.href = '/api/whop-switch'"), 'Post-unlock Whop connect must use the authoritative account-switch endpoint.');
+assert.ok(guard.includes("state === 'checking'") && guard.includes("whopConnect.hidden = false"), 'A saved-but-unverified Whop connection can still hide the account-switch action.');
+assert.ok(guard.includes("whopConnect.textContent = state === 'checking' ? 'Switch Whop account'"), 'The stuck verification state does not identify the recovery action clearly.');
 assert.ok(guard.includes("closest('[data-whop-disconnect]')") && guard.includes("window.location.assign('/api/whop-switch')"), 'Disconnect can still be intercepted by the legacy in-page handler instead of switching accounts.');
 assert.ok(guard.includes('stopImmediatePropagation()'), 'Disconnect does not preempt the older Control Center listener.');
 
@@ -43,7 +45,8 @@ assert.ok(switchRoute.includes("admin.kind !== 'owner'"), 'Whop switching is not
 assert.ok(switchRoute.includes('disconnectWhop(context.request, context.env, admin)'), 'Whop switching does not revoke/delete the currently saved owner token first.');
 assert.ok(switchRoute.includes("DELETE FROM whop_sessions") && switchRoute.includes("DELETE FROM whop_oauth_states"), 'Stale Whop rows can survive disconnect and resurrect the previous account.');
 assert.ok(switchRoute.includes("DELETE FROM whop_refresh_leases"), 'Refresh leases are not cleared during an authoritative account switch.');
-assert.ok(switchRoute.includes("searchParams.set('prompt', 'select_account')") && switchRoute.includes("searchParams.set('max_age', '0')"), 'Whop switching does not explicitly request an account chooser/fresh authorization.');
+assert.ok(switchRoute.includes("searchParams.set('prompt', 'login')") && switchRoute.includes("searchParams.set('max_age', '0')"), 'Whop switching does not force a fresh login after the old local connection is purged.');
+assert.ok(!switchRoute.includes("prompt', 'select_account'"), 'Whop switching still relies on an undocumented select_account prompt.');
 assert.ok(switchRoute.indexOf("DELETE FROM whop_sessions") < switchRoute.indexOf('beginWhopOAuth('), 'Whop switching can begin before stale sessions are purged.');
 
 assert.ok(callback.includes('readAdminSession(context.request, context.env)'), 'OAuth callback does not verify the existing browser Control Center session.');
@@ -77,9 +80,10 @@ for (const file of [
 console.log('\nSNIPERPLUG CONTROL CENTER AUTH / WHOP ACCESS AUDIT PASSED\n');
 console.log('✓ The Control Center password is the only route that unlocks the application.');
 console.log('✓ Whop connect/switch is available only after the owner password has unlocked the Control Center.');
+console.log('✓ Saved-but-unverified Whop state keeps a visible Switch Whop account recovery action.');
 console.log('✓ Disconnect preempts the legacy UI handler and enters one authoritative switch flow.');
 console.log('✓ Account switching revokes the old token and purges stale sessions, OAuth states, and refresh leases before reconnecting.');
-console.log('✓ The replacement OAuth request explicitly asks Whop for account selection instead of silently reusing the old local session.');
+console.log('✓ The replacement OAuth request forces a fresh Whop login instead of silently reusing the old local session.');
 console.log('✓ Legacy customer/pending cookies are invalidated and cannot bypass the password gate.');
 console.log('✓ OAuth callbacks cannot promote a Whop identity into a Control Center session.');
 console.log('✓ Existing paid membership and Discord verification code remains fail-closed if reused elsewhere.');
