@@ -1,8 +1,13 @@
 import { HttpError, requireDatabase } from './http.js';
 
-const OWNER_KEY = 'sniperplug-owner';
 const HISTORY_HOURS = 48;
 const MAX_ACTIONS = 1000;
+
+function actionOwnerKey(admin) {
+  const sid = String(admin?.sid || '').trim();
+  if (!sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  return sid;
+}
 
 function safeJson(value, fallback) {
   try { return JSON.parse(value || ''); } catch { return fallback; }
@@ -48,7 +53,7 @@ function idsFromResult(result) {
   return [...new Set([...published, ...imported].map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0))];
 }
 
-async function recentJobs(db) {
+async function recentJobs(db, ownerKey) {
   await ensureBulkTable(db);
   const cutoff = new Date(Date.now() - HISTORY_HOURS * 3_600_000).toISOString();
   const rows = await db.prepare(`
@@ -56,15 +61,15 @@ async function recentJobs(db) {
     WHERE admin_session_id = ? AND created_at >= ?
     ORDER BY created_at DESC
     LIMIT 30
-  `).bind(OWNER_KEY, cutoff).all();
+  `).bind(ownerKey, cutoff).all();
   return rows.results || [];
 }
 
 export async function listRecentActions(env, admin) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = actionOwnerKey(admin);
   const db = requireDatabase(env);
   await ensureDismissalTable(db);
-  const jobs = await recentJobs(db);
+  const jobs = await recentJobs(db, ownerKey);
   const references = [];
   for (const job of jobs) {
     for (const result of safeJson(job.results_json, [])) {
@@ -82,28 +87,30 @@ export async function listRecentActions(env, admin) {
     }
   }
   const cutoff = new Date(Date.now() - HISTORY_HOURS * 3_600_000).toISOString();
-  const rejected = await db.prepare(`
-    SELECT id, source_key, source_group, updated_at
-    FROM guides
-    WHERE status = 'rejected' AND source_key IS NOT NULL AND updated_at >= ?
-    ORDER BY updated_at DESC
-    LIMIT ?
-  `).bind(cutoff, MAX_ACTIONS).all();
-  for (const guide of rejected.results || []) {
-    references.push({
-      actionId: `manual-reject:${guide.id}`,
-      jobId: null,
-      jobStatus: 'manual',
-      jobCreatedAt: guide.updated_at,
-      sourceId: null,
-      sourceTitle: guide.source_group || 'Imported Whop source',
-      guideId: Number(guide.id),
-    });
+  if (admin?.kind === 'owner') {
+    const rejected = await db.prepare(`
+      SELECT id, source_key, source_group, updated_at
+      FROM guides
+      WHERE status = 'rejected' AND source_key IS NOT NULL AND updated_at >= ?
+      ORDER BY updated_at DESC
+      LIMIT ?
+    `).bind(cutoff, MAX_ACTIONS).all();
+    for (const guide of rejected.results || []) {
+      references.push({
+        actionId: `manual-reject:${guide.id}`,
+        jobId: null,
+        jobStatus: 'manual',
+        jobCreatedAt: guide.updated_at,
+        sourceId: null,
+        sourceTitle: guide.source_group || 'Imported Whop source',
+        guideId: Number(guide.id),
+      });
+    }
   }
   const dismissedRows = await db.prepare(`
     SELECT action_id FROM recent_action_dismissals
     WHERE admin_session_id = ?
-  `).bind(OWNER_KEY).all();
+  `).bind(ownerKey).all();
   const dismissed = new Set((dismissedRows.results || []).map((row) => String(row.action_id)));
   const unique = new Map(references.filter((item) => !dismissed.has(item.actionId)).map((item) => [item.actionId, item]));
   const values = [...unique.values()].slice(0, MAX_ACTIONS);
@@ -143,7 +150,7 @@ export async function listRecentActions(env, admin) {
 }
 
 export async function dismissRecentActions(env, admin, input = {}) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = actionOwnerKey(admin);
   const db = requireDatabase(env);
   await ensureDismissalTable(db);
   const history = await listRecentActions(env, admin);
@@ -157,12 +164,12 @@ export async function dismissRecentActions(env, admin, input = {}) {
     INSERT INTO recent_action_dismissals (admin_session_id, action_id, dismissed_at)
     VALUES (?, ?, ?)
     ON CONFLICT(admin_session_id, action_id) DO UPDATE SET dismissed_at = excluded.dismissed_at
-  `).bind(OWNER_KEY, item.actionId, now)));
+  `).bind(ownerKey, item.actionId, now)));
   return { dismissed: selected.length, history: await listRecentActions(env, admin) };
 }
 
 export async function undoRecentActions(env, admin, input = {}) {
-  if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+  const ownerKey = actionOwnerKey(admin);
   const db = requireDatabase(env);
   const history = await listRecentActions(env, admin);
   const requested = new Set((Array.isArray(input.actionIds) ? input.actionIds : []).map((value) => String(value || '').trim()).filter(Boolean));
@@ -196,7 +203,7 @@ export async function undoRecentActions(env, admin, input = {}) {
       UPDATE bulk_jobs
       SET status = 'canceled', lease_until = NULL, completed_at = ?, updated_at = ?
       WHERE admin_session_id = ? AND status = 'active'
-    `).bind(now, now, OWNER_KEY).run();
+    `).bind(now, now, ownerKey).run();
   }
 
   return {

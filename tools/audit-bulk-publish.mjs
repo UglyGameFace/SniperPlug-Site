@@ -9,6 +9,7 @@ const page = read('control-center/index.html');
 const client = read('assets/js/control-center-v2.js');
 const jobs = read('functions/_lib/bulk-jobs.js');
 const jobsEndpoint = read('functions/api/bulk-jobs.js');
+const jobResetEndpoint = read('functions/api/bulk-job-reset.js');
 const recent = read('functions/_lib/recent-actions.js');
 const recentEndpoint = read('functions/api/recent-actions.js');
 const publishEndpoint = read('functions/api/publish-ready.js');
@@ -56,5 +57,10 @@ assert.ok(jobs.includes('failures.push'), 'One source failure can abort the enti
 assert.ok(jobs.includes('const JOB_VERSION = 4'), 'Bulk jobs are not using the lease-safe worker version.');
 assert.ok(jobs.includes('const sourceKey = current.readyKeys[current.cursor]') && jobs.includes('sourceKeys: [sourceKey]'), 'Bulk Worker steps are not bounded to one exact item.');
 assert.ok(jobs.includes('leaseToken') && jobs.includes('lease_until = ?'), 'Bulk Worker persistence does not verify lease ownership.');
+assert.ok(jobs.includes('jobOwnerKey(admin)') && !jobs.includes("const OWNER_KEY = 'sniperplug-owner'"), 'Bulk jobs are still shared across authenticated importer sessions.');
+assert.ok(recent.includes('actionOwnerKey(admin)') && !recent.includes("const OWNER_KEY = 'sniperplug-owner'"), 'Bulk/recovery history is still shared across authenticated importer sessions.');
+assert.ok(recent.includes("admin?.kind === 'owner'"), 'Customer history can expose owner-only manual rejects.');
+assert.ok(jobResetEndpoint.includes('const ownerKey = String(admin.sid)') && !jobResetEndpoint.includes("OWNER_KEY = 'sniperplug-owner'"), 'Bulk reset can target another importer session’s workflow.');
+assert.ok(jobs.includes('shouldPauseWorkflow(error)') && jobs.includes('releaseStepLease'), 'Transient Whop/concurrency failures can still advance and permanently skip a bulk source or item.');
 assert.ok(!jobs.includes('IMPORT_CHUNK = 50'), 'The unsafe source-wide 50-item import batch returned.');
 assert.ok(jobs.includes("item.decision !== 'blocked'"), 'Blocked content can be auto-approved.');

@@ -20,6 +20,7 @@ for (const setting of ['WHOP_IMPORTER_PRODUCT_ID', 'WHOP_API_KEY', 'SNIPERPLUG_R
   assert.ok(example.includes(setting), `${setting} is missing from the deployment example.`);
 }
 assert.ok(access.includes('/memberships') && access.includes("['active', 'trialing', 'completed']"), 'Current paid membership is not verified server-side.');
+assert.ok(access.includes('requireWhopSession(request, env, adminSession)'), 'Paid customer entitlement checks can use an expired OAuth access token instead of the refreshable session.');
 assert.ok(access.includes('/social_accounts') && access.includes("service || '').toLowerCase() === 'discord'"), 'The Discord identity linked to Whop is not resolved server-side.');
 assert.ok(access.includes('/guilds/${encodeURIComponent(guildId)}/members/${encodeURIComponent(discordUserId)}'), 'Live Discord guild membership is not checked.');
 assert.ok(access.includes("code: 'paid_access_discord_membership_required'"), 'Missing required Discord membership does not fail clearly.');

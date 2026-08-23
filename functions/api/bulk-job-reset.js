@@ -9,12 +9,12 @@ import {
   requireSameOrigin,
 } from '../_lib/http.js';
 
-const OWNER_KEY = 'sniperplug-owner';
 
 export async function onRequest(context) {
   try {
     const admin = await requireAdmin(context.request, context.env);
     if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
+    const ownerKey = String(admin.sid);
     if (context.request.method !== 'POST') return methodNotAllowed(['POST']);
     requireSameOrigin(context.request);
     const input = await readJson(context.request, { maxBytes: 20_000 });
@@ -26,7 +26,7 @@ export async function onRequest(context) {
       WHERE admin_session_id = ?
       ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, updated_at DESC
       LIMIT 1
-    `).bind(OWNER_KEY).first();
+    `).bind(ownerKey).first();
 
     if (!row) return json({ cleared: true, job: null });
 
@@ -37,7 +37,7 @@ export async function onRequest(context) {
         UPDATE bulk_jobs
         SET status = 'canceled', lease_until = NULL, completed_at = ?, updated_at = ?
         WHERE id = ? AND admin_session_id = ? AND status = 'active'
-      `).bind(now, now, row.id, OWNER_KEY).run();
+      `).bind(now, now, row.id, ownerKey).run();
       return json({ stopped: true, jobId: row.id, status: 'canceled' });
     }
 
@@ -46,7 +46,7 @@ export async function onRequest(context) {
         throw new HttpError(409, 'Stop the active workflow before clearing it. Completed work remains available in recovery and undo history.');
       }
       await db.prepare('DELETE FROM bulk_jobs WHERE id = ? AND admin_session_id = ? AND status != ?')
-        .bind(row.id, OWNER_KEY, 'active').run();
+        .bind(row.id, ownerKey, 'active').run();
       return json({ cleared: true, jobId: row.id });
     }
 

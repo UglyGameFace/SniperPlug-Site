@@ -11,7 +11,12 @@ const OAUTH_BASE = 'https://api.whop.com/oauth';
 const API_BASE = 'https://api.whop.com/api/v1';
 const DEFAULT_SCOPES = 'openid profile email forum:read courses:read chat:read member:basic:read member:email:read';
 const REQUEST_TIMEOUT_MS = 20_000;
+const IDEMPOTENT_RETRY_ATTEMPTS = 3;
+const RETRY_BASE_MS = 250;
+const RETRY_MAX_MS = 5_000;
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
+const REFRESH_LEASE_MS = 30_000;
+const REFRESH_WAIT_MS = 5_000;
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_SOURCE_ITEMS = 2000;
@@ -74,32 +79,100 @@ function config(request, env) {
   return { clientId, tokenSecret, redirectUri, scopes };
 }
 
-async function timedFetch(url, options = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response;
-  try {
-    response = await fetch(url, {
-      ...options,
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-  } catch (error) {
-    if (controller.signal.aborted || error?.name === 'AbortError') throw new HttpError(504, 'Whop did not respond in time.');
-    throw error;
-  } finally {
-    clearTimeout(timer);
+function retryAfterMs(response, payload = null) {
+  const raw = String(response?.headers?.get?.('retry-after') || '').trim();
+  if (raw) {
+    if (/^\d+(?:\.\d+)?$/.test(raw)) return Math.max(0, Math.round(Number(raw) * 1000));
+    const timestamp = Date.parse(raw);
+    if (Number.isFinite(timestamp)) return Math.max(0, timestamp - Date.now());
   }
+  const message = String(payload?.error?.message || payload?.message || payload?.error_description || '');
+  const match = message.match(/(?:try again in|retry(?: after| in)?)\s*(\d+(?:\.\d+)?)\s*seconds?/i);
+  return match ? Math.max(0, Math.round(Number(match[1]) * 1000)) : null;
+}
 
-  const text = await response.text();
-  let payload = null;
-  try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
-  if (!response.ok) {
+function retryDelayMs(response, payload, attempt) {
+  const serverDelay = retryAfterMs(response, payload);
+  if (serverDelay !== null) return Math.min(RETRY_MAX_MS, serverDelay);
+  const exponential = RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1));
+  return Math.min(RETRY_MAX_MS, exponential + Math.floor(Math.random() * RETRY_BASE_MS));
+}
+
+function wait(ms) {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+}
+
+function upstreamDetails(response, payload) {
+  const requestId = response?.headers?.get?.('x-request-id') || response?.headers?.get?.('cf-ray') || null;
+  const details = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? { ...payload }
+    : payload == null ? {} : { upstreamBody: String(payload).slice(0, 500) };
+  return {
+    ...details,
+    whopStatus: Number(response?.status || 0),
+    ...(retryAfterMs(response, payload) === null ? {} : { retryAfterSeconds: retryAfterMs(response, payload) / 1000 }),
+    ...(requestId ? { requestId } : {}),
+  };
+}
+
+async function timedFetch(url, options = {}, { idempotent = false } = {}) {
+  const attempts = idempotent ? IDEMPOTENT_RETRY_ATTEMPTS : 1;
+  let lastTransportError = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const attemptTimeoutMs = idempotent ? 12_000 : REQUEST_TIMEOUT_MS;
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
+    let response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+    } catch (error) {
+      lastTransportError = error;
+      const timedOut = controller.signal.aborted || error?.name === 'AbortError';
+      if (idempotent && attempt < attempts) {
+        await wait(retryDelayMs(null, null, attempt));
+        continue;
+      }
+      if (timedOut) throw new HttpError(504, 'Whop did not respond in time.', { code: 'whop_timeout', attempts: attempt });
+      throw new HttpError(502, 'Whop could not be reached.', {
+        code: 'whop_transport_error',
+        attempts: attempt,
+        cause: String(error?.message || error || 'Unknown network error').slice(0, 300),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const text = await response.text();
+    let payload = null;
+    try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
+    if (response.ok) return payload;
+
+    const retryable = response.status === 429 || response.status >= 500;
+    const serverRetryDelay = retryAfterMs(response, payload);
+    const retryFitsBudget = serverRetryDelay === null || serverRetryDelay <= RETRY_MAX_MS;
+    if (idempotent && retryable && retryFitsBudget && attempt < attempts) {
+      await wait(retryDelayMs(response, payload, attempt));
+      continue;
+    }
+
     const message = payload?.error_description || payload?.error?.message || payload?.message || `Whop request failed (${response.status}).`;
     const status = response.status === 401 ? 401 : response.status === 403 ? 403 : response.status === 404 ? 404 : response.status === 429 ? 503 : response.status >= 500 ? 502 : 422;
-    throw new HttpError(status, message, payload);
+    throw new HttpError(status, message, {
+      ...upstreamDetails(response, payload),
+      attempts: attempt,
+    });
   }
-  return payload;
+
+  throw new HttpError(502, 'Whop could not be reached.', {
+    code: 'whop_transport_error',
+    attempts,
+    cause: String(lastTransportError?.message || lastTransportError || 'Unknown network error').slice(0, 300),
+  });
 }
 
 function pkceChallenge(verifier) {
@@ -126,7 +199,7 @@ function tokenShape(payload, previous = null) {
 async function userInfo(accessToken) {
   return timedFetch(`${OAUTH_BASE}/userinfo`, {
     headers: { authorization: `Bearer ${accessToken}` },
-  });
+  }, { idempotent: true });
 }
 
 export async function beginWhopOAuth(request, env, adminSession) {
@@ -230,42 +303,111 @@ async function decryptSession(row, cfg) {
   };
 }
 
+async function ensureRefreshLeaseTable(db) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS whop_refresh_leases (
+      admin_session_id TEXT PRIMARY KEY,
+      lease_token TEXT NOT NULL,
+      base_token_version INTEGER NOT NULL,
+      lease_until TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+async function acquireRefreshLease(db, adminSessionId, tokenVersion) {
+  await ensureRefreshLeaseTable(db);
+  const now = new Date();
+  const nowIso = now.toISOString();
+  await db.prepare('DELETE FROM whop_refresh_leases WHERE lease_until <= ?').bind(nowIso).run();
+  const leaseToken = randomToken(18);
+  const leaseUntil = new Date(now.getTime() + REFRESH_LEASE_MS).toISOString();
+  const inserted = await db.prepare(`
+    INSERT OR IGNORE INTO whop_refresh_leases (
+      admin_session_id, lease_token, base_token_version, lease_until, created_at
+    ) VALUES (?, ?, ?, ?, ?)
+  `).bind(adminSessionId, leaseToken, Number(tokenVersion || 1), leaseUntil, nowIso).run();
+  return Number(inserted.meta?.changes || 0) === 1 ? leaseToken : null;
+}
+
+async function releaseRefreshLease(db, adminSessionId, leaseToken) {
+  if (!leaseToken) return;
+  await db.prepare('DELETE FROM whop_refresh_leases WHERE admin_session_id = ? AND lease_token = ?')
+    .bind(adminSessionId, leaseToken)
+    .run();
+}
+
+async function waitForConcurrentRefresh(db, adminSessionId, baseTokenVersion, cfg) {
+  const deadline = Date.now() + REFRESH_WAIT_MS;
+  while (Date.now() < deadline) {
+    await wait(125);
+    const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSessionId).first();
+    if (!current) throw new HttpError(401, 'Whop is no longer connected.');
+    if (Number(current.token_version || 1) !== Number(baseTokenVersion || 1)) return decryptSession(current, cfg);
+    const lease = await db.prepare('SELECT lease_until FROM whop_refresh_leases WHERE admin_session_id = ?').bind(adminSessionId).first();
+    if (!lease || Date.parse(lease.lease_until) <= Date.now()) break;
+  }
+  throw new HttpError(503, 'Whop session refresh is already in progress. Retry this request.', {
+    code: 'whop_refresh_in_progress',
+  });
+}
+
 async function refreshWhopSession(request, env, adminSession, row, session) {
   const cfg = config(request, env);
   const db = requireDatabase(env);
-  const payload = await timedFetch(`${OAUTH_BASE}/token`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      refresh_token: session.refreshToken,
-      client_id: cfg.clientId,
-    }),
-  });
-  const refreshed = tokenShape(payload, session);
-  const accessCipher = await sealJson({ token: refreshed.accessToken }, cfg.tokenSecret);
-  const refreshCipher = await sealJson({ token: refreshed.refreshToken }, cfg.tokenSecret);
-  const result = await db.prepare(`
-    UPDATE whop_sessions SET
-      access_cipher = ?, refresh_cipher = ?, token_type = ?, scopes = ?, expires_at = ?,
-      token_version = token_version + 1, updated_at = ?
-    WHERE admin_session_id = ? AND token_version = ?
-  `).bind(
-    accessCipher,
-    refreshCipher,
-    refreshed.tokenType,
-    refreshed.scopes,
-    refreshed.expiresAt,
-    new Date().toISOString(),
-    adminSession.sid,
-    row.token_version,
-  ).run();
-  if (!result.meta?.changes) {
-    const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
-    if (!current) throw new HttpError(401, 'Whop is no longer connected.');
-    return decryptSession(current, cfg);
+  const leaseToken = await acquireRefreshLease(db, adminSession.sid, row.token_version);
+  if (!leaseToken) return waitForConcurrentRefresh(db, adminSession.sid, row.token_version, cfg);
+  try {
+    let payload;
+    try {
+      payload = await timedFetch(`${OAUTH_BASE}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'refresh_token',
+          refresh_token: session.refreshToken,
+          client_id: cfg.clientId,
+        }),
+      });
+    } catch (error) {
+      // Whop rotates refresh tokens. If another request refreshed this exact session first,
+      // its use of the old token can make this request receive invalid_grant/401. Recover
+      // the newer encrypted session instead of deleting a perfectly valid connection.
+      if (error instanceof HttpError && error.status === 401) {
+        const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
+        if (current && Number(current.token_version || 1) !== Number(row.token_version || 1)) {
+          return decryptSession(current, cfg);
+        }
+      }
+      throw error;
+    }
+    const refreshed = tokenShape(payload, session);
+    const accessCipher = await sealJson({ token: refreshed.accessToken }, cfg.tokenSecret);
+    const refreshCipher = await sealJson({ token: refreshed.refreshToken }, cfg.tokenSecret);
+    const result = await db.prepare(`
+      UPDATE whop_sessions SET
+        access_cipher = ?, refresh_cipher = ?, token_type = ?, scopes = ?, expires_at = ?,
+        token_version = token_version + 1, updated_at = ?
+      WHERE admin_session_id = ? AND token_version = ?
+    `).bind(
+      accessCipher,
+      refreshCipher,
+      refreshed.tokenType,
+      refreshed.scopes,
+      refreshed.expiresAt,
+      new Date().toISOString(),
+      adminSession.sid,
+      row.token_version,
+    ).run();
+    if (!result.meta?.changes) {
+      const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
+      if (!current) throw new HttpError(401, 'Whop is no longer connected.');
+      return decryptSession(current, cfg);
+    }
+    return { ...session, ...refreshed, tokenVersion: session.tokenVersion + 1 };
+  } finally {
+    await releaseRefreshLease(db, adminSession.sid, leaseToken).catch(() => null);
   }
-  return { ...session, ...refreshed, tokenVersion: session.tokenVersion + 1 };
 }
 
 export async function requireWhopSession(request, env, adminSession) {
@@ -279,7 +421,13 @@ export async function requireWhopSession(request, env, adminSession) {
     return await refreshWhopSession(request, env, adminSession, row, session);
   } catch (error) {
     if (error instanceof HttpError && error.status === 401) {
-      await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).run();
+      const removed = await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ? AND token_version = ?')
+        .bind(adminSession.sid, row.token_version)
+        .run();
+      if (!removed.meta?.changes) {
+        const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
+        if (current) return decryptSession(current, cfg);
+      }
     }
     throw error;
   }
@@ -300,7 +448,13 @@ export async function requireOwnerWhopSession(request, env) {
     return await refreshWhopSession(request, env, { sid: row.admin_session_id }, row, session);
   } catch (error) {
     if (error instanceof HttpError && error.status === 401) {
-      await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(row.admin_session_id).run();
+      const removed = await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ? AND token_version = ?')
+        .bind(row.admin_session_id, row.token_version)
+        .run();
+      if (!removed.meta?.changes) {
+        const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(row.admin_session_id).first();
+        if (current) return decryptSession(current, cfg);
+      }
     }
     throw error;
   }
@@ -344,7 +498,7 @@ export async function whopApi(session, path, query = {}) {
   }
   return timedFetch(url, {
     headers: { authorization: `Bearer ${session.accessToken}` },
-  });
+  }, { idempotent: true });
 }
 
 export function experienceIdFrom(value) {
