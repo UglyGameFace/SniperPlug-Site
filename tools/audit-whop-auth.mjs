@@ -52,7 +52,16 @@ assert.ok(!whop.includes("ORDER BY CASE WHEN admin_session_id = 'sniperplug-owne
 assert.ok(whop.includes('purgeLegacyWhopSessions'));
 assert.ok(whop.includes("DELETE FROM whop_oauth_states WHERE admin_session_id = ?") && whop.includes("DELETE FROM whop_refresh_leases WHERE admin_session_id = ?"));
 
-assert.ok(!guard.includes('data-whop-connect') && !guard.includes('data-whop-disconnect') && !guard.includes('MutationObserver'), 'Network guard still owns Whop UI state.');
+assert.ok(!guard.includes('data-whop-connect') && !guard.includes('data-whop-disconnect'), 'Network guard still owns Whop connection UI state.');
+assert.ok(guard.includes("document.documentElement.dataset.sniperplugControlAuth = unlocked ? 'unlocked' : 'locked'"), 'Control Center gate does not keep an explicit locked/unlocked browser state.');
+assert.ok(guard.includes('setControlAuthState(false);\n  window.SniperPlugControlAuthGate'), 'Control Center does not fail closed before asynchronous session checks begin.');
+assert.ok(guard.includes('html[data-sniperplug-control-auth="locked"] [data-control-root] [data-control-app] { display: none !important; }'), 'Locked state does not forcibly hide the Control Center app shell.');
+assert.ok(guard.includes('html[data-sniperplug-control-auth="locked"] [data-control-root] [data-login-panel] { display: block !important; }'), 'Locked state does not forcibly expose the password panel.');
+assert.ok(guard.includes("event.target.closest('[data-logout]')") && guard.includes('if (target) setControlAuthState(false);'), 'Lock button does not restore the password gate immediately.');
+assert.ok(guard.includes('if (response.status === 401)') && guard.includes('setControlAuthState(false);'), 'An unauthorized API response can leave the Control Center visible.');
+assert.ok(guard.includes("if (action === 'dashboard' && response.ok) setControlAuthState(true);"), 'The app is not tied to a successful protected dashboard response.');
+assert.ok(!guard.includes('data-whop-connect') && !guard.includes('data-whop-disconnect'), 'Network guard still owns Whop UI state.');
+
 assert.ok(client.includes("whopSwitch: $('[data-whop-switch]')"));
 assert.ok(client.includes("requestJson('/api/whop-switch', { method: 'POST'"));
 assert.ok(client.includes("requestJson('/api/whop-disconnect', { method: 'POST'"));
@@ -76,6 +85,8 @@ for (const file of [
 
 console.log('\nSNIPERPLUG OWNER / WHOP AUTH AUDIT PASSED\n');
 console.log('✓ The Control Center password is the only application login.');
+console.log('✓ The Control Center fails closed and stays hidden until a protected dashboard request succeeds.');
+console.log('✓ Lock and unauthorized responses immediately restore the password gate.');
 console.log('✓ Whop OAuth is one owner-bound data connection, not an alternate login.');
 console.log('✓ Legacy customer sessions, paid-access auth, and duplicate Control API OAuth routes are gone.');
 console.log('✓ Disconnect/switch are same-origin POST actions and cannot be triggered by link prefetch.');
