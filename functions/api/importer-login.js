@@ -1,7 +1,6 @@
-import { appendCookie, redirect } from '../_lib/http.js';
-import { createAdminSession } from '../_lib/auth.js';
-import { randomToken } from '../_lib/crypto.js';
-import { beginWhopOAuth } from '../_lib/whop.js';
+import { redirect } from '../_lib/http.js';
+import { requireAdmin } from '../_lib/auth.js';
+import { beginWhopOAuth, disconnectWhop } from '../_lib/whop.js';
 
 function oauthStartError(request, error) {
   const url = new URL('/control-center/', request.url);
@@ -12,11 +11,15 @@ function oauthStartError(request, error) {
 }
 
 export async function onRequest(context) {
-  const pendingSid = `whop-customer-pending:${randomToken(24)}`;
-  const result = await createAdminSession(context.env, { sid: pendingSid, kind: 'customer-pending' });
   try {
-    const oauthUrl = await beginWhopOAuth(context.request, context.env, result.session);
-    return appendCookie(redirect(oauthUrl), result.cookie);
+    const admin = await requireAdmin(context.request, context.env);
+    if (admin.kind !== 'owner') throw new Error('Unlock the Control Center with the owner password before connecting Whop.');
+
+    await disconnectWhop(context.request, context.env, admin).catch(() => null);
+    const oauthUrl = new URL(await beginWhopOAuth(context.request, context.env, admin));
+    oauthUrl.searchParams.set('prompt', 'login');
+    oauthUrl.searchParams.set('max_age', '0');
+    return redirect(oauthUrl.toString());
   } catch (error) {
     return oauthStartError(context.request, error);
   }
