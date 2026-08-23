@@ -36,6 +36,6 @@ assert.ok(!backups.includes('new MutationObserver'));
 assert.ok(css.includes('.whop-recovery-workflow'));
 assert.ok(css.includes('@media(max-width:720px)'));
 for (const asset of ['control-center-hardening.css', 'control-center-v2.js', 'control-center-whop-backups.js']) {
-  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260811.1`), `${asset} cache version was not bumped with the group recovery repair.`);
+  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260823.1`), `${asset} cache version was not bumped with the group recovery repair.`);
 }
 console.log('CONTROL CENTER MOBILE FLOW AUDIT PASSED');

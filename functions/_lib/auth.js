@@ -14,7 +14,6 @@ import {
   requireDatabase,
   secureCookie,
 } from './http.js';
-import { assertPaidImporterAccess, isCustomerSession } from './paid-access.js';
 
 const ADMIN_COOKIE = 'sniperplug_admin';
 export const OWNER_SESSION_ID = 'sniperplug-owner';
@@ -41,95 +40,6 @@ async function loginClientKey(request) {
     || request.headers.get('X-Forwarded-For')?.split(',')[0]
     || 'unknown';
   return sha256(`sniperplug-control:${String(address).trim().slice(0, 128)}`);
-}
-
-function missingTable(error, table) {
-  const message = String(error?.message || '').toLowerCase();
-  return message.includes('no such table') && message.includes(String(table || '').toLowerCase());
-}
-
-function migrationCompatibilityError(error) {
-  return /no such column|has no column named|constraint failed|datatype mismatch|cannot add a not null column/i.test(String(error?.message || ''));
-}
-
-async function sessionColumns(db) {
-  try {
-    const result = await db.prepare('PRAGMA table_info(whop_sessions)').all();
-    return new Set((result.results || []).map((row) => String(row.name || '')).filter(Boolean));
-  } catch (error) {
-    if (missingTable(error, 'whop_sessions')) return new Set();
-    throw error;
-  }
-}
-
-function sessionColumnValue(name, legacy, now) {
-  if (name === 'admin_session_id') return OWNER_SESSION_ID;
-  if (name === 'token_type') return String(legacy?.token_type || 'Bearer');
-  if (name === 'scopes') return String(legacy?.scopes || '');
-  if (name === 'user_json') return String(legacy?.user_json || '{}');
-  if (name === 'token_version') return Math.max(1, Number(legacy?.token_version || 1));
-  if (name === 'created_at' || name === 'updated_at') return String(legacy?.[name] || now);
-  if (name === 'expires_at') return String(legacy?.expires_at || now);
-  return legacy?.[name] == null ? '' : legacy[name];
-}
-
-async function copySessionToOwner(db, legacy, columns) {
-  const ordered = [
-    'admin_session_id',
-    'access_cipher',
-    'refresh_cipher',
-    'token_type',
-    'scopes',
-    'expires_at',
-    'user_json',
-    'token_version',
-    'created_at',
-    'updated_at',
-  ].filter((name) => columns.has(name));
-  if (!ordered.includes('admin_session_id') || !ordered.includes('access_cipher')) return false;
-
-  const now = new Date().toISOString();
-  const updates = ordered
-    .filter((name) => !['admin_session_id', 'created_at'].includes(name))
-    .map((name) => `${name} = excluded.${name}`);
-  const sql = `
-    INSERT INTO whop_sessions (${ordered.join(', ')})
-    VALUES (${ordered.map(() => '?').join(', ')})
-    ON CONFLICT(admin_session_id) DO UPDATE SET
-      ${updates.length ? updates.join(',\n      ') : 'admin_session_id = excluded.admin_session_id'}
-  `;
-  await db.prepare(sql).bind(...ordered.map((name) => sessionColumnValue(name, legacy, now))).run();
-  return true;
-}
-
-async function resolveOwnerWhopSessionId(env, legacySessionId) {
-  const db = requireDatabase(env);
-  const columns = await sessionColumns(db);
-  if (!columns.size) return OWNER_SESSION_ID;
-
-  const owner = await db.prepare('SELECT admin_session_id FROM whop_sessions WHERE admin_session_id = ?')
-    .bind(OWNER_SESSION_ID)
-    .first();
-  if (owner) return OWNER_SESSION_ID;
-
-  let legacy = null;
-  if (legacySessionId && legacySessionId !== OWNER_SESSION_ID) {
-    legacy = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?')
-      .bind(legacySessionId)
-      .first();
-  }
-  if (!legacy) legacy = await db.prepare('SELECT * FROM whop_sessions ORDER BY updated_at DESC LIMIT 1').first();
-  if (!legacy) return OWNER_SESSION_ID;
-
-  try {
-    return await copySessionToOwner(db, legacy, columns)
-      ? OWNER_SESSION_ID
-      : String(legacy.admin_session_id || OWNER_SESSION_ID);
-  } catch (error) {
-    if (!migrationCompatibilityError(error)) throw error;
-    console.warn('Whop owner-session migration deferred; using the existing compatible session row.');
-    return String(legacy.admin_session_id || OWNER_SESSION_ID);
-  }
 }
 
 export async function checkLoginThrottle(request, env) {
@@ -174,16 +84,11 @@ export async function verifyAdminPassword(env, submitted) {
   return constantTimeTextEqual(String(submitted || ''), adminPassword(env));
 }
 
-export async function createAdminSession(env, options = {}) {
-  const sid = String(options.sid || OWNER_SESSION_ID).trim();
-  const kind = String(options.kind || 'owner').trim();
-  const whopUserId = String(options.whopUserId || '').trim() || null;
-  if (!sid) throw new HttpError(500, 'Cannot create an empty Control Center session.');
+export async function createAdminSession(env) {
   const session = {
-    v: 2,
-    sid,
-    kind,
-    whopUserId,
+    v: 3,
+    sid: OWNER_SESSION_ID,
+    kind: 'owner',
     nonce: randomToken(24),
     issuedAt: Date.now(),
     expiresAt: Date.now() + ADMIN_TTL_SECONDS * 1000,
@@ -201,9 +106,13 @@ export async function readAdminSession(request, env) {
     const [payload, signature] = cookieValue(request, ADMIN_COOKIE).split('.', 2);
     if (!payload || !signature || !(await verifyValue(payload, signature, sessionSecret(env)))) return null;
     const session = JSON.parse(textDecoder.decode(base64urlDecode(payload)));
-    if (![1, 2].includes(session?.v) || !session.sid || Number(session.expiresAt) <= Date.now()) return null;
-    if (session.v === 1) return { ...session, kind: 'owner', whopUserId: null };
-    return session;
+    if (![1, 2, 3].includes(session?.v) || Number(session.expiresAt) <= Date.now()) return null;
+
+    // Version 1 predates customer-style Whop sessions and is safe to normalize to
+    // the one owner identity. Versions 2+ must already be the explicit owner.
+    if (session.v === 1) return { ...session, sid: OWNER_SESSION_ID, kind: 'owner' };
+    if (session.sid !== OWNER_SESSION_ID || session.kind !== 'owner') return null;
+    return { ...session, sid: OWNER_SESSION_ID, kind: 'owner' };
   } catch {
     return null;
   }
@@ -212,17 +121,7 @@ export async function readAdminSession(request, env) {
 export async function requireAdmin(request, env) {
   const session = await readAdminSession(request, env);
   if (!session) throw new HttpError(401, 'Sign in to the SniperPlug Control Center first.');
-  if (session.kind === 'customer-pending') {
-    throw new HttpError(401, 'Finish signing in with Whop before opening the Control Center.', {
-      code: 'customer_oauth_pending',
-    });
-  }
-  if (isCustomerSession(session)) {
-    const access = await assertPaidImporterAccess(request, env, session);
-    return { ...session, access };
-  }
-  const effectiveSessionId = await resolveOwnerWhopSessionId(env, session.sid);
-  return { ...session, kind: 'owner', legacySid: session.sid, sid: effectiveSessionId };
+  return session;
 }
 
 export function clearAdminSession() {

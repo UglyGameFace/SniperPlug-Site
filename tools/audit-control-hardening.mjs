@@ -38,10 +38,9 @@ const codeAudit = auditGuideLinks('`https://whop.com/not-a-link`\n\n```text\nhtt
 assert.equal(codeAudit.total, 0, 'URLs inside inline or fenced code must not be audited as clickable links.');
 
 assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Whop connection is still tied to a temporary browser session ID.');
-assert.ok(auth.includes('resolveOwnerWhopSessionId') && auth.includes('PRAGMA table_info(whop_sessions)'), 'Legacy Whop sessions are not resolved against the deployed D1 schema.');
-assert.ok(auth.includes('copySessionToOwner') && auth.includes('using the existing compatible session row'), 'An older Whop session row can still crash the Control Center during migration.');
-assert.ok(!auth.includes('DELETE FROM whop_sessions WHERE admin_session_id <> ?'), 'Owner-session migration still deletes compatible legacy rows during a normal request.');
-assert.ok(auth.includes('legacySid: session.sid') && auth.includes('sid: effectiveSessionId'), 'Existing signed admin cookies do not normalize or safely fall back to a compatible Whop session.');
+assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Control Center owner identity is not deterministic.');
+assert.ok(!auth.includes('resolveOwnerWhopSessionId') && !auth.includes('copySessionToOwner'), 'Legacy Whop-session adoption logic can resurrect an unrelated account.');
+assert.ok(auth.includes('session.v === 1') && auth.includes('sid: OWNER_SESSION_ID'), 'Legacy owner cookies are not normalized to the one canonical owner session.');
 assert.ok(control.includes('verifiedWhopSummary') && control.includes('requireWhopSession(request, env, admin)'), 'Dashboard reports connected from a stale row without opening the saved Whop session.');
 assert.ok(control.includes('[401, 403].includes(error.status)'), 'Invalid Whop sessions are not cleared before the UI reports connection state.');
 assert.ok(reconciliation.includes('Optional import reconciliation was deferred') && reconciliation.includes('deferred: true'), 'Optional cleanup can still take down the entire Control Center.');

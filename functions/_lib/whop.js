@@ -6,6 +6,7 @@ import {
   sha256,
 } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
+import { OWNER_SESSION_ID } from './auth.js';
 
 const OAUTH_BASE = 'https://api.whop.com/oauth';
 const API_BASE = 'https://api.whop.com/api/v1';
@@ -436,23 +437,21 @@ export async function requireWhopSession(request, env, adminSession) {
 export async function requireOwnerWhopSession(request, env) {
   const cfg = config(request, env);
   const db = requireDatabase(env);
-  const row = await db.prepare(`
-    SELECT * FROM whop_sessions
-    ORDER BY CASE WHEN admin_session_id = 'sniperplug-owner' THEN 0 ELSE 1 END, updated_at DESC
-    LIMIT 1
-  `).first();
+  const row = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?')
+    .bind(OWNER_SESSION_ID)
+    .first();
   if (!row) throw new HttpError(401, 'Whop is not connected. Reconnect it from the SniperPlug Control Center.');
   const session = await decryptSession(row, cfg);
   if (Date.parse(session.expiresAt) - Date.now() > REFRESH_BUFFER_MS) return session;
   try {
-    return await refreshWhopSession(request, env, { sid: row.admin_session_id }, row, session);
+    return await refreshWhopSession(request, env, { sid: OWNER_SESSION_ID }, row, session);
   } catch (error) {
     if (error instanceof HttpError && error.status === 401) {
       const removed = await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ? AND token_version = ?')
-        .bind(row.admin_session_id, row.token_version)
+        .bind(OWNER_SESSION_ID, row.token_version)
         .run();
       if (!removed.meta?.changes) {
-        const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(row.admin_session_id).first();
+        const current = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(OWNER_SESSION_ID).first();
         if (current) return decryptSession(current, cfg);
       }
     }
@@ -471,10 +470,24 @@ export async function whopSessionSummary(env, adminSession) {
   };
 }
 
+export async function purgeLegacyWhopSessions(env) {
+  const db = requireDatabase(env);
+  const statements = [
+    ['DELETE FROM whop_sessions WHERE admin_session_id != ?', OWNER_SESSION_ID],
+    ['DELETE FROM whop_oauth_states WHERE admin_session_id != ?', OWNER_SESSION_ID],
+    ['DELETE FROM whop_refresh_leases WHERE admin_session_id != ?', OWNER_SESSION_ID],
+  ];
+  for (const [sql, sid] of statements) {
+    try { await db.prepare(sql).bind(sid).run(); } catch { /* migration may not exist yet */ }
+  }
+}
+
 export async function disconnectWhop(request, env, adminSession) {
   const cfg = config(request, env);
   const db = requireDatabase(env);
-  const row = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).first();
+  const sid = String(adminSession?.sid || '').trim();
+  if (sid !== OWNER_SESSION_ID) throw new HttpError(403, 'Only the Control Center owner session can disconnect Whop.');
+  const row = await db.prepare('SELECT * FROM whop_sessions WHERE admin_session_id = ?').bind(OWNER_SESSION_ID).first();
   if (row) {
     try {
       const session = await decryptSession(row, cfg);
@@ -487,7 +500,10 @@ export async function disconnectWhop(request, env, adminSession) {
       // Local disconnect must still succeed when Whop is temporarily unavailable.
     }
   }
-  await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(adminSession.sid).run();
+  await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(OWNER_SESSION_ID).run();
+  await db.prepare('DELETE FROM whop_oauth_states WHERE admin_session_id = ?').bind(OWNER_SESSION_ID).run().catch(() => null);
+  await db.prepare('DELETE FROM whop_refresh_leases WHERE admin_session_id = ?').bind(OWNER_SESSION_ID).run().catch(() => null);
+  await purgeLegacyWhopSessions(env);
 }
 
 export async function whopApi(session, path, query = {}) {

@@ -2,20 +2,6 @@
   if (window.__sniperplugApiFetchGuardInstalled) return;
   window.__sniperplugApiFetchGuardInstalled = true;
 
-  const whopConnect = document.querySelector('[data-whop-connect]');
-  if (whopConnect instanceof HTMLAnchorElement) {
-    whopConnect.href = '/api/whop-switch';
-    whopConnect.textContent = 'Connect or switch Whop account';
-  }
-
-  document.addEventListener('click', (event) => {
-    const target = event.target instanceof Element ? event.target.closest('[data-whop-disconnect]') : null;
-    if (!target) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    window.location.assign('/api/whop-switch');
-  }, true);
-
   const nativeFetch = window.fetch.bind(window);
   const READ_TIMEOUT_MS = 45_000;
   const WRITE_TIMEOUT_MS = 120_000;

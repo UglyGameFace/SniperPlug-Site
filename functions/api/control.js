@@ -14,7 +14,6 @@ import {
   json,
   methodNotAllowed,
   readJson,
-  redirect,
   requireSameOrigin,
 } from '../_lib/http.js';
 import {
@@ -45,9 +44,8 @@ import {
   sourceDecision,
 } from '../_lib/source-policy.js';
 import {
-  beginWhopOAuth,
   disconnectWhop,
-  finishWhopOAuth,
+  purgeLegacyWhopSessions,
   requireWhopSession,
   resolveWhopExperienceType,
   whopSessionSummary,
@@ -109,6 +107,7 @@ async function login(request, env) {
       throw new HttpError(401, 'Incorrect Control Center password.');
     }
     await clearLoginFailures(request, env);
+    await purgeLegacyWhopSessions(env);
     const result = await createAdminSession(env);
     return appendCookie(json({ authenticated: true, expiresAt: result.session.expiresAt }), result.cookie);
   }
@@ -221,32 +220,6 @@ async function dashboard(request, env, admin, context) {
     categories,
     guides: visibleGuides,
   });
-}
-
-async function oauthStart(request, env, admin) {
-  if (request.method !== 'GET') return methodNotAllowed(['GET']);
-  try {
-    return redirect(await beginWhopOAuth(request, env, admin));
-  } catch (error) {
-    const url = new URL('/control-center/', request.url);
-    url.searchParams.set('whop', 'error');
-    url.searchParams.set('message', String(error?.message || 'Whop login could not start.').slice(0, 180));
-    url.hash = 'whop-importer';
-    return redirect(url.toString());
-  }
-}
-
-async function oauthCallback(request, env) {
-  try {
-    await finishWhopOAuth(request, env);
-    return redirect(`${new URL(request.url).origin}/control-center/?whop=connected#whop-importer`);
-  } catch (error) {
-    const url = new URL('/control-center/', request.url);
-    url.searchParams.set('whop', 'error');
-    url.searchParams.set('message', String(error?.message || 'Whop login failed.').slice(0, 180));
-    url.hash = 'whop-importer';
-    return redirect(url.toString());
-  }
 }
 
 async function sourceCheck(request, env, admin) {
@@ -367,18 +340,10 @@ async function guideStatus(request, env, context) {
 
 export async function onRequest(context) {
   const currentAction = action(context.request);
-  if (currentAction === 'oauth-callback') return oauthCallback(context.request, context.env);
   try {
     if (currentAction === 'session') return await login(context.request, context.env);
     const admin = await requireAdmin(context.request, context.env);
     if (currentAction === 'dashboard') return await dashboard(context.request, context.env, admin, context);
-    if (currentAction === 'oauth-start') return await oauthStart(context.request, context.env, admin);
-    if (currentAction === 'whop-disconnect') {
-      if (context.request.method !== 'DELETE') return methodNotAllowed(['DELETE']);
-      requireSameOrigin(context.request);
-      await disconnectWhop(context.request, context.env, admin);
-      return json({ connected: false });
-    }
     if (currentAction === 'source-check') return await sourceCheck(context.request, context.env, admin);
     if (currentAction === 'source-decision') return await sourceSave(context.request, context.env, admin);
     if (currentAction === 'scan') return await scan(context.request, context.env, admin);

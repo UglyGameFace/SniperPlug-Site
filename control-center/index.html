@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.14">
-  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260811.1">
+  <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260823.1">
   <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/whop-backups.css?v=20260803.1">
@@ -45,7 +45,12 @@
 
       <section class="control-panel" id="whop-importer">
         <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
-        <div class="button-row"><a class="btn primary" href="/api/control?action=oauth-start" data-whop-connect>Continue with Whop</a><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect</button></div>
+        <div class="button-row"><a class="btn primary" href="/api/whop/oauth/start" data-whop-connect>Connect Whop</a><button class="btn primary" type="button" data-whop-switch hidden>Switch Whop account</button><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect Whop</button></div>
+        <div class="discovery-status" data-whop-switch-help hidden>
+          <strong>Ready to use a different Whop account</strong>
+          <span>SniperPlug has removed its saved Whop token. Whop.com can still remember the account signed into this browser. Open Whop in another tab, sign out of the old account and sign into the account you want, then return here and continue.</span>
+          <div class="button-row"><a class="btn ghost" href="https://whop.com/" target="_blank" rel="noopener">Open Whop to switch account</a><a class="btn primary" href="/api/whop/oauth/start" data-whop-switch-continue>Continue with Whop</a></div>
+        </div>
         <p class="whop-connection-detail" data-whop-connection-detail data-state="idle">Checking the saved Whop connection…</p>
         <p class="scope-warning" data-scope-warning hidden></p>
         <div class="source-summary" data-source-options aria-live="polite"></div>
@@ -206,10 +211,10 @@
     </section>
   </div>
 
-  <script src="/assets/js/control-center-network-guard.js?v=20260730.14" defer></script>
-  <script src="/assets/js/control-center-v2.js?v=20260811.1" defer></script>
-  <script src="/assets/js/control-center-lifecycle.js?v=20260730.14" defer></script>
-  <script src="/assets/js/control-center-whop-backups.js?v=20260811.1" defer></script>
+  <script src="/assets/js/control-center-network-guard.js?v=20260823.1" defer></script>
+  <script src="/assets/js/control-center-v2.js?v=20260823.1" defer></script>
+  <script src="/assets/js/control-center-lifecycle.js?v=20260823.1" defer></script>
+  <script src="/assets/js/control-center-whop-backups.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-integrity-fix.js?v=20260730.14" defer></script>
 </body>
 </html>

@@ -7,15 +7,9 @@ export async function onRequest(context) {
     if (context.request.method !== 'POST') return methodNotAllowed(['POST']);
     requireSameOrigin(context.request);
     const admin = await requireAdmin(context.request, context.env);
-    if (admin.sid !== OWNER_SESSION_ID) throw new HttpError(403, 'Only the Control Center owner can switch Whop accounts.');
+    if (admin.sid !== OWNER_SESSION_ID) throw new HttpError(403, 'Only the Control Center owner can disconnect Whop.');
     await disconnectWhop(context.request, context.env, admin);
-    return json({
-      disconnected: true,
-      switchReady: true,
-      message: 'SniperPlug disconnected the saved Whop token. Sign out of Whop.com and into the account you want, then continue with Whop.',
-      whopUrl: 'https://whop.com/',
-      connectUrl: '/api/whop/oauth/start',
-    });
+    return json({ disconnected: true });
   } catch (error) {
     return handleError(error);
   }
