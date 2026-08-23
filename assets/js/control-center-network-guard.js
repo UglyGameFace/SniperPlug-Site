@@ -2,6 +2,49 @@
   if (window.__sniperplugApiFetchGuardInstalled) return;
   window.__sniperplugApiFetchGuardInstalled = true;
 
+  const controlRoot = document.querySelector('[data-control-root]');
+  const loginPanel = document.querySelector('[data-login-panel]');
+  const controlApp = document.querySelector('[data-control-app]');
+
+  const authGateStyle = document.createElement('style');
+  authGateStyle.dataset.sniperplugControlAuthGate = '';
+  authGateStyle.textContent = `
+    html[data-sniperplug-control-auth="locked"] [data-control-root] [data-control-app] { display: none !important; }
+    html[data-sniperplug-control-auth="locked"] [data-control-root] [data-login-panel] { display: block !important; }
+  `;
+  document.head.append(authGateStyle);
+
+  function setControlAuthState(authenticated) {
+    const unlocked = authenticated === true;
+    document.documentElement.dataset.sniperplugControlAuth = unlocked ? 'unlocked' : 'locked';
+    if (controlRoot instanceof HTMLElement) controlRoot.dataset.authState = unlocked ? 'unlocked' : 'locked';
+    if (loginPanel instanceof HTMLElement) loginPanel.hidden = unlocked;
+    if (controlApp instanceof HTMLElement) controlApp.hidden = !unlocked;
+  }
+
+  // Fail closed before any asynchronous session or dashboard request can run.
+  setControlAuthState(false);
+  window.SniperPlugControlAuthGate = Object.freeze({
+    lock: () => setControlAuthState(false),
+    unlock: () => setControlAuthState(true),
+    isUnlocked: () => document.documentElement.dataset.sniperplugControlAuth === 'unlocked',
+  });
+
+  // Lock is a local UI action first. Server logout still runs through the normal handler,
+  // but a slow or failed request must never strand the password form behind the app shell.
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target.closest('[data-logout]') : null;
+    if (target) setControlAuthState(false);
+  }, true);
+
+  // A BFCache restore can revive old DOM state without rerunning module initialization.
+  // Force a normal reload so the password/session gate is evaluated again.
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted) return;
+    setControlAuthState(false);
+    window.location.reload();
+  });
+
   const nativeFetch = window.fetch.bind(window);
   const READ_TIMEOUT_MS = 45_000;
   const WRITE_TIMEOUT_MS = 120_000;
@@ -54,6 +97,34 @@
     }
   }
 
+  async function syncControlAuth(details, response) {
+    const action = controlAction(details.url);
+
+    if (response.status === 401) {
+      setControlAuthState(false);
+      return;
+    }
+
+    if (action === 'session' && details.method === 'DELETE') {
+      setControlAuthState(false);
+      return;
+    }
+
+    if (action === 'session' && details.method === 'GET' && response.ok) {
+      try {
+        const session = await response.clone().json();
+        if (session?.authenticated !== true) setControlAuthState(false);
+      } catch {
+        setControlAuthState(false);
+      }
+      return;
+    }
+
+    // A successful dashboard response proves both the owner session and protected API
+    // path are valid. Only this point is allowed to reveal the application shell.
+    if (action === 'dashboard' && response.ok) setControlAuthState(true);
+  }
+
   async function rememberResponse(response) {
     if (!response?.ok || !String(response.headers.get('content-type') || '').includes('application/json')) return;
     try { rememberPayload(await response.clone().json()); } catch { /* malformed or streaming JSON stays owned by the caller */ }
@@ -85,6 +156,9 @@
       return nativeFetch(input, options);
     }
 
+    const action = controlAction(details.url);
+    if (action === 'session' && details.method === 'DELETE') setControlAuthState(false);
+
     const guardedOptions = versionedOptions(details, options);
     const guardedInput = routedInput(input, details);
     const timeoutMs = details.method === 'GET' || details.method === 'HEAD' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
@@ -105,6 +179,7 @@
 
     try {
       const response = await nativeFetch(guardedInput, { ...guardedOptions, signal: controller.signal });
+      await syncControlAuth(details, response);
       await rememberResponse(response);
       return response;
     } catch (error) {
