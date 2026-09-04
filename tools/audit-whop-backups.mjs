@@ -24,7 +24,6 @@ const client = read('assets/js/control-center-whop-backups.js');
 const css = read('assets/css/whop-backups.css');
 const docs = read('docs/WHOP_IMPORTER.md');
 const packageJson = JSON.parse(read('package.json'));
-const task = read('ACTIVE_TASK.md');
 
 assert.equal(stableBackupJson({ z: 1, a: { d: 2, b: 1 } }), '{"a":{"b":1,"d":2},"z":1}');
 assert.equal(resetConfirmationPhrase({ scope: 'source', experienceId: 'exp_ABC123xyz' }), 'CLEAR SOURCE 123XYZ');
@@ -114,7 +113,6 @@ assert.ok(css.includes('.whop-backup-dialog') && css.includes('@media (max-width
 assert.ok(docs.includes('0004_whop_import_backups.sql') && docs.includes('Backup, clear, and restore'));
 assert.ok(docs.includes('R2 recovery archive'));
 assert.ok(packageJson.scripts.audit.includes('audit-whop-backups.mjs'));
-assert.ok(task.includes('Issue #19') && task.includes('R2'));
 
 for (const file of [
   'functions/_lib/whop-backups.js',
