@@ -1,6 +1,11 @@
 (() => {
   'use strict';
 
+  if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
+    globalThis.__sniperplugBetterContentCapture.registerCandidate();
+    return;
+  }
+
   const MESSAGE_PREFIX = 'sniperplug:';
   const MAX_CANDIDATES = 1200;
   const MIN_CAPTURE_CHARS = 80;
@@ -14,10 +19,27 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function isWhopHost(hostname) {
+    const host = String(hostname || '').toLowerCase();
+    return host === 'whop.com' || host.endsWith('.whop.com') || host.endsWith('.apps.whop.com');
+  }
+
+  function safeCurrentFrameUrl(value) {
+    const raw = String(value || '').trim();
+    const current = String(location.href || '').trim();
+    if (!raw || raw !== current) return '';
+    if (location.protocol !== 'https:' || !location.host || !isWhopHost(location.hostname)) return '';
+    const pathname = String(location.pathname || '/');
+    const safePath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return `https://${location.host}${safePath}`;
+  }
+
   function safeHttpUrl(value) {
+    const raw = String(value || '').trim();
+    const currentFrameFallback = safeCurrentFrameUrl(raw);
     try {
-      const url = new URL(String(value || '').trim(), location.href);
-      if (!['http:', 'https:'].includes(url.protocol)) return '';
+      const url = new URL(raw, location.href);
+      if (!['http:', 'https:'].includes(url.protocol)) return currentFrameFallback;
       url.hash = '';
       for (const key of [...url.searchParams.keys()]) {
         const values = url.searchParams.getAll(key);
@@ -28,7 +50,7 @@
       url.searchParams.sort();
       return url.toString();
     } catch {
-      return '';
+      return currentFrameFallback;
     }
   }
 
@@ -329,6 +351,11 @@
       sendResponse({ ok: true, enabled: autoEnabled });
       return false;
     }
+    if (message?.type === `${MESSAGE_PREFIX}probe-now`) {
+      registerCandidate();
+      sendResponse({ ok: true });
+      return false;
+    }
     return false;
   });
 
@@ -347,6 +374,7 @@
     }
   }, 700);
 
+  globalThis.__sniperplugBetterContentCapture = { registerCandidate };
   registerCandidate();
   setTimeout(registerCandidate, 900);
   setTimeout(registerCandidate, 2200);
