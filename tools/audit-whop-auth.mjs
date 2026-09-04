@@ -8,6 +8,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const auth = read('functions/_lib/auth.js');
 const whop = read('functions/_lib/whop.js');
+const oauthFlow = read('functions/_lib/whop-oauth-flow.js');
 const control = read('functions/api/control.js');
 const start = read('functions/api/whop/oauth/start.js');
 const callback = read('functions/api/whop/oauth/callback.js');
@@ -34,9 +35,14 @@ assert.ok(!page.includes('/api/control?action=oauth-start'));
 
 assert.ok(start.includes('requireAdmin(context.request, context.env)'));
 assert.ok(start.includes('beginWhopOAuth(context.request, context.env, admin)'));
+assert.ok(start.includes('appendCookie(redirect(authorizationUrl), whopOAuthFlowCookie(state))'), 'OAuth start does not bind the browser to the one-time callback state before leaving SniperPlug.');
 assert.ok(!start.includes("searchParams.set('prompt'") && !start.includes('max_age'), 'OAuth start uses undocumented account-selection parameters.');
-assert.ok(callback.includes('requireAdmin(context.request, context.env)'));
-assert.ok(callback.includes('result.adminSessionId !== OWNER_SESSION_ID') && callback.includes('result.adminSessionId !== admin.sid'));
+assert.ok(!callback.includes('requireAdmin(context.request, context.env)'), 'OAuth callback still depends on the SameSite=Strict owner cookie during the cross-site return from Whop.');
+assert.ok(callback.includes('await requireWhopOAuthFlow(context.request)'), 'OAuth callback is not tied to the transient browser correlation cookie.');
+assert.ok(callback.includes('result.adminSessionId !== OWNER_SESSION_ID'), 'OAuth callback no longer verifies that the pending flow belongs to the canonical owner session.');
+assert.ok(callback.includes('clearWhopOAuthFlowCookie()'), 'OAuth callback does not clear the transient correlation cookie after use.');
+assert.ok(oauthFlow.includes("sameSite: 'Lax'") && oauthFlow.includes("path: WHOP_OAUTH_CALLBACK_PATH"), 'OAuth callback cookie is not narrowly scoped for a top-level cross-site return.');
+assert.ok(oauthFlow.includes('constantTimeTextEqual(state, cookieState)'), 'OAuth callback state is not compared safely against the browser correlation cookie.');
 
 for (const route of [switchRoute, disconnectRoute]) {
   assert.ok(route.includes("context.request.method !== 'POST'"), 'A destructive Whop route is callable with GET.');
@@ -52,7 +58,7 @@ assert.ok(!whop.includes("ORDER BY CASE WHEN admin_session_id = 'sniperplug-owne
 assert.ok(whop.includes('purgeLegacyWhopSessions'));
 assert.ok(whop.includes("DELETE FROM whop_oauth_states WHERE admin_session_id = ?") && whop.includes("DELETE FROM whop_refresh_leases WHERE admin_session_id = ?"));
 
-assert.ok(!guard.includes('data-whop-connect') && !guard.includes('data-whop-disconnect'), 'Network guard still owns Whop connection UI state.');
+assert.ok(!guard.includes('data-whop-connect') && !guard.includes('data-whop-disconnect'), 'Network guard still owns Whop UI state.');
 assert.ok(guard.includes("document.documentElement.dataset.sniperplugControlAuth = unlocked ? 'unlocked' : 'locked'"), 'Control Center gate does not keep an explicit locked/unlocked browser state.');
 assert.ok(guard.includes('setControlAuthState(false);\n  window.SniperPlugControlAuthGate'), 'Control Center does not fail closed before asynchronous session checks begin.');
 assert.ok(guard.includes('html[data-sniperplug-control-auth="locked"] [data-control-root] [data-control-app] { display: none !important; }'), 'Locked state does not forcibly hide the Control Center app shell.');
@@ -71,6 +77,7 @@ assert.ok(page.includes('Open Whop to switch account') && page.includes('data-wh
 for (const file of [
   'functions/_lib/auth.js',
   'functions/_lib/whop.js',
+  'functions/_lib/whop-oauth-flow.js',
   'functions/api/control.js',
   'functions/api/whop/oauth/start.js',
   'functions/api/whop/oauth/callback.js',
@@ -88,6 +95,7 @@ console.log('✓ The Control Center password is the only application login.');
 console.log('✓ The Control Center fails closed and stays hidden until a protected dashboard request succeeds.');
 console.log('✓ Lock and unauthorized responses immediately restore the password gate.');
 console.log('✓ Whop OAuth is one owner-bound data connection, not an alternate login.');
+console.log('✓ OAuth return uses a narrow one-time Lax correlation cookie while the owner session remains Strict.');
 console.log('✓ Legacy customer sessions, paid-access auth, and duplicate Control API OAuth routes are gone.');
 console.log('✓ Disconnect/switch are same-origin POST actions and cannot be triggered by link prefetch.');
 console.log('✓ Account switching explains Whop browser-session behavior instead of relying on undocumented OAuth prompts.');
