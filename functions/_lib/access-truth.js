@@ -1,33 +1,8 @@
 import { membershipGrantsAccess } from './discovery.js';
-import { HttpError } from './http.js';
-import { whopApi } from './whop.js';
-
-const PAGE_SIZE = 50;
-const MAX_PAGES = 100;
-const MAX_MEMBERSHIPS = 1000;
 
 function exactId(value, prefix) {
   const id = String(value || '').trim();
   return id.startsWith(prefix) ? id : '';
-}
-
-async function allMemberships(session) {
-  const output = [];
-  let after = '';
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const payload = await whopApi(session, 'memberships', {
-      first: PAGE_SIZE,
-      ...(after ? { after } : {}),
-    });
-    const rows = Array.isArray(payload?.data) ? payload.data : [];
-    output.push(...rows);
-    if (output.length > MAX_MEMBERSHIPS) throw new HttpError(422, 'Whop returned too many memberships to verify safely.');
-    if (!payload?.page_info?.has_next_page) return output;
-    const next = String(payload?.page_info?.end_cursor || '').trim();
-    if (!next || next === after) throw new HttpError(502, 'Whop returned an invalid membership cursor during access verification.');
-    after = next;
-  }
-  throw new HttpError(502, 'Whop membership verification exceeded the safe page limit.');
 }
 
 function membershipAccessSummary(membership) {
@@ -40,8 +15,8 @@ function membershipAccessSummary(membership) {
   };
 }
 
-export async function enforceLiveWhopAccess(session, discovery) {
-  const memberships = await allMemberships(session);
+export async function enforceLiveWhopAccess(session, discovery, membershipSnapshot = []) {
+  const memberships = Array.isArray(membershipSnapshot) ? membershipSnapshot : [];
   const currentMemberships = memberships.filter(membershipGrantsAccess);
   const byCompany = new Map();
 
