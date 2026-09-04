@@ -14,6 +14,8 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 const manifest = JSON.parse(read('browser-extension/manifest.json'));
 const captureScript = read('browser-extension/content-capture.js');
 const background = read('browser-extension/background.js');
+const popup = read('browser-extension/popup.js');
+const popupHtml = read('browser-extension/popup.html');
 const relay = read('browser-extension/sniperplug-relay.js');
 const endpoint = read('functions/api/browser-capture.js');
 const service = read('functions/_lib/browser-capture.js');
@@ -32,6 +34,10 @@ assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(c
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
 assert.ok(background.includes('MAX_QUEUE = 25') && background.includes('sniperplug:auto-capture'), 'Bounded multi-page capture queue is missing.');
+assert.ok(background.includes('bestCandidateAcrossTabs') && background.includes('WHOP_TAB_PATTERNS'), 'Mobile capture still depends only on the tab where the extension popup was opened.');
+assert.ok(background.includes('linkExperienceAcrossFrames') && background.includes('EXPERIENCE_LINK_WINDOW_MS'), 'Whop shell experience IDs are not linked to Better Content iframe candidates.');
+assert.ok(background.includes("message?.type === 'sniperplug:open-whop'") && popup.includes("type: 'sniperplug:open-whop'"), 'Mobile UI cannot open/focus Whop inside Firefox when no browser tab is available.');
+assert.ok(popupHtml.includes('id="openWhop"') && popup.includes('native Whop app is separate from Firefox'), 'The mobile popup does not clearly distinguish Firefox-rendered Whop from the native Whop app.');
 assert.ok(relay.includes("fetch('/api/browser-capture'") && relay.includes("credentials: 'same-origin'"), 'Captured content is not handed off through the signed-in SniperPlug page.');
 assert.ok(!relay.includes('api.whop.com') && !background.includes('api.whop.com'), 'The extension must not impersonate the SniperPlug OAuth client or call Whop APIs directly.');
 assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession') && endpoint.includes('requireSameOrigin'), 'Browser capture endpoint is not protected by owner, Whop, and same-origin checks.');
@@ -77,6 +83,7 @@ await assert.rejects(
 console.log('\nBETTER CONTENT BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension reads rendered DOM only and requests no cookie or blanket-host permission.');
 console.log('✓ One MV3 package supports Chromium service workers plus Firefox Android background scripts.');
+console.log('✓ Firefox Android can discover the latest Better Content tab and link the Whop shell exp_ ID to its app iframe.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
 console.log('✓ Captures are private drafts, manual-review only, with previously reviewed/published/removed work protected.');
