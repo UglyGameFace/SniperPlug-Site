@@ -35,6 +35,24 @@ Previously reviewed, published, or removed guides are never silently overwritten
 
 Auto-capture is intentionally navigation-driven. It captures pages as they actually render in the authorized Better Content UI instead of guessing Better Content's private backend endpoints.
 
+## Android development install
+
+Firefox for Android supports installing an extension from a local file. The same MV3 package includes both Chromium's service-worker background and Firefox's background-script fallback.
+
+For immediate mobile-only development testing:
+
+1. Install **Firefox Nightly** on Android.
+2. Open `about:config` and set `xpinstall.signatures.required` to `false` for this development build.
+3. In Firefox Nightly, open **Settings → About Firefox Nightly** and tap the Firefox logo repeatedly until the hidden developer options unlock.
+4. Return to Settings and choose **Install Extension from File**.
+5. Select the SniperPlug `.xpi` package.
+6. Sign into Whop and unlock `https://sniperplug.com/control-center/` in that same Firefox profile.
+7. Open **Hidden Files → Make Money Here**, open one Better Content guide, then use the SniperPlug extension action to capture it.
+
+A normal Firefox release/beta build requires Mozilla signing for a self-distributed extension. The Nightly route exists specifically so development testing can stay entirely on Android without waiting for store review.
+
+Samsung Internet still requires third-party extension distribution through Samsung's approved extension program / Galaxy Store, so arbitrary development extensions cannot simply be sideloaded into normal Samsung Internet.
+
 ## Desktop development install
 
 In a Chromium desktop browser:
@@ -44,12 +62,6 @@ In a Chromium desktop browser:
 3. Choose **Load unpacked**.
 4. Select this `browser-extension` directory.
 5. Open Whop and SniperPlug in the same browser profile.
-
-## Android note
-
-Samsung Internet supports third-party extensions only through Samsung's approved extension program / Galaxy Store distribution, so an arbitrary unpacked MV3 extension cannot simply be sideloaded into the normal Samsung Internet extension list.
-
-For immediate Android development testing, use a browser that can load Manifest V3 extensions, or test the same extension on desktop first. The capture architecture is kept browser-standard so it can later be packaged for Samsung's extension program without changing SniperPlug's server-side capture contract.
 
 ## Host permissions
 
