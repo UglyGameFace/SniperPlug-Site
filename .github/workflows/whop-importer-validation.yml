@@ -28,6 +28,30 @@ jobs:
         run: npm install --ignore-scripts
       - name: Run full build and regression suite
         run: npm run build
+      - name: Package Firefox Android extension
+        run: |
+          set -euo pipefail
+          output='SniperPlug-Better-Content-Firefox-Android.xpi'
+          rm -f "$output"
+          (
+            cd browser-extension
+            zip -q -9 "../$output" \
+              manifest.json \
+              background.js \
+              content-capture.js \
+              popup.html \
+              popup.js \
+              sniperplug-relay.js
+          )
+          unzip -t "$output"
+          test "$(unzip -Z1 "$output" | head -n 1)" = 'manifest.json'
+      - name: Upload Firefox Android extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: sniperplug-firefox-android-xpi
+          path: SniperPlug-Better-Content-Firefox-Android.xpi
+          if-no-files-found: error
+          retention-days: 30
       - name: Publish authoritative build status
         if: always()
         env:
