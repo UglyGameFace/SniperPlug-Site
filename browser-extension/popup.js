@@ -4,6 +4,7 @@ const elements = {
   pageTitle: document.getElementById('pageTitle'),
   pageMeta: document.getElementById('pageMeta'),
   pageDetail: document.getElementById('pageDetail'),
+  openWhop: document.getElementById('openWhop'),
   capture: document.getElementById('capture'),
   auto: document.getElementById('auto'),
   queueCount: document.getElementById('queueCount'),
@@ -15,7 +16,15 @@ const elements = {
 };
 
 let tabId = null;
-let state = { candidate: null, queueCount: 0, autoEnabled: false, queuedTitles: [] };
+let preferredTabId = null;
+let state = {
+  candidate: null,
+  queueCount: 0,
+  autoEnabled: false,
+  queuedTitles: [],
+  whopTabCount: 0,
+  usingRecentTab: false,
+};
 
 function setStatus(message, status = '') {
   elements.status.textContent = message;
@@ -35,13 +44,21 @@ function render() {
     elements.pageMeta.textContent = candidate.experienceId
       ? `${candidate.experienceId} · ${candidate.host}`
       : candidate.host || '';
+    const locationNote = state.usingRecentTab ? ' Found in another open Firefox tab.' : '';
     elements.pageDetail.textContent = candidate.experienceId
-      ? `${candidate.textLength.toLocaleString()} rendered characters detected in the best Whop app frame.`
-      : 'The app frame is visible, but its exp_ experience ID has not appeared yet. Open an individual guide inside Whop.';
+      ? `${candidate.textLength.toLocaleString()} rendered characters detected in the Better Content frame.${locationNote}`
+      : `A Whop app frame is visible, but its exp_ experience ID has not appeared yet.${locationNote}`;
+    elements.openWhop.hidden = true;
+  } else if (state.whopTabCount === 0) {
+    elements.pageTitle.textContent = 'Whop is not open in Firefox';
+    elements.pageMeta.textContent = 'The native Whop app is separate from Firefox.';
+    elements.pageDetail.textContent = 'Tap Open Whop in Firefox, sign in there, then open Hidden Files → Make Money Here → an individual guide.';
+    elements.openWhop.hidden = false;
   } else {
-    elements.pageTitle.textContent = 'No Better Content page detected';
-    elements.pageMeta.textContent = '';
-    elements.pageDetail.textContent = 'Open Better Content inside Whop, then reopen this extension.';
+    elements.pageTitle.textContent = 'Whop is open, but no Better Content guide is rendered';
+    elements.pageMeta.textContent = `${state.whopTabCount} Whop tab${state.whopTabCount === 1 ? '' : 's'} found in Firefox.`;
+    elements.pageDetail.textContent = 'Switch to the Whop tab and open Hidden Files → Make Money Here → an individual guide. Then reopen this extension.';
+    elements.openWhop.hidden = false;
   }
 
   elements.capture.disabled = !candidate?.experienceId;
@@ -61,21 +78,37 @@ function render() {
 }
 
 async function refresh() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  tabId = Number(tab?.id);
-  if (!Number.isInteger(tabId)) throw new Error('No active browser tab is available.');
-  const output = await background({ type: 'sniperplug:popup-state', tabId });
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  preferredTabId = Number(activeTab?.id);
+  if (!Number.isInteger(preferredTabId)) preferredTabId = null;
+  const output = await background({ type: 'sniperplug:popup-state', tabId: preferredTabId });
+  const resolvedTabId = Number(output.targetTabId);
+  tabId = Number.isInteger(resolvedTabId) ? resolvedTabId : preferredTabId;
   state = { ...state, ...output };
   render();
 }
 
 elements.rights.addEventListener('change', render);
 
+elements.openWhop.addEventListener('click', async () => {
+  elements.openWhop.disabled = true;
+  setStatus('Opening Whop inside Firefox Nightly…');
+  try {
+    await background({ type: 'sniperplug:open-whop' });
+    setStatus('Open Hidden Files → Make Money Here → an individual guide, then reopen SniperPlug Capture.', 'ok');
+    setTimeout(() => window.close(), 600);
+  } catch (error) {
+    setStatus(error.message, 'error');
+    elements.openWhop.disabled = false;
+  }
+});
+
 elements.capture.addEventListener('click', async () => {
   elements.capture.disabled = true;
   setStatus('Reading the rendered Better Content page…');
   try {
     const output = await background({ type: 'sniperplug:capture-current', tabId });
+    if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
     setStatus(`Captured “${output.capture.title}”.`, 'ok');
     await refresh();
   } catch (error) {
@@ -89,6 +122,7 @@ elements.auto.addEventListener('click', async () => {
   elements.auto.disabled = true;
   try {
     const output = await background({ type: 'sniperplug:set-auto-request', tabId, enabled: !state.autoEnabled });
+    if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
     state.autoEnabled = output.enabled;
     setStatus(state.autoEnabled
       ? 'Auto-capture is on. Open each Better Content page you want; the extension will add each stable page to the queue.'
