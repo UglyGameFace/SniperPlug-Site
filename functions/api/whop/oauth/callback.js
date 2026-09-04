@@ -1,5 +1,6 @@
-import { OWNER_SESSION_ID, requireAdmin } from '../../../_lib/auth.js';
-import { HttpError, redirect } from '../../../_lib/http.js';
+import { OWNER_SESSION_ID } from '../../../_lib/auth.js';
+import { appendCookie, HttpError, redirect } from '../../../_lib/http.js';
+import { clearWhopOAuthFlowCookie, requireWhopOAuthFlow } from '../../../_lib/whop-oauth-flow.js';
 import { finishWhopOAuth, purgeLegacyWhopSessions } from '../../../_lib/whop.js';
 
 function oauthErrorRedirect(request, error) {
@@ -11,17 +12,18 @@ function oauthErrorRedirect(request, error) {
 }
 
 export async function onRequest(context) {
+  let response;
   try {
-    const admin = await requireAdmin(context.request, context.env);
-    if (admin.sid !== OWNER_SESSION_ID) throw new HttpError(401, 'Unlock the Control Center before connecting Whop.');
+    await requireWhopOAuthFlow(context.request);
     const result = await finishWhopOAuth(context.request, context.env);
-    if (result.adminSessionId !== OWNER_SESSION_ID || result.adminSessionId !== admin.sid) {
+    if (result.adminSessionId !== OWNER_SESSION_ID) {
       await purgeLegacyWhopSessions(context.env);
       throw new HttpError(403, 'Whop OAuth returned to a different Control Center session. Start the connection again.');
     }
     await purgeLegacyWhopSessions(context.env);
-    return redirect(`${new URL(context.request.url).origin}/control-center/?whop=connected#whop-importer`);
+    response = redirect(`${new URL(context.request.url).origin}/control-center/?whop=connected#whop-importer`);
   } catch (error) {
-    return oauthErrorRedirect(context.request, error);
+    response = oauthErrorRedirect(context.request, error);
   }
+  return appendCookie(response, clearWhopOAuthFlowCookie());
 }

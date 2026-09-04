@@ -1,73 +1,87 @@
 # Active Task
 
 ## Active task / outcome
-Repair the Whop importer so legitimate owner OAuth access is not rejected by SniperPlug, native Whop Forum/Course/Chat sources remain discoverable and importable, and app-specific experiences report their real reader state instead of being confused with access denial.
+Repair the Whop importer end to end so the owner can connect Whop, keep legitimate membership access, discover native sources, and scan/import supported Whop content without false auth failures or redirect loops.
 
 ## Scope
-1. Trace OAuth -> memberships -> company/source discovery -> live access verification -> source scan -> guide import.
-2. Remove any access check that requires permissions unrelated to the importer’s declared OAuth scopes.
-3. Preserve current-membership security: inactive, explicitly-left, missing-user/member, or otherwise non-access-granting memberships must not become current source access.
-4. Verify the current Whop API contract before changing discovery query keys; do not guess around contradictory documentation.
+1. Trace Control Center auth -> Whop OAuth start -> Whop authorize -> OAuth callback -> saved Whop session -> membership discovery -> source scan/import.
+2. Keep the owner Control Center session security model intact; do not weaken the main admin cookie merely to make OAuth redirects work.
+3. Remove access checks that require permissions unrelated to the importer’s declared OAuth scopes.
+4. Preserve current-membership security: inactive, explicitly-left, missing-user/member, or otherwise non-access-granting memberships must not become current source access.
 5. Keep native Forum/Course/Chat readers authoritative.
 6. For custom Whop apps, use only a publisher/Whop documented member-readable interface. Do not scrape private app sessions, guess endpoints, or request unrelated developer permissions merely to inspect another publisher’s app.
-7. Add executable backend regressions, run the complete Node 22 build/audit suite, inspect the final diff, and review CI/PR state.
+7. Add executable regressions, run the complete Node 22 build/audit suite, inspect the final diff/review state, merge only validated fixes, then perform a real production owner retest.
 
 ## Status
-Implementation and repository validation are complete on PR #34 (`fix/whop-importer-access-and-readers`). Production owner validation against the real connected Whop account remains required before claiming the importer task fully complete.
+PR #34 is merged and fixed the false membership-access denial. Production testing then exposed a second root cause in the same importer task: the Whop OAuth callback required a `SameSite=Strict` owner cookie that browsers correctly withhold on the cross-site return from Whop. PR #35 (`fix/whop-oauth-callback-cookie`) contains the callback-loop repair and has passed its initial full Node 22 validation. Final-head validation and merge remain before the live production retest.
 
 ## Findings / root cause
 - The owner OAuth defaults request `forum:read`, `courses:read`, `chat:read`, `member:basic:read`, and `member:email:read` plus OIDC scopes.
-- Whop’s list-memberships endpoint is authorized by `member:basic:read` + `member:email:read` and returns the caller’s readable memberships.
-- `functions/_lib/access-truth.js` then redundantly called `GET /members/{id}` for every discovered company member.
-- Whop’s retrieve-member endpoint additionally requires `member:phone:read`. A 403 from that unrelated permission was converted into `grantsAccess: false`, so a legitimate current membership could be filtered out after successful discovery.
-- The discovery path already has one authoritative membership-currentness predicate, `membershipGrantsAccess()`. Reusing that predicate avoids contradictory access implementations.
-- Custom app experiences such as Better Content are not equivalent to native Whop Course/Forum/Chat resources. Whop’s app-detail endpoint requires developer permissions belonging to the app publisher/developer context; owner membership access does not grant those permissions.
-- Whop’s current list-experiences documentation is internally inconsistent: the generated SDK example uses `company_id`, while the query schema currently labels `account_id` required. No discovery-query flip was made because replacing a working legacy parameter based on contradictory docs would be a blind fix.
-- The first PR validation exposed a stale backup audit that required `ACTIVE_TASK.md` to forever mention closed Issue #19 and R2. That assertion tested project-management text rather than backup behavior and prevented later legitimate tasks from passing CI.
+- PR #34 removed the redundant `GET /members/{id}` access recheck that could require `member:phone:read` and falsely filter out legitimate memberships.
+- The Control Center owner cookie is created through `secureCookie(...)`, whose default is `SameSite=Strict`.
+- `/api/whop/oauth/start` requires the owner session and redirects the browser to Whop.
+- Whop returns by top-level cross-site GET to `/api/whop/oauth/callback`.
+- With `SameSite=Strict`, the browser does not send the owner cookie on that Whop -> SniperPlug callback request.
+- The callback nevertheless called `requireAdmin()` before finishing OAuth, so it produced `Sign in to the SniperPlug Control Center first.`
+- The callback then redirected to `/control-center/`; that next navigation is same-site, so the existing owner cookie became visible again. The UI therefore appeared to sign in by itself and returned to `Connect Whop`, exactly matching the production symptom.
+- OAuth already has a server-side one-time `state` row plus PKCE. The correct browser-binding fix is a separate short-lived OAuth-only correlation cookie that is allowed on the top-level callback, not weakening the main owner cookie.
+- Custom app experiences such as Better Content remain a separate reader-availability limitation, not an OAuth-access failure.
 
 ## Execution path
-`/api/discover` -> `requireAdmin()` -> `requireWhopSession()` -> `discoverWhopSources()` -> `enforceLiveWhopAccess()` -> Control Center source browser.
+Connection path:
+`/api/whop/oauth/start` -> `requireAdmin()` -> `beginWhopOAuth()` -> Whop authorize -> `/api/whop/oauth/callback` -> transient OAuth state-cookie validation -> `finishWhopOAuth()` -> canonical `sniperplug-owner` Whop session -> `/control-center/?whop=connected`.
 
-Approved native source scan path:
-`scanApprovedSource()` -> `resolveWhopExperienceType()` -> `listExperienceItemsLite()` -> normalize/integrity -> D1 `whop_posts` -> guide import/publish flow.
+Discovery/import path:
+`/api/discover` -> `requireAdmin()` -> `requireWhopSession()` -> `discoverWhopSources()` -> `enforceLiveWhopAccess()` -> source browser -> `scanApprovedSource()` -> native item reader -> D1 -> guide review/import.
 
 ## Changes
-- `access-truth.js` now verifies current company access directly from the OAuth-authorized memberships list and reuses `membershipGrantsAccess()`.
-- Removed the member-detail recheck and therefore the accidental `member:phone:read` dependency.
-- Access diagnostics now record `verifiedBy: membership-list` and membership/product/status identifiers without exposing membership email data.
-- Added `tools/test-whop-access-verifier.mjs`, an executable backend regression that fails if access verification calls `/members/{id}`, drops a valid current group, restores explicitly-left history, or loses custom-app visibility for an allowed company.
-- Added the regression to the normal `npm run audit` / `npm run build` chain.
-- Removed the stale `ACTIVE_TASK.md` / Issue #19 assertion from `audit-whop-backups.mjs`; the backup audit still validates the actual R2 backup implementation, documentation, schema, reset/restore safety, syntax, and inclusion in the build.
+### Merged in PR #34
+- Membership list is the authoritative live-access input.
+- Removed the accidental `member:phone:read` dependency.
+- Added executable backend access-verifier regression.
+- Removed a stale backup audit dependency on obsolete Issue #19 task text.
+
+### PR #35
+- Added `functions/_lib/whop-oauth-flow.js` for one narrow OAuth callback correlation cookie.
+- OAuth start now sets `sniperplug_whop_oauth=<state>` for 10 minutes with `HttpOnly; Secure; SameSite=Lax` and path restricted to `/api/whop/oauth/callback`.
+- Main `sniperplug_admin` owner cookie remains unchanged and therefore remains `SameSite=Strict`.
+- OAuth callback no longer calls `requireAdmin()` on the cross-site return.
+- Callback requires the query `state` to match the transient browser cookie in constant time before token exchange.
+- Callback still rejects any completed OAuth flow not bound to `OWNER_SESSION_ID`.
+- Transient OAuth cookie is cleared on success and failure.
+- Added `tools/test-whop-oauth-callback-cookie.mjs` and registered it in the normal build.
+- Updated `audit-whop-auth.mjs` so CI enforces the intended split: Strict owner session, narrow Lax OAuth callback state, same-origin POST for destructive Whop actions.
 
 ## Validation / results
-- [x] Current `main` and merged PR history inspected; previous Issue #19 active-task record was stale and Issue #19 / PR #28 are already closed/merged.
-- [x] Current Whop docs checked for OAuth/member/app permissions and API stability.
-- [x] Confirmed retrieve-member permission mismatch is real, not inferred.
-- [x] Confirmed Experiences/Forum/Course/Chat remain Legacy-only resources supported by Whop.
-- [x] New backend access-verifier regression passed in GitHub CI.
-- [x] Complete Node 22.23.2 `npm run build` / regression suite passed on Verify SniperPlug run #923.
-- [x] Affiliate-ready preview verification passed.
-- [x] Retired public deal-route verification passed.
-- [x] `npm install --ignore-scripts` reported zero vulnerabilities.
-- [x] PR is 0 commits behind `main` and mergeable.
-- [x] Diff contains only five directly relevant files: task record, access verifier, build test registration, backend regression, and the stale audit dependency cleanup.
-- [x] PR has no inline review threads. Qodo is billing-paused rather than reporting a code finding; Vercel deployments are intentionally ignored by repository configuration while Cloudflare Pages remains authoritative.
-- [ ] Production owner retest confirms current native sources remain visible and scan/import correctly with the real connected Whop account.
+- [x] Current production symptom traced to the exact cookie/callback execution path.
+- [x] Browser SameSite behavior checked against current MDN guidance; `Strict` excludes cross-site navigation while `Lax` permits top-level safe-method navigation.
+- [x] Current OAuth browser guidance checked; PKCE and unique verified OAuth state remain required CSRF protections.
+- [x] PR #35 targeted OAuth callback-cookie regression passed in CI.
+- [x] PR #35 complete Node 22 build/audit suite passed on Verify SniperPlug run #926.
+- [x] PR #35 affiliate-ready preview verification passed.
+- [x] PR #35 retired public deal-route verification passed.
+- [x] PR #35 diff inspected: only OAuth callback/start flow, OAuth auth audit, regression registration/test, and task-state files are involved.
+- [ ] Final-head CI passes after this task-record update.
+- [ ] PR #35 review/status inspection is clean and branch is current with `main`.
+- [ ] PR #35 merges and post-merge production workflows pass.
+- [ ] Real production Whop authorization completes without the sign-in/connect loop.
+- [ ] Real native source discovery plus one native source scan/import succeeds.
 
 ## Cleanup / conflicts
-- No extra OAuth phone scope was added.
-- No custom-app scraping, guessed endpoint, browser-cookie reuse, or private-session proxy was added.
-- No second membership-access implementation was introduced; the existing discovery predicate is now reused.
-- No discovery parameter compatibility shim has been stacked onto contradictory documentation.
-- No unrelated site feature, route, UI redesign, database schema change, generated artifact, or secret-bearing file is in the PR.
+- No change to the owner admin-cookie SameSite policy.
+- No extra OAuth scopes or phone permission.
+- No duplicate OAuth implementation.
+- No guessed Whop endpoints, browser-session scraping, or custom-app bypass.
+- Disconnect/switch remain same-origin owner-authenticated POST actions.
+- No unrelated site feature, UI redesign, database schema change, generated artifact, or secret-bearing file is part of this repair.
 
 ## Blockers / risks
-- Content stored exclusively inside third-party Whop custom apps cannot be imported through Whop’s native Course/Forum/Chat APIs. Implementing an actual reader for Better Content or another custom app requires a documented member-readable API/interface from that publisher or Whop. Membership access alone is not an API credential for another developer’s backend.
-- Production Whop data cannot be exercised from repository CI because CI has no owner OAuth token; the regression validates request shape and access semantics with controlled Whop responses, followed by the required production owner retest.
+- CI cannot perform the real Whop authorization because it does not possess the owner browser session or private Whop account. The cross-site cookie/state behavior is regression-tested, but the final Definition of Done still requires the production owner flow.
+- Content stored exclusively inside third-party Whop custom apps still requires a documented member-readable API/interface from that publisher or Whop. Membership access alone is not an API credential for another developer’s backend.
 
 ## Backlog
 - Issue #20: full website duplication audit remains unrelated and locked out of this task.
-- If Better Content or another custom-app publisher exposes a documented member-readable API, add the adapter under Issue #25 without changing native source semantics.
+- Issue #25: add adapters for Better Content/other custom apps only when a documented member-readable interface is available.
 
 ## Next step
-After PR #34 is deployed to the authoritative Cloudflare production runtime, reconnect/refresh the owner Whop session if necessary and run one real source discovery plus one native source scan/import. Record the live result before closing the task or Issue #25.
+Require green CI on the exact PR #35 final head, inspect review/diff/branch state, merge, verify post-merge production workflows, then rerun the live Whop authorization followed by one native discovery and scan/import.

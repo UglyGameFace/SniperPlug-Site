@@ -1,5 +1,6 @@
 import { OWNER_SESSION_ID, requireAdmin } from '../../../_lib/auth.js';
-import { redirect } from '../../../_lib/http.js';
+import { appendCookie, redirect } from '../../../_lib/http.js';
+import { whopOAuthFlowCookie } from '../../../_lib/whop-oauth-flow.js';
 import { beginWhopOAuth, purgeLegacyWhopSessions } from '../../../_lib/whop.js';
 
 function oauthStartError(request, error) {
@@ -16,7 +17,9 @@ export async function onRequest(context) {
     const admin = await requireAdmin(context.request, context.env);
     if (admin.sid !== OWNER_SESSION_ID) throw new Error('Unlock the Control Center before connecting Whop.');
     await purgeLegacyWhopSessions(context.env);
-    return redirect(await beginWhopOAuth(context.request, context.env, admin));
+    const authorizationUrl = await beginWhopOAuth(context.request, context.env, admin);
+    const state = new URL(authorizationUrl).searchParams.get('state');
+    return appendCookie(redirect(authorizationUrl), whopOAuthFlowCookie(state));
   } catch (error) {
     return oauthStartError(context.request, error);
   }
