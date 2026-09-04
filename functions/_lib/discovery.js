@@ -284,6 +284,22 @@ function discoveryFailure(label, error) {
   return `${label} failed${message ? `: ${message}` : ''}`;
 }
 
+export function discoveryScopeQueries(companyId, productId = null) {
+  const accountId = String(companyId || '').trim();
+  const scopedProductId = String(productId || '').trim();
+  const productFilter = scopedProductId ? { product_id: scopedProductId } : {};
+  return {
+    experiences: {
+      account_id: accountId,
+      ...productFilter,
+    },
+    forums: {
+      company_id: accountId,
+      ...productFilter,
+    },
+  };
+}
+
 async function discoverCompanyListings(session, company) {
   const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
   const scopes = membershipProducts.length
@@ -291,13 +307,10 @@ async function discoverCompanyListings(session, company) {
     : [{ id: null, title: 'company-wide access' }];
 
   const attempts = await mapConcurrent(scopes, async (product) => {
-    const query = {
-      company_id: company.id,
-      ...(product.id ? { product_id: product.id } : {}),
-    };
+    const queries = discoveryScopeQueries(company.id, product.id);
     const output = { product, forums: [], experiences: [], failures: [] };
     try {
-      output.experiences = await allPages(session, 'experiences', query, MAX_ITEMS_PER_SCOPE, `${product.title} experiences`);
+      output.experiences = await allPages(session, 'experiences', queries.experiences, MAX_ITEMS_PER_SCOPE, `${product.title} experiences`);
     } catch (error) {
       output.failures.push(discoveryFailure(`${product.title} experience lookup`, error));
     }
@@ -307,7 +320,7 @@ async function discoverCompanyListings(session, company) {
     // avoids doubling every normal product-scoped request.
     if (!output.experiences.length) {
       try {
-        output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_SCOPE, `${product.title} forums`);
+        output.forums = await allPages(session, 'forums', queries.forums, MAX_ITEMS_PER_SCOPE, `${product.title} forums`);
       } catch (error) {
         output.failures.push(discoveryFailure(`${product.title} forum lookup`, error));
       }
