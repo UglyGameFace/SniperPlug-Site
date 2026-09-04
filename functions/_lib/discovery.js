@@ -1,7 +1,7 @@
 import { HttpError, requireDatabase } from './http.js';
 import { sourceDecision } from './source-policy.js';
+import { inspectWhopApp } from './whop-app-reader.js';
 import {
-  inspectWhopApp,
   requiredScopeForType,
   requiredScopeForExperience,
   resolveWhopExperienceType,
@@ -379,6 +379,28 @@ async function capability(session, experience, grantedScopes, cache, budget, wri
       probeFailed = saved.probeStatus === 'transient';
       probeError = saved.probeError;
       probeDeferred = probeFailed;
+
+      // Older cache rows were populated by the developer-only /apps/{id}
+      // endpoint and often contain no app metadata for a normal user OAuth
+      // token. Refresh those rows once through the user-OAuth-compatible public
+      // app listing so reader capability does not remain stale for 24 hours.
+      if (sourceType === 'unsupported' && saved.probeStatus === 'complete' && app?.metadataSource !== 'public-app-list') {
+        const refreshedApp = await inspectWhopApp(session, experience);
+        if (refreshedApp) {
+          app = refreshedApp;
+          const now = new Date().toISOString();
+          writes.push({
+            experienceId: experience.id,
+            sourceType,
+            app,
+            probeStatus: 'complete',
+            probeError: null,
+            retryAfter: null,
+            checkedAt: row.checked_at || now,
+            updatedAt: now,
+          });
+        }
+      }
     } else if (!budget.take()) {
       probeDeferred = true;
       detectedBy = 'queued-probe';
@@ -457,8 +479,12 @@ async function classifyCompanySources(session, env, listing, grantedScopes, capa
           reason: details.probeDeferred
             ? details.probeError || 'This app-specific module is queued for a bounded automatic capability check. Whop remains connected while SniperPlug finishes checking modules in the background.'
             : details.app?.hasOpenapiView
-              ? 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This app advertises its own OpenAPI view, which still requires the app publisher’s documented authorization contract.'
-              : 'Whop’s native Course, Forum, and Chat endpoints were checked and returned no readable items. This is app-specific content, so it requires an API published by that app rather than a guessed or scraped endpoint.',
+              ? 'Access confirmed · published OpenAPI contract found. Whop’s native Course, Forum, and Chat endpoints returned no readable items, but this app publicly advertises an OpenAPI interface. SniperPlug can inspect that documented contract next without guessing private endpoints.'
+              : details.app?.hasSkillsView
+                ? 'Access confirmed · published Skills interface found. Whop’s native Course, Forum, and Chat endpoints returned no readable items, but this app publicly advertises a Skills interface that can be evaluated as its documented reader contract.'
+                : details.app?.metadataSource === 'public-app-list'
+                  ? 'Access confirmed · no published reader contract. Whop’s public app metadata exposes neither an OpenAPI nor Skills interface for this app, so SniperPlug has no documented way to read its private pages yet.'
+                  : 'Access confirmed · reader metadata unavailable. Whop’s native Course, Forum, and Chat endpoints returned no readable items, and SniperPlug could not resolve a documented custom-app reader without guessing or scraping private endpoints.',
         },
       });
       continue;
