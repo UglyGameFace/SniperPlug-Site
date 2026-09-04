@@ -139,8 +139,10 @@ function secureResponse(response, url, pathname) {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath || authorizedCaptureHelper) {
-    response.headers.set('Cache-Control', authorizedCaptureHelper ? 'public, no-store, max-age=0' : 'private, no-store, max-age=0');
+  if (authorizedCaptureHelper) {
+    response.headers.set('Cache-Control', 'public, no-store, max-age=0');
+  } else if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath) {
+    response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (controlAsset) {
