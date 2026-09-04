@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runInNewContext } from 'node:vm';
 import {
   authorizeBrowserCaptureExperience,
   BETTER_CONTENT_APP_ID,
@@ -37,6 +38,42 @@ assert.ok(frameUrlCompat.includes("location.protocol !== 'https:'") && frameUrlC
 assert.ok(frameUrlCompat.includes('return `https://${location.host}${safePath}`'), 'Firefox URL fallback does not reduce the current app frame to a safe origin/path URL.');
 assert.ok(frameUrlCompat.includes('raw !== current') && frameUrlCompat.includes('new NativeURL(input, base)'), 'The compatibility shim can rewrite unrelated links instead of only the current app-frame URL.');
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage|\bfetch\s*\(/.test(frameUrlCompat), 'Firefox URL compatibility code reads credentials, browser storage, or network data.');
+
+const firefoxFrameHref = 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit?token=ephemeral&state=temporary#member';
+const compatContext = {
+  URL,
+  location: {
+    href: firefoxFrameHref,
+    protocol: 'https:',
+    hostname: 'mfk8y74zmein6tne8o5e.apps.whop.com',
+    host: 'mfk8y74zmein6tne8o5e.apps.whop.com',
+    pathname: '/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit',
+  },
+};
+compatContext.globalThis = compatContext;
+runInNewContext(frameUrlCompat, compatContext);
+const safeCurrentFrame = new compatContext.URL(firefoxFrameHref, firefoxFrameHref).toString();
+assert.equal(
+  safeCurrentFrame,
+  'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit',
+  'Firefox current-frame fallback did not remove unstable/sensitive query and hash data while preserving the HTTPS Whop route.',
+);
+const unrelatedUrl = new compatContext.URL('https://cdn.example.com/image.png?width=1200', firefoxFrameHref).toString();
+assert.equal(unrelatedUrl, 'https://cdn.example.com/image.png?width=1200', 'Firefox URL compatibility modified an unrelated URL.');
+const nonWhopContext = {
+  URL,
+  location: {
+    href: 'https://example.com/private?page=1',
+    protocol: 'https:',
+    hostname: 'example.com',
+    host: 'example.com',
+    pathname: '/private',
+  },
+};
+nonWhopContext.globalThis = nonWhopContext;
+runInNewContext(frameUrlCompat, nonWhopContext);
+assert.equal(new nonWhopContext.URL(nonWhopContext.location.href).toString(), 'https://example.com/private?page=1', 'Firefox fallback rewrote a non-Whop current page.');
+
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(captureScript), 'The Whop content script reads browser credentials or persistent site storage.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
@@ -90,7 +127,7 @@ await assert.rejects(
 console.log('\nBETTER CONTENT BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension reads rendered DOM only and requests no cookie or blanket-host permission.');
 console.log('✓ One MV3 package supports Chromium service workers plus Firefox Android background scripts.');
-console.log('✓ Firefox Android current app-frame URLs have a bounded HTTPS Whop origin/path fallback.');
+console.log('✓ Firefox Android current app-frame URLs have an executable bounded HTTPS Whop origin/path fallback.');
 console.log('✓ Firefox Android can discover the latest Better Content tab and link the Whop shell exp_ ID to its app iframe.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
