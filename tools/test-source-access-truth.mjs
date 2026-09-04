@@ -68,7 +68,7 @@ assert.ok(errorCopy.detail.includes('Whop source discovery timed out.') && error
 
 const successCopy = truth.sourceAccessCopy([
   { experienceId: 'exp_live_approved', decision: 'approved' },
-  { experienceId: 'exp_old_disapproved', decision: 'disapproved' },
+  { experienceId: 'exp_old_approved', decision: 'approved' },
 ], mixedDiscovery, whop, 'success');
 assert.equal(successCopy.title, '1 currently accessible approved source');
 assert.ok(successCopy.detail.includes('2 readable now') && successCopy.detail.includes('previous approval retained but inactive'));
