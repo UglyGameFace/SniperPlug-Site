@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SniperPlug Better Content Capture",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Capture Better Content pages you are already authorized to view in Whop and send the rendered guide content to SniperPlug for private review.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [
@@ -10,6 +10,7 @@
     "https://sniperplug.com/*"
   ],
   "background": {
+    "scripts": ["background.js"],
     "service_worker": "background.js"
   },
   "action": {
@@ -28,5 +29,12 @@
       "js": ["sniperplug-relay.js"],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "sniperplug-better-content@sniperplug.com",
+      "strict_min_version": "121.0"
+    },
+    "gecko_android": {}
+  }
 }
