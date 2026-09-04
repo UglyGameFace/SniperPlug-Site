@@ -1,106 +1,104 @@
 # Active Task
 
 ## Active task / outcome
-Repair the Whop importer end to end so the owner can connect Whop, retain legitimate membership access, discover every authorized Whop experience, and actually scan/import every content type for which a documented member-readable interface exists. The current concrete target is **Hidden Files → Make Money Here → Better Content**.
+Repair the Whop importer end to end so the owner can connect Whop, retain legitimate membership access, discover authorized experiences, and actually import useful content. The current concrete target is **Hidden Files → Make Money Here → Better Content** using a browser-side rendered-DOM capture bridge because Better Content publishes no server-readable OpenAPI or Skills contract through Whop.
 
 ## Scope
-1. Trace owner auth -> Whop OAuth -> membership snapshot -> experience discovery -> live access truth -> custom-app capability metadata -> reader selection -> scan/import.
-2. Preserve the strict owner-session security model and current-membership filters.
-3. Use current documented Whop contracts only; no guessed endpoint aliases, private-session scraping, unrelated OAuth scopes, or third-party credential leakage.
-4. Keep native Forum/Course/Chat readers authoritative.
-5. Keep custom app experiences visible even when no safe reader exists, and distinguish valid membership access from reader availability.
-6. For custom apps, inspect only public/documented app capability metadata that the connected user OAuth session is allowed to read.
-7. If a custom app publishes an authorized OpenAPI/Skills/member-reader contract, implement an adapter against that contract. If it does not, report `access confirmed · no published reader contract` rather than pretending discovery equals importability.
-8. Add executable regressions, run the complete Node 22 suite, inspect final diff/review state, merge only validated fixes, and confirm behavior against the real owner account.
+1. Keep the existing owner auth → Whop OAuth → membership/discovery/access path authoritative.
+2. Preserve the strict owner-session cookie and current-membership filters.
+3. Keep native Forum/Course/Chat readers authoritative.
+4. For Better Content only, add a browser extension/content-script path that reads rendered DOM the owner can already view.
+5. Never read or forward Whop cookies, iframe JWTs, OAuth tokens, localStorage/sessionStorage credentials, or guessed private Better Content API responses.
+6. Feed browser captures back into SniperPlug through the signed-in Control Center and the existing private guide review model.
+7. Require explicit republishing-rights confirmation and manual owner review before publication.
+8. Protect existing published, reviewed, removed, and unrelated user work from capture overwrites.
+9. Add executable regressions, run the complete Node 22 suite, inspect the final diff/review state, merge only validated fixes, and then validate one real Better Content capture.
 
 ## Status
-- PR #34 merged: removed the false membership denial caused by the phone-gated member-detail recheck.
+- PR #34 merged: removed false membership denial caused by the phone-gated member-detail recheck.
 - PR #35 merged: fixed the Whop OAuth callback/login loop without weakening the Strict owner cookie.
 - PR #36 merged: fixed stale source-access truth, duplicate membership loading, excessive discovery fan-out, and indefinite browser loading.
-- PR #37 merged at `b4a11cb1c07468d72f6c32ad0d2a7860d487938d`: corrected the current Whop Experiences `account_id` query contract while preserving Forums `company_id`. Post-merge Verify SniperPlug #937 passed.
-- The owner’s production screenshot after PR #37 proved **Make Money Here / Better Content was already visible before the recent discovery changes**. Therefore visibility was never the unresolved success criterion. The real defect is that app-specific modules still have no reader selected and cannot be imported.
-- PR #38 (`fix/whop-custom-app-reader-metadata`) now targets the real next layer: resolve a custom app’s published reader capability using a user-OAuth-compatible Whop endpoint instead of the developer-management endpoint that normal customer OAuth cannot use.
-- PR #38 implementation head `6a2a5f59354427f041e2d832f37676c52982c8d4` passed Verify SniperPlug #938, affiliate preview #63, and retired-route verification #56. This task-record update now requires exact-final-head validation.
+- PR #37 merged: corrected the current Whop Experiences `account_id` contract while preserving Forums `company_id`.
+- PR #38 merged at `6a566393ecdf24ec3e429774481c9f7375efc75e`: replaced developer-only custom-app metadata lookup with user-OAuth-compatible public app metadata and exposed concrete reader-contract truth.
+- Production after PR #38 proves `Make Money Here · Better Content` is discovered and membership access is confirmed, but Better Content advertises neither OpenAPI nor Skills through Whop.
+- PR #39 (`feature/better-content-browser-capture`) implements the alternate authorized path requested by the owner: rendered Better Content DOM → extension queue → signed-in SniperPlug relay → private draft.
+- PR #39 implementation head `bd04025a5772fb815eab8b6086a97948999fd38e` passed Verify SniperPlug #941, affiliate preview #65, and retired-route verification #59. Exact final-head validation remains after this task-record update.
 
 ## Findings / root cause
-- The connected Hidden Files membership is valid.
-- `Make Money Here` is discovered correctly and Whop identifies it as **Better Content**. The same source browser already shows other custom apps such as Content and Hidden Files Onboarding.
-- The existing item reader supports only native `forum`, `course`, and `chat`; app-specific experiences cannot enter `listExperienceItemsLite()` as readable sources.
-- Before PR #38, custom-app capability enrichment called `GET /apps/{id}` from `functions/_lib/whop.js`. That is a developer-management surface and is not a valid metadata authority for an ordinary customer OAuth session connected to a third-party app.
-- The old helper swallowed any app-metadata error and returned `null`. Discovery then cached `unsupported` plus empty app metadata for up to 24 hours, leaving every custom card on the same generic `Native API probe completed` explanation even when Whop may publish a reader interface.
-- Whop’s user-OAuth-compatible `GET /apps` list exposes public app metadata including stable app ID, origin/hosted route, `experience_path`, `openapi_path`, and `skills_path` when published.
-- App-name search alone is not trustworthy. SniperPlug must accept capability metadata only when the returned stable `app_...` ID exactly matches the app ID attached to the experience.
-- A published path is only capability metadata. SniperPlug must not send the owner’s Whop OAuth bearer token to a third-party app origin unless that publisher’s documented authorization contract explicitly requires and supports such a token flow.
+- This is no longer an OAuth, membership, discovery, or app-identification problem.
+- The owner can open `Make Money Here` because Better Content is rendered inside the authenticated Whop browser experience.
+- Better Content exposes no published server-readable OpenAPI/Skills contract through Whop, so the SniperPlug server cannot legitimately enumerate its private pages directly.
+- The useful content nevertheless exists in the rendered DOM after Better Content authorizes the browser session.
+- A content script can read that rendered DOM without stealing Whop credentials or probing undocumented Better Content endpoints.
+- The safest bridge is therefore client-side capture plus a same-origin SniperPlug handoff, with the SniperPlug server independently re-verifying the owner, Whop session, exact experience, exact Better Content app ID, and current membership relationship before saving anything.
 
 ## Execution path
-Connection:
-`/api/whop/oauth/start` -> Whop -> `/api/whop/oauth/callback` -> canonical owner Whop session.
+Native importer remains:
+`Control Center` → Whop OAuth session → `/api/discover` → native Forum/Course/Chat source → `scanApprovedSource()` → normal review/import/publish.
 
-Discovery:
-`/api/discover` -> one membership snapshot -> current membership companies/products -> Whop Experiences/Forums inventory -> exact experience dedupe -> native Course/Forum/Chat capability probe -> native source or app-specific source.
+Better Content browser capture in PR #39:
+`Whop UI → Better Content rendered app frame → DOM-only MV3 content script → chrome.storage.session capture queue → SniperPlug Control Center relay → same-origin POST /api/browser-capture → requireAdmin + requireWhopSession → retrieve exact exp_... through Whop → require exact Better Content app ID app_zv9yxan92U9fNy → current membership check when Whop exposes company/product relation → sanitize + integrity/category checks → D1 private draft → normal SniperPlug owner review/publish`.
 
-Custom-app capability path in PR #38:
-app-specific experience -> `inspectWhopApp()` from `whop-app-reader.js` -> `GET /apps?query=<app name>&first=25` with the existing Whop user OAuth token -> exact stable app-ID match -> normalize public HTTPS origin + experience/OpenAPI/Skills paths -> capability cache -> explicit reader-contract state.
+No Whop credential crosses from the Better Content frame to SniperPlug. The extension never calls the Whop API itself and never calls a guessed Better Content backend.
 
-Legacy cache repair:
-fresh 24-hour `unsupported` capability row with old/empty metadata -> one public app-list enrichment -> rewritten capability row with `metadataSource: public-app-list` instead of waiting for TTL expiry.
-
-Native scan/import remains:
-`scanApprovedSource()` -> `listExperienceItemsLite()` -> Forum/Course/Chat reader -> normalize/integrity -> D1 -> review/import/publish.
-
-Future Better Content reader, only if a documented contract exists:
-Better Content experience -> published reader contract inspection -> explicit compatible auth -> app adapter -> normalized SniperPlug item model -> existing scan/integrity/review pipeline.
-
-## Changes in PR #38
-- Added `functions/_lib/whop-app-reader.js` as the single custom-app capability metadata owner.
-- Custom metadata uses Whop `GET /apps` with user OAuth, not developer-only `GET /apps/{id}`.
-- Results are searched by app name but accepted only on exact stable app ID.
-- Public metadata is normalized to safe HTTPS experience/OpenAPI/Skills URLs.
-- Added a short in-process metadata cache to avoid duplicate app-list requests for repeated cards.
-- Legacy capability-cache rows without the new public metadata marker self-heal immediately during discovery.
-- Custom source reasons now distinguish:
-  - `Access confirmed · published OpenAPI contract found`
-  - `Access confirmed · published Skills interface found`
-  - `Access confirmed · no published reader contract`
-  - `Access confirmed · reader metadata unavailable`
-- No Whop OAuth token is forwarded to the custom app origin.
-- Added `tools/test-whop-app-reader.mjs` and wired it into the normal build/audit chain.
+## Changes in PR #39
+- Added `browser-extension/` Manifest V3 extension.
+- Extension host permissions are limited to Whop app hosts and `sniperplug.com`; no `<all_urls>`.
+- Extension permissions are `storage` and `tabs`; no `cookies` permission.
+- Whop content script reads rendered DOM only; it contains no `fetch`, `document.cookie`, `chrome.cookies`, `localStorage`, or `sessionStorage` credential access.
+- DOM renderer preserves headings, paragraphs, emphasis, code, links, images, blockquotes, lists, and tables as Markdown.
+- Sensitive token/auth/session/signature/state/code/key query parameters are stripped from captured page/image URLs before persistence.
+- Added single-page capture and bounded auto-capture queue for clicking through a Better Content section such as `Make Money Here`; max 25 queued pages.
+- Queue lives in extension session storage so service-worker suspension does not discard it.
+- Added SniperPlug Control Center relay that uses the existing signed-in same-origin browser session to POST the captures; the extension does not get a SniperPlug secret token.
+- Added owner-only `/api/browser-capture` endpoint requiring same-origin request, admin session, and live Whop session.
+- Added server capture importer pinned to exact Better Content app ID `app_zv9yxan92U9fNy`.
+- Capture requires explicit rights confirmation.
+- Captures create/update **private drafts only** with `autoPublishEligible: false` and `manualReviewCompleted: false`.
+- Changed published, manually reviewed, or removed guides are held instead of overwritten; identical captures remain unchanged and duplicates are held.
+- Captured image URLs are marked for review before publication rather than assumed durable.
+- Added `tools/test-browser-capture-extension.mjs` and wired it into the normal build/audit chain.
+- Added extension setup/security documentation in `browser-extension/README.md`.
 
 ## Validation / results
-- [x] Owner production screenshot confirms `Make Money Here · Better Content` was already present; discovery visibility is no longer treated as the unresolved outcome.
-- [x] Current Whop app metadata contracts inspected before implementation.
-- [x] PR #38 custom-app helper uses only `GET /apps`, never developer-only `GET /apps/{id}`.
-- [x] Exact app-ID matching is enforced after name search.
-- [x] Safe HTTPS normalization is enforced for published experience/OpenAPI/Skills paths.
-- [x] Missing or denied public metadata remains reader-unavailable and does not become false membership denial.
-- [x] Existing 24-hour unsupported rows have a bounded self-heal path to the new metadata authority.
-- [x] Executable custom-app reader regression is part of `npm run audit` / `npm run build`.
-- [x] Verify SniperPlug #938 passed the complete Node 22 build/regression suite on implementation head `6a2a5f59354427f041e2d832f37676c52982c8d4`.
-- [x] Affiliate preview #63 and retired public route verification #56 passed on the same implementation head.
+- [x] Production evidence confirms Better Content access but no published OpenAPI/Skills reader contract.
+- [x] Extension requests no cookie or blanket-host permission.
+- [x] Whop content script is DOM-only and contains no credential-reading or private-API fetch path.
+- [x] Same-origin SniperPlug relay is the only network handoff for captured content.
+- [x] Server re-verifies owner session, live Whop session, exact experience, and exact Better Content app ID before writes.
+- [x] Current membership relationship is checked when Whop exposes company/product linkage without reintroducing a false denial when those optional fields are absent.
+- [x] Existing rights-confirmation gate is preserved.
+- [x] Captures cannot auto-publish and previously published/reviewed/removed work is protected from silent overwrite.
+- [x] Sensitive URL query credentials are removed before persistence.
+- [x] Executable browser-capture regression is part of `npm run audit` / `npm run build`.
+- [x] Verify SniperPlug #941 passed the complete Node 22 build/regression suite on implementation head `bd04025a5772fb815eab8b6086a97948999fd38e`.
+- [x] Affiliate preview #65 and retired public route verification #59 passed on the same implementation head.
 - [ ] Exact final-head CI passes after this task-record update.
-- [ ] PR #38 review/diff/branch state remains clean and current with `main`.
-- [ ] PR #38 merges and post-merge `main` workflows pass.
-- [ ] Production Refresh sources changes **Make Money Here** from the old generic explanation to one concrete reader-contract state.
-- [ ] If Better Content advertises OpenAPI or Skills, inspect that exact published contract and implement the real adapter if its authorization model is compatible.
-- [ ] If Better Content publishes no usable reader contract, preserve explicit `access confirmed · no published reader contract` and record the publisher/API dependency rather than inventing a private endpoint.
-- [ ] One native source scan/import succeeds against the real owner account.
+- [ ] PR #39 review/diff/branch state remains clean and current with `main`.
+- [ ] PR #39 merges and post-merge `main` workflows pass.
+- [ ] One real Better Content `Make Money Here` page is captured from an authorized browser frame and appears as a private SniperPlug draft.
+- [ ] After one-page validation, auto-capture is tested across multiple `Make Money Here` pages without duplicates or accidental page-shell capture.
 
 ## Cleanup / conflicts
-- No extra OAuth scopes or phone permission.
+- No extra Whop OAuth scopes or phone permission.
 - No weakening of owner-cookie security.
-- No guessed Whop aliases or duplicate discovery implementation.
-- No Better Content private endpoint guesses, iframe scraping, or third-party token forwarding.
-- No unrelated UI/site/database work is included.
-- The old exported `inspectWhopApp()` implementation remains physically present in `whop.js`, but PR #38 discovery no longer imports it. Default-branch caller search found only the old discovery caller plus the definition. Removing that dead export requires a safe full-file edit of the large shared OAuth/runtime module; it is not being riskily rewritten through a whole-file connector update solely for cosmetic cleanup. The executable regression prevents the active custom-app path from returning to that developer-only endpoint.
+- No guessed Better Content private endpoints.
+- No Whop iframe token/cookie theft or forwarding.
+- No direct extension call to Whop API.
+- No automatic publishing of browser-captured material.
+- No unrelated site/database work is included.
+- Existing native Whop readers, source decisions, review flow, D1 guide records, publishing checks, recovery, and backups remain intact.
 
 ## Blockers / risks
-- CI cannot see the owner’s private Better Content experience metadata, so it cannot tell us whether Better Content itself currently publishes an OpenAPI or Skills interface. The production connected account must provide that final capability result after deployment.
-- Access to a Whop product does not automatically grant a server-side API for a third-party app’s private content store.
-- A public OpenAPI/Skills path still needs an explicit supported authorization contract before SniperPlug can read private member content from that app.
+- CI cannot render the owner’s private Better Content iframe, so actual DOM shape and the first live `Make Money Here` capture still require a real browser validation.
+- Better Content is a dynamic application, so its rendered DOM can evolve. The extractor intentionally favors semantic containers and generic Markdown rendering instead of brittle Better Content CSS selectors.
+- Samsung Internet does not provide a normal arbitrary-unpacked-extension path for third-party MV3 development. Immediate live testing is easiest in desktop Chromium or another extension-capable browser; Samsung distribution would require Samsung’s extension approval/distribution path. This packaging limitation does not change SniperPlug’s server capture contract.
+- The browser-capture path only covers content the owner actually opens/renders; it does not secretly enumerate unopened private Better Content pages through undocumented APIs.
 
 ## Backlog
 - Issue #20 remains unrelated and locked out.
-- Issue #25 is the custom-app reader portion of this same importer outcome, with Better Content as the first concrete target.
+- Issue #25 remains the custom-app reader portion of this same importer outcome; Better Content browser capture is its first implemented non-API adapter.
+- Other third-party Whop apps remain out of scope until Better Content capture is proven live and each app’s access/capture model is investigated separately.
 
 ## Next step
-Require green CI on the exact PR #38 final head, inspect diff/review/branch state, merge only if clean, verify post-merge `main` workflows, then refresh Hidden Files in production and use the concrete **Make Money Here** reader-contract result to either implement the documented Better Content adapter or prove the publisher/API dependency explicitly.
+Require green CI on the exact PR #39 final head after this task-record update, inspect diff/review/branch state, merge only if clean, verify post-merge `main` workflows, then install/test the extension against **Hidden Files → Make Money Here** by capturing one individual page into the private SniperPlug draft queue before enabling multi-page auto-capture.
