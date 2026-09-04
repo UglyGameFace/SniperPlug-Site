@@ -18,18 +18,20 @@
     input{margin-top:2px}.status{min-height:34px;padding:9px 10px;border-radius:10px;background:#09141e;color:#b7c7c2;font-size:12px;line-height:1.4}
     .status[data-state="error"]{color:#ffb8b8}.status[data-state="ok"]{color:#8ff0b7}
     ul{margin:0;padding-left:18px;color:#aebfba;font-size:12px;max-height:80px;overflow:auto}
+    [hidden]{display:none!important}
   </style>
 </head>
 <body>
   <main>
     <div>
       <h1>SniperPlug Better Content Capture</h1>
-      <p>Reads only the rendered page you can already see. No Whop cookies or tokens are collected.</p>
+      <p>Reads only rendered pages inside Firefox. It cannot inspect the separate native Whop app.</p>
     </div>
     <section class="card">
       <strong id="pageTitle">Looking for Better Content…</strong>
       <span class="meta" id="pageMeta"></span>
-      <p id="pageDetail">Open an individual Better Content guide inside Whop.</p>
+      <p id="pageDetail">Open an individual Better Content guide inside Whop in Firefox Nightly.</p>
+      <button id="openWhop" type="button" hidden>Open Whop in Firefox</button>
     </section>
     <div class="row">
       <button id="capture" class="primary" type="button">Capture page</button>
