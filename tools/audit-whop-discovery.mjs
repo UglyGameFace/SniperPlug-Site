@@ -7,6 +7,7 @@ import { membershipCompanies, membershipGrantsAccess } from '../functions/_lib/d
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const discovery = read('functions/_lib/discovery.js');
+const accessTruth = read('functions/_lib/access-truth.js');
 const endpoint = read('functions/api/discover.js');
 const page = read('control-center/index.html');
 const client = read('assets/js/control-center-v2.js');
@@ -14,12 +15,19 @@ const styles = read('assets/css/whop-discovery.css');
 const capabilityMigration = read('migrations/0005_whop_capability_cache.sql');
 
 assert.ok(discovery.includes("'memberships'"), 'Membership discovery endpoint is missing.');
-assert.ok(discovery.includes("'forums'"), 'Forum discovery endpoint is missing.');
+assert.ok(discovery.includes("export async function loadWhopMemberships"), 'The canonical membership loader is not reusable by discovery and access verification.');
+assert.ok(discovery.includes("'forums'"), 'Forum compatibility discovery endpoint is missing.');
 assert.ok(discovery.includes("'experiences'"), 'Experience discovery endpoint is missing.');
-assert.ok(discovery.includes("{ id: null, title: 'company-wide access' }"), 'Company-wide Whop modules are not checked.');
-assert.ok(discovery.includes('...membershipProducts'), 'Membership-product discovery is not preserved alongside company-wide discovery.');
-assert.ok(discovery.includes('product_id: product.id'), 'Product-specific forum and experience lookups are missing.');
-assert.ok(discovery.includes('discovered.set(experience.id, experience)'), 'Company-wide and product-scoped results are not deduplicated by exact experience ID.');
+assert.ok(discovery.includes('membershipProducts.length') && discovery.includes("[{ id: null, title: 'company-wide access' }]"), 'Company-wide discovery is not restricted to memberships without product scope.');
+assert.ok(!discovery.includes("const scopes = [\n    { id: null, title: 'company-wide access' },\n    ...membershipProducts"), 'Every customer membership still pays for an unnecessary company-wide discovery sweep.');
+assert.ok(discovery.includes('product_id: product.id'), 'Product-specific experience lookup is missing.');
+assert.ok(discovery.includes("output.experiences = await allPages(session, 'experiences'"), 'Experiences are not the primary module inventory.');
+assert.ok(discovery.includes('if (!output.experiences.length)') && discovery.includes("output.forums = await allPages(session, 'forums'"), 'Forum enumeration is not constrained to compatibility fallback when experience inventory is empty.');
+assert.ok(discovery.includes('discovered.set(experience.id, experience)'), 'Product-scoped and fallback results are not deduplicated by exact experience ID.');
+assert.ok(endpoint.includes('const memberships = await loadWhopMemberships(session)'), 'The discovery endpoint does not load one authoritative membership snapshot.');
+assert.ok(endpoint.includes('discoverWhopSources(session, context.env, memberships)'), 'Discovery does not reuse the endpoint membership snapshot.');
+assert.ok(endpoint.includes('enforceLiveWhopAccess(session, discovered, memberships)'), 'Live access verification does not reuse the same endpoint membership snapshot.');
+assert.ok(!accessTruth.includes("whopApi(session, 'memberships'"), 'Access verification still performs a second membership pagination pass.');
 assert.ok(discovery.includes("SUPPORTED_TYPES = new Set(['forum', 'course', 'chat'])"), 'Forum, Course, and Chat sources are not classified together.');
 assert.ok(discovery.includes('requiredScopeForExperience'), 'Discovery does not map content types to their OAuth read scopes.');
 assert.ok(discovery.includes('missingScopes'), 'Missing content-read permissions are not returned to the owner.');
@@ -100,7 +108,9 @@ assert.deepEqual([...companies.find((company) => company.id === 'biz_other').pro
 assert.ok(!companies.some((company) => ['biz_completed_left', 'biz_left', 'biz_expired', 'biz_unresolved', 'biz_drafted'].includes(company.id)), 'Historical or explicitly left groups leaked back into current discovery.');
 
 console.log('\nWHOP MULTI-CONTENT DISCOVERY AUDIT PASSED\n');
-console.log('✓ Company-wide and every membership-product source list are checked and deduplicated.');
+console.log('✓ One membership snapshot drives both discovery and live access verification.');
+console.log('✓ Product-scoped memberships avoid an unrelated company-wide source sweep.');
+console.log('✓ Experiences are the primary module inventory; forum enumeration is a bounded compatibility fallback.');
 console.log('✓ Forum, Course, and Chat sources are classified with their exact permission requirements.');
 console.log('✓ External app modules remain visible with a separate-integration explanation.');
 console.log('✓ Empty stale groups, left members, and missing member records stay out of the source browser.');

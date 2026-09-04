@@ -10,9 +10,11 @@ SniperPlug automatically discovers active membership products and their experien
 - Courses, chapters, lessons, text, external video embeds, quizzes, PDFs, thumbnails, lesson attachments, and downloadable hosted media
 - Chat channels, messages, polls, pictures, video, audio, and message attachments
 
-Discovery checks both the company-wide experience list and every active membership product, then deduplicates exact `exp_...` sources. This catches modules that Whop exposes at the company level instead of attaching to one product. Groups with no current readable content are hidden instead of lingering as empty cards.
+Discovery loads the authorized membership list once per refresh. Customer memberships with product IDs are checked through those exact product scopes; company-wide discovery is used only when a current membership has no product scope. The Experiences collection is the primary module inventory, with Forums used as a compatibility fallback when an experience inventory is empty. Exact `exp_...` sources are deduplicated, and groups with no current readable content are hidden instead of lingering as empty cards.
 
-For every unknown module, SniperPlug now probes Whop's official Course, Forum, and Chat collection endpoints before classifying it as app-specific. This catches renamed or oddly labeled native modules instead of trusting the sidebar label alone.
+The same membership snapshot is reused for final live-access filtering, so source discovery does not paginate memberships a second time merely to reconfirm what it just loaded.
+
+For every unknown module, SniperPlug probes Whop's official Course, Forum, and Chat collection endpoints before classifying it as app-specific. This catches renamed or oddly labeled native modules instead of trusting the sidebar label alone.
 
 Genuinely custom apps such as Telegram, Discord, Wheels, or third-party embedded apps do not share one universal content API. SniperPlug keeps those modules visible, records the app metadata, and reports whether the app advertises an OpenAPI view. It does not guess private endpoints or scrape an authenticated iframe. Importing those items requires a documented read API and authorization contract from that app's publisher.
 
@@ -99,12 +101,13 @@ Fresh source scans now mark posts missing from Whop as stale and hide them from 
 
 1. Unlock `/control-center/`.
 2. Connect through Whop.
-3. SniperPlug loads current access-granting memberships, checks company-wide modules plus every membership product, and deduplicates every readable Forum, Course, and Chat experience.
-4. Select one source, several sources, or every Black Box and Hidden Files source.
-5. Use the normal review flow for individual control, or confirm republication rights and press **Approve, import & publish selected**.
-6. The complete bulk workflow approves each selected source, scans current content, approves every non-blocked item, applies the best-fit category for that source, preserves available media, imports in bounded batches, and publishes every safe guide.
-7. Anything with unresolved private/expiring media, blocked integrity, or a failed source request remains private and is reported instead of being silently published.
-8. **Publish all ready drafts** publishes every safe imported draft left from earlier manual or bulk runs.
+3. Press **Load sources**. SniperPlug loads current access-granting memberships once, checks exact membership-product experience inventories (or company-wide inventory only when no product scope exists), and deduplicates every readable Forum, Course, and Chat experience.
+4. The source-access banner distinguishes idle, loading, failed, and completed checks. Saved approvals remain history until a successful live refresh proves they are readable by the currently connected Whop account. A browser request that exceeds 25 seconds is stopped and reported as paused rather than spinning forever.
+5. Select one source, several sources, or every Black Box and Hidden Files source.
+6. Use the normal review flow for individual control, or confirm republication rights and press **Approve, import & publish selected**.
+7. The complete bulk workflow approves each selected source, scans current content, approves every non-blocked item, applies the best-fit category for that source, preserves available media, imports in bounded batches, and publishes every safe guide.
+8. Anything with unresolved private/expiring media, blocked integrity, or a failed source request remains private and is reported instead of being silently published.
+9. **Publish all ready drafts** publishes every safe imported draft left from earlier manual or bulk runs.
 
 The ordinary controls remain available: Approve, Disapprove, Undo, Approve all ready, Disapprove all, custom category creation, private draft review, and individual Publish or Reject.
 
