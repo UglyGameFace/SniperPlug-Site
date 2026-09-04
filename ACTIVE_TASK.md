@@ -1,100 +1,66 @@
 # Active Task
 
-## Task
-Issue #19 — Back up Whop imports before clear-and-resync, including a usable mobile recovery workflow.
-
-## Status
-**Active — PR #28 (`fix/issue19-backup-history-identity`) is open, mergeable, 0 commits behind `main`, and green after repairing the live Samsung recovery-history identity defect.**
-
-Production completion remains unclaimed until PR #28 is merged/deployed and the owner completes the remaining real Samsung backup/download/reset/restore checks.
+## Active task / outcome
+Repair the Whop importer so legitimate owner OAuth access is not rejected by SniperPlug, native Whop Forum/Course/Chat sources remain discoverable and importable, and app-specific experiences report their real reader state instead of being confused with access denial.
 
 ## Scope
-1. Keep the existing signed/checksum-verified R2 archive format and exact-source/all-importer restore behavior authoritative.
-2. Preserve the merged one-group backup workflow: one independently verified exact-source archive per saved source in the selected group.
-3. Keep destructive clear/resync limited to one exact source or the whole importer; group scope remains backup-only.
-4. Keep owner and paid-customer authentication isolated and fail closed while OAuth is incomplete.
-5. Make callback status truthful: a stale OAuth error may not remain red after the current Whop connection is verified.
-6. Keep every child backup human-identifiable on Samsung/mobile before the owner downloads, restores, or deletes it.
-7. Preserve Samsung/mobile bounded rendering, lazy work, cache safety, and the single recovery workflow.
-8. Validate targeted auth/recovery/mobile audits, JavaScript syntax, full Node 22 build/regression suite, cleanup, conflict inspection, deployment, and live Samsung behavior.
+1. Trace OAuth -> memberships -> company/source discovery -> live access verification -> source scan -> guide import.
+2. Remove any access check that requires permissions unrelated to the importer’s declared OAuth scopes.
+3. Preserve current-membership security: inactive, explicitly-left, missing-user/member, or otherwise non-access-granting memberships must not become current source access.
+4. Verify the current Whop API contract before changing discovery query keys; do not guess around contradictory documentation.
+5. Keep native Forum/Course/Chat readers authoritative.
+6. For custom Whop apps, use only a publisher/Whop documented member-readable interface. Do not scrape private app sessions, guess endpoints, or request unrelated developer permissions merely to inspect another publisher’s app.
+7. Add executable backend regressions, run the complete Node 22 build/audit suite, inspect the final diff, and review CI/PR state.
 
-## Findings
-- PR #26 merged the whole-group backup workflow.
-- PR #27 merged the Whop OIDC `sub` identity repair, pending-session isolation, failed OAuth cleanup, and one-shot callback-status handling.
-- Live Samsung at 10:27 EDT confirmed the group backup itself succeeded, but recovery history rendered every child as the same **Hidden Files** title.
-- The group workflow correctly creates one exact-source backup per saved source. The ambiguity is only presentation/metadata: each durable backup inherited the shared company/group `label`, and the browser showed only a short source suffix.
-- `listSourceOptions()` already has the canonical more-specific exact-source label: `Hidden Files · <experience name>` when available, otherwise a unique source suffix.
-- The backup overview was not reconciling stored backup rows against that canonical saved-source catalog.
-- The backup `label` column is not part of the signed archive identity/checksum. Updating only that human-readable label does not change archive bytes, backup IDs, experience IDs, restore semantics, reset authorization, signatures, or media pinning.
+## Status
+Implementation in progress on `fix/whop-importer-access-and-readers`.
 
-## Current changes
-- Backup overview joins exact-source backup rows to the canonical saved-source catalog by `experienceId`.
-- Existing generic backup labels are persisted back to D1 with the specific saved-source label when current source metadata is available.
-- New backups are identity-enriched immediately in the `create` response, before a clear/resync can remove the current source row.
-- Recovery cards show the descriptive exact-source label plus separate **Source ID …xxxxxx** and **Backup ID …xxxxxx** identifiers.
-- Restore/Delete confirmation dialogs use the same descriptive source label as the card the owner tapped.
-- Whole-importer backup cards keep their existing semantics and get only the separate backup identifier.
-- No recovery archive schema, signed fields, group orchestration, destructive scope, restore path, or source-decision behavior changed.
+## Findings / root cause
+- The owner OAuth defaults request `forum:read`, `courses:read`, `chat:read`, `member:basic:read`, and `member:email:read` plus OIDC scopes.
+- Whop’s list-memberships endpoint is authorized by `member:basic:read` + `member:email:read` and returns the caller’s readable memberships.
+- `functions/_lib/access-truth.js` then redundantly called `GET /members/{id}` for every discovered company member.
+- Whop’s retrieve-member endpoint additionally requires `member:phone:read`. A 403 from that unrelated permission was converted into `grantsAccess: false`, so a legitimate current membership could be filtered out after successful discovery.
+- The discovery path already has one authoritative membership-currentness predicate, `membershipGrantsAccess()`. Reusing that predicate avoids contradictory access implementations.
+- Custom app experiences such as Better Content are not equivalent to native Whop Course/Forum/Chat resources. Whop’s app-detail endpoint requires developer permissions belonging to the app publisher/developer context; owner membership access does not grant those permissions.
+- Whop’s current list-experiences documentation is internally inconsistent: the generated SDK example uses `company_id`, while the query schema currently labels `account_id` required. No discovery-query flip will be made without stronger runtime evidence because replacing a working legacy parameter based on contradictory docs would be a blind fix.
 
-## Existing implemented recovery foundation
-- Signed, checksum-verified, bounded R2 recovery archives with manifest-only D1 state.
-- Exact source, current/stale post, category, guide, course-video, and media-ledger snapshots.
-- Read-back verification, owner-bound signatures, current-state checks, one-time reset authorization, and typed confirmation.
-- Published-guide preservation by default and conflict-safe offline restore.
-- R2 archive/media pinning, stale-post filtering, preserved-guide reattachment, and retry-safe restore behavior.
-- Owner-only backup history, JSON download, restore, safe clear/resync, reset-all, and deletion.
-- One saved Whop group backup creates independently verified child source archives and reports partial failure without discarding successful copies.
-- No automatic source discovery/content scan on unlock; mobile source/post/guide budgets remain bounded at 6/4/8.
+## Execution path
+`/api/discover` -> `requireAdmin()` -> `requireWhopSession()` -> `discoverWhopSources()` -> `enforceLiveWhopAccess()` -> Control Center source browser.
 
-## Validation
-- [x] PR #26 merged to `main`.
-- [x] PR #27 merged to `main`.
-- [x] PR #27 full Node 22.23.1 build/regression suite passed before merge.
-- [x] Live Samsung confirmed production Whop connection/source loading works after PR #27.
-- [x] Recovery-history identity root cause traced through group orchestration → `createWhopImportBackup` → generic stored label → overview → `renderHistory`.
-- [x] Identity repair uses the existing exact-source catalog and leaves signed recovery content untouched.
-- [x] PR #28 Verify SniperPlug run #896 passed on Node 22.23.2.
-- [x] Full `npm run build` / complete regression suite passed on PR #28.
-- [x] Targeted Whop backup/reset/restore audit passed and explicitly confirms exact source + backup identity remains distinguishable on mobile.
-- [x] JavaScript syntax validation passed for Functions, browser scripts, and audits.
-- [x] Control Center mobile-flow, hardening, network, source-access truth, OAuth/customer access, private-guide auth, recovery/media, discovery, publishing, scan persistence, import concurrency, and guide-versioning regressions all passed.
-- [x] `npm install --ignore-scripts` reported zero vulnerabilities.
-- [x] PR #28 is 0 commits behind `main`, mergeable, and changes only four intended files.
-- [x] PR #28 has no inline review threads; comments contain only expected skipped Vercel telemetry and Qodo's billing-paused notice, with no code finding.
-- [ ] PR #28 merges and Cloudflare production deployment propagates.
-- [ ] Samsung recovery history shows a distinguishishable exact-source label plus separate source/backup IDs for every child backup.
-- [ ] Production JSON download succeeds on real imported content.
-- [ ] Production clear-and-resync preserves published guides and removes stale state.
-- [ ] Production restore works without relying on current Whop access and reports conflicts truthfully.
+Approved native source scan path:
+`scanApprovedSource()` -> `resolveWhopExperienceType()` -> `listExperienceItemsLite()` -> normalize/integrity -> D1 `whop_posts` -> guide import/publish flow.
 
-## Cleanup / conflict inspection
-- Recovery identity repair updates only human-readable backup labels and overview metadata.
-- No alternate backup engine, archive version, D1 scope value, restore path, reset path, or compatibility shim was added.
-- Existing archive signature/checksum inputs remain unchanged.
-- Existing 10 MB per-archive ceiling and independently restorable child-source archives remain unchanged.
-- Diff is limited to the active-task record, recovery-history renderer, backup overview/create identity reconciliation, and the permanent backup audit.
+## Changes
+- `access-truth.js` now verifies current company access directly from the OAuth-authorized memberships list and reuses `membershipGrantsAccess()`.
+- Removed the member-detail recheck and therefore the accidental `member:phone:read` dependency.
+- Access diagnostics now record `verifiedBy: membership-list` and membership/product/status identifiers without exposing membership email data.
+- Added `tools/test-whop-access-verifier.mjs`, an executable backend regression that fails if access verification calls `/members/{id}`, drops a valid current group, restores explicitly-left history, or loses custom-app visibility for an allowed company.
+- Added the regression to the normal `npm run audit` / `npm run build` chain.
 
-## Current branch / PR
-- Branch: `fix/issue19-backup-history-identity`
-- PR #28 — `Make Whop recovery backups identifiable by source`
+## Validation / results
+- [x] Current `main` and merged PR history inspected; previous Issue #19 active-task record was stale and Issue #19 / PR #28 are already closed/merged.
+- [x] Current Whop docs checked for OAuth/member/app permissions and API stability.
+- [x] Confirmed retrieve-member permission mismatch is real, not inferred.
+- [x] Confirmed Experiences/Forum/Course/Chat remain Legacy-only resources supported by Whop.
+- [ ] New regression runs in GitHub CI.
+- [ ] Complete Node 22 build/audit suite passes on the branch.
+- [ ] PR diff contains only importer-correctness changes.
+- [ ] PR review threads/status checks are clean.
+- [ ] Production owner retest confirms current native sources remain visible and scan/import correctly.
 
-## Definition of Done
-- The Control Center presents one understandable ordered workflow on mobile and desktop.
-- Owner can back up one exact source, one entire saved group, or the entire importer without repetitive per-source tapping.
-- A group backup verifies every successful child source independently and reports partial failures without discarding good recovery copies.
-- Every recovery card identifies the exact source clearly enough that Restore/Delete cannot be confused with another child backup.
-- Group selection cannot trigger destructive reset semantics accidentally.
-- No destructive reset can start without a newly verified restorable backup.
-- Whop callback identity and status cannot contradict the currently verified server state.
-- Incomplete customer OAuth cannot enter general Control Center APIs.
-- Backup download and restore work after Whop access is removed.
-- Published guides remain by default and newer guides are never overwritten silently.
-- Targeted tests, full build, cleanup, review, deployment, Samsung Internet validation, and live recovery validation pass.
+## Cleanup / conflicts
+- No extra OAuth phone scope was added.
+- No custom-app scraping, guessed endpoint, browser-cookie reuse, or private-session proxy was added.
+- No second membership-access implementation was introduced; the existing discovery predicate is now reused.
+- No discovery parameter compatibility shim has been stacked onto contradictory documentation.
+
+## Blockers / risks
+- Content stored exclusively inside third-party Whop custom apps cannot be imported through Whop’s native Course/Forum/Chat APIs. Implementing an actual reader for Better Content or another custom app requires a documented member-readable API/interface from that publisher or Whop. Membership access alone is not an API credential for another developer’s backend.
+- Production Whop data cannot be exercised from repository CI because CI has no owner OAuth token; the regression therefore validates request shape and access semantics with controlled Whop responses, followed by a required production owner retest.
 
 ## Backlog
-- Issue #25 — Read authorized Whop Content / Better Content experiences (`Make Money Here`, Content, Better Content, Hidden Files Onboarding, and other app-specific experiences) after Issue #19 reaches Definition of Done.
-- Issue #20 — full website duplication audit after Issue #19 reaches Definition of Done.
-- Universal owner-authorized proxy/play/download support for non-Course Whop videos.
+- Issue #20: full website duplication audit remains unrelated and locked out of this task.
+- If Better Content or another custom-app publisher exposes a documented member-readable API, add the adapter under Issue #25 without changing native source semantics.
 
-## Scope lock
-No unrelated implementation begins until Issue #19 reaches Definition of Done unless the owner explicitly sends the required FORCE SWITCH instruction.
+## Next step
+Open the branch PR, run the full repository workflow, inspect any failures, repair only importer-related regressions, then perform diff/review cleanup and report the remaining production validation gate.
