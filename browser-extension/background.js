@@ -7,6 +7,7 @@ const PENDING_KEY = 'sniperplugPendingCaptures';
 const MAX_QUEUE = 25;
 const CANDIDATE_TTL_MS = 10 * 60_000;
 const EXPERIENCE_LINK_WINDOW_MS = 15_000;
+const INJECTION_SETTLE_MS = 180;
 const WHOP_TAB_PATTERNS = [
   'https://whop.com/*',
   'https://*.whop.com/*',
@@ -20,6 +21,10 @@ async function readState(key, fallback) {
 
 async function writeState(key, value) {
   await chrome.storage.session.set({ [key]: value });
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function candidateKey(tabId, frameId) {
@@ -127,6 +132,43 @@ async function whopTabs() {
   }
 }
 
+async function injectCaptureIntoTab(tabId) {
+  if (!Number.isInteger(tabId) || !chrome.scripting?.executeScript) return false;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      files: ['content-capture.js'],
+    });
+    await wait(INJECTION_SETTLE_MS);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function recoverCandidateAcrossWhopTabs(openTabs = null) {
+  const tabs = Array.isArray(openTabs) ? openTabs : await whopTabs();
+  const ordered = [...tabs]
+    .filter((tab) => Number.isInteger(tab?.id))
+    .sort((left, right) => Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0));
+
+  for (const tab of ordered.slice(0, 4)) {
+    await injectCaptureIntoTab(tab.id);
+    const candidate = await bestCandidate(tab.id);
+    if (candidate) return candidate;
+  }
+  return null;
+}
+
+async function resolveCandidate(preferredTabId = null, openTabs = null) {
+  let resolved = await bestCandidateAcrossTabs(preferredTabId);
+  if (resolved.candidate) return resolved;
+  const recovered = await recoverCandidateAcrossWhopTabs(openTabs);
+  if (!recovered) return resolved;
+  resolved = await bestCandidateAcrossTabs(preferredTabId);
+  return resolved;
+}
+
 function captureIdentity(capture) {
   return `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;
 }
@@ -152,9 +194,10 @@ async function clearQueue(tabId) {
 }
 
 async function captureCurrent(tabId) {
-  const resolved = await bestCandidateAcrossTabs(Number.isInteger(tabId) ? tabId : null);
+  const openTabs = await whopTabs();
+  const resolved = await resolveCandidate(Number.isInteger(tabId) ? tabId : null, openTabs);
   const candidate = resolved.candidate;
-  if (!candidate) throw new Error('Open Whop in Firefox Nightly, then open an individual Better Content guide. The extension cannot read the separate native Whop app.');
+  if (!candidate) throw new Error('Whop is open in Firefox, but the Better Content frame still did not register. Keep the guide visible and reopen the extension.');
   const sourceTabId = candidate.tabId;
   const response = await chrome.tabs.sendMessage(sourceTabId, { type: 'sniperplug:capture-now' }, { frameId: candidate.frameId });
   if (!response?.ok) throw new Error(response?.error || 'The Better Content frame could not be captured.');
@@ -163,7 +206,8 @@ async function captureCurrent(tabId) {
 }
 
 async function setAutoCapture(tabId, enabled) {
-  const resolved = await bestCandidateAcrossTabs(Number.isInteger(tabId) ? tabId : null);
+  const openTabs = await whopTabs();
+  const resolved = await resolveCandidate(Number.isInteger(tabId) ? tabId : null, openTabs);
   const sourceTabId = resolved.candidate?.tabId ?? tabId;
   if (!Number.isInteger(sourceTabId)) throw new Error('Open a Better Content guide in Firefox Nightly before enabling auto-capture.');
 
@@ -265,11 +309,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message?.type === 'sniperplug:popup-state') {
       const preferredTabId = Number(message.tabId);
-      const [{ candidate, usingRecentTab }, openWhopTabs, autoTabs] = await Promise.all([
-        bestCandidateAcrossTabs(Number.isInteger(preferredTabId) ? preferredTabId : null),
+      const [openWhopTabs, autoTabs] = await Promise.all([
         whopTabs(),
         readState(AUTO_KEY, {}),
       ]);
+      const { candidate, usingRecentTab } = await resolveCandidate(
+        Number.isInteger(preferredTabId) ? preferredTabId : null,
+        openWhopTabs,
+      );
       const targetTabId = candidate?.tabId ?? (Number.isInteger(preferredTabId) ? preferredTabId : null);
       const queue = Number.isInteger(targetTabId) ? await queueForTab(targetTabId) : [];
       const candidates = Number.isInteger(targetTabId) ? await candidatesForTab(targetTabId) : [];
