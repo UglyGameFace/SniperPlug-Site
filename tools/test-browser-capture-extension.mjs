@@ -24,6 +24,10 @@ assert.ok(!manifest.permissions.includes('cookies'), 'The capture extension must
 assert.ok(!JSON.stringify(manifest).includes('<all_urls>'), 'The extension must not gain blanket access to every site.');
 assert.ok(manifest.host_permissions.includes('https://*.apps.whop.com/*'), 'Whop-hosted app frames are not covered.');
 assert.ok(manifest.host_permissions.includes('https://sniperplug.com/*'), 'The same-origin SniperPlug relay is not covered.');
+assert.deepEqual(manifest.background?.scripts, ['background.js'], 'Firefox Android background-page fallback is missing.');
+assert.equal(manifest.background?.service_worker, 'background.js', 'Chromium service-worker background is missing.');
+assert.equal(manifest.browser_specific_settings?.gecko?.id, 'sniperplug-better-content@sniperplug.com', 'Firefox package ID is missing or unstable.');
+assert.ok(manifest.browser_specific_settings?.gecko_android, 'Firefox Android compatibility metadata is missing.');
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(captureScript), 'The Whop content script reads browser credentials or persistent site storage.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
@@ -72,6 +76,7 @@ await assert.rejects(
 
 console.log('\nBETTER CONTENT BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension reads rendered DOM only and requests no cookie or blanket-host permission.');
+console.log('✓ One MV3 package supports Chromium service workers plus Firefox Android background scripts.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
 console.log('✓ Captures are private drafts, manual-review only, with previously reviewed/published/removed work protected.');
