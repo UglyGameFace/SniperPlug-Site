@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { membershipCompanies, membershipGrantsAccess } from '../functions/_lib/discovery.js';
+import { discoveryScopeQueries, membershipCompanies, membershipGrantsAccess } from '../functions/_lib/discovery.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
@@ -20,9 +20,9 @@ assert.ok(discovery.includes("'forums'"), 'Forum compatibility discovery endpoin
 assert.ok(discovery.includes("'experiences'"), 'Experience discovery endpoint is missing.');
 assert.ok(discovery.includes('membershipProducts.length') && discovery.includes("[{ id: null, title: 'company-wide access' }]"), 'Company-wide discovery is not restricted to memberships without product scope.');
 assert.ok(!discovery.includes("const scopes = [\n    { id: null, title: 'company-wide access' },\n    ...membershipProducts"), 'Every customer membership still pays for an unnecessary company-wide discovery sweep.');
-assert.ok(discovery.includes('product_id: product.id'), 'Product-specific experience lookup is missing.');
-assert.ok(discovery.includes("output.experiences = await allPages(session, 'experiences'"), 'Experiences are not the primary module inventory.');
-assert.ok(discovery.includes('if (!output.experiences.length)') && discovery.includes("output.forums = await allPages(session, 'forums'"), 'Forum enumeration is not constrained to compatibility fallback when experience inventory is empty.');
+assert.ok(discovery.includes('discoveryScopeQueries(company.id, product.id)'), 'Discovery does not route each endpoint through its explicit query contract.');
+assert.ok(discovery.includes("output.experiences = await allPages(session, 'experiences', queries.experiences"), 'Experiences are not the primary module inventory.');
+assert.ok(discovery.includes('if (!output.experiences.length)') && discovery.includes("output.forums = await allPages(session, 'forums', queries.forums"), 'Forum enumeration is not constrained to compatibility fallback when experience inventory is empty.');
 assert.ok(discovery.includes('discovered.set(experience.id, experience)'), 'Product-scoped and fallback results are not deduplicated by exact experience ID.');
 assert.ok(endpoint.includes('const memberships = await loadWhopMemberships(session)'), 'The discovery endpoint does not load one authoritative membership snapshot.');
 assert.ok(endpoint.includes('discoverWhopSources(session, context.env, memberships)'), 'Discovery does not reuse the endpoint membership snapshot.');
@@ -71,6 +71,21 @@ assert.ok(styles.includes('.state-pill[data-state="checking"]') && styles.includ
 assert.ok(client.includes('groupSelectionCount') && client.includes('updateGroupSelectionCards'), 'Select group has no immediate local confirmation.');
 assert.ok(styles.includes('@media(max-width:620px)'), 'Mobile source-browser layout is missing.');
 
+const productScopedQueries = discoveryScopeQueries('biz_hidden', 'prod_hidden');
+assert.deepEqual(productScopedQueries.experiences, {
+  account_id: 'biz_hidden',
+  product_id: 'prod_hidden',
+}, 'Whop Experiences must use the current account_id contract or app-specific modules can disappear behind the forum fallback.');
+assert.deepEqual(productScopedQueries.forums, {
+  company_id: 'biz_hidden',
+  product_id: 'prod_hidden',
+}, 'Whop Forums must retain the company_id contract.');
+assert.equal(Object.hasOwn(productScopedQueries.experiences, 'company_id'), false, 'The legacy company_id parameter leaked back into the Experiences request.');
+assert.equal(Object.hasOwn(productScopedQueries.forums, 'account_id'), false, 'The Experiences account_id parameter leaked into the Forums request.');
+const companyWideQueries = discoveryScopeQueries('biz_hidden');
+assert.deepEqual(companyWideQueries.experiences, { account_id: 'biz_hidden' }, 'Company-wide Experiences use the wrong account parameter.');
+assert.deepEqual(companyWideQueries.forums, { company_id: 'biz_hidden' }, 'Company-wide Forums use the wrong company parameter.');
+
 for (const status of ['active', 'trialing', 'canceling', 'past_due', 'completed']) {
   assert.equal(membershipGrantsAccess({ status }), true, `${status} must remain discoverable because it can grant access.`);
 }
@@ -110,6 +125,7 @@ assert.ok(!companies.some((company) => ['biz_completed_left', 'biz_left', 'biz_e
 console.log('\nWHOP MULTI-CONTENT DISCOVERY AUDIT PASSED\n');
 console.log('✓ One membership snapshot drives both discovery and live access verification.');
 console.log('✓ Product-scoped memberships avoid an unrelated company-wide source sweep.');
+console.log('✓ Experiences use account_id while Forums retain company_id, matching their current Whop API contracts.');
 console.log('✓ Experiences are the primary module inventory; forum enumeration is a bounded compatibility fallback.');
 console.log('✓ Forum, Course, and Chat sources are classified with their exact permission requirements.');
 console.log('✓ External app modules remain visible with a separate-integration explanation.');
