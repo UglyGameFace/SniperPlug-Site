@@ -10,7 +10,7 @@ const REQUIRED_CONTROL_CONFIGURATION = [
 ];
 
 const CONTROL_CENTER_RUNTIME_SCRIPTS = Object.freeze([
-  '/assets/js/control-center-source-access.js?v=20260731.1',
+  '/assets/js/control-center-source-access.js?v=20260904.1',
   '/assets/js/control-center-whop-flash.js?v=20260811.1',
 ]);
 
