@@ -197,6 +197,17 @@ async function allPages(session, path, query, maxItems, label) {
   throw new HttpError(502, 'Whop pagination exceeded the safe page limit.');
 }
 
+export async function loadWhopMemberships(session) {
+  try {
+    return await allPages(session, 'memberships', {}, MAX_MEMBERSHIPS, 'memberships');
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 403) {
+      throw new HttpError(403, 'Reconnect Whop after enabling member:basic:read and member:email:read so joined groups can be discovered automatically.');
+    }
+    throw error;
+  }
+}
+
 async function mapConcurrent(values, mapper, concurrency = CONCURRENCY) {
   const output = new Array(values.length);
   let cursor = 0;
@@ -275,10 +286,10 @@ function discoveryFailure(label, error) {
 
 async function discoverCompanyListings(session, company) {
   const membershipProducts = [...company.products].map(([id, title]) => ({ id, title }));
-  const scopes = [
-    { id: null, title: 'company-wide access' },
-    ...membershipProducts,
-  ];
+  const scopes = membershipProducts.length
+    ? membershipProducts
+    : [{ id: null, title: 'company-wide access' }];
+
   const attempts = await mapConcurrent(scopes, async (product) => {
     const query = {
       company_id: company.id,
@@ -286,14 +297,20 @@ async function discoverCompanyListings(session, company) {
     };
     const output = { product, forums: [], experiences: [], failures: [] };
     try {
-      output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_SCOPE, `${product.title} forums`);
-    } catch (error) {
-      output.failures.push(discoveryFailure(`${product.title} forum lookup`, error));
-    }
-    try {
       output.experiences = await allPages(session, 'experiences', query, MAX_ITEMS_PER_SCOPE, `${product.title} experiences`);
     } catch (error) {
       output.failures.push(discoveryFailure(`${product.title} experience lookup`, error));
+    }
+
+    // Experiences are the canonical module inventory. The forum collection is a
+    // compatibility fallback only when that inventory returns nothing, which
+    // avoids doubling every normal product-scoped request.
+    if (!output.experiences.length) {
+      try {
+        output.forums = await allPages(session, 'forums', query, MAX_ITEMS_PER_SCOPE, `${product.title} forums`);
+      } catch (error) {
+        output.failures.push(discoveryFailure(`${product.title} forum lookup`, error));
+      }
     }
     return output;
   }, Math.min(3, CONCURRENCY));
@@ -302,12 +319,12 @@ async function discoverCompanyListings(session, company) {
   const failures = new Set();
   for (const attempt of attempts) {
     for (const failure of attempt.failures) failures.add(failure);
-    for (const forum of attempt.forums) {
-      const experience = listedExperience(forum, company, 'Forums');
-      if (experience) discovered.set(experience.id, experience);
-    }
     for (const raw of attempt.experiences) {
       const experience = listedExperience(raw, company);
+      if (experience) discovered.set(experience.id, experience);
+    }
+    for (const forum of attempt.forums) {
+      const experience = listedExperience(forum, company, 'Forums');
       if (experience) discovered.set(experience.id, experience);
     }
   }
@@ -357,7 +374,7 @@ async function capability(session, experience, grantedScopes, cache, budget, wri
       const now = new Date();
       try {
         sourceType = await resolveWhopExperienceType(session, experience);
-        detectedBy = sourceType === 'unsupported' ? 'official-endpoint-probe' : 'official-endpoint-probe';
+        detectedBy = 'official-endpoint-probe';
         if (sourceType === 'unsupported') app = await inspectWhopApp(session, experience);
         writes.push({
           experienceId: experience.id,
@@ -459,16 +476,10 @@ async function classifyCompanySources(session, env, listing, grantedScopes, capa
   return { company: listing.company, sources, externalApps, failures: [...failures], error };
 }
 
-export async function discoverWhopSources(session, env) {
-  let memberships;
-  try {
-    memberships = await allPages(session, 'memberships', {}, MAX_MEMBERSHIPS, 'memberships');
-  } catch (error) {
-    if (error instanceof HttpError && error.status === 403) {
-      throw new HttpError(403, 'Reconnect Whop after enabling member:basic:read and member:email:read so joined groups can be discovered automatically.');
-    }
-    throw error;
-  }
+export async function discoverWhopSources(session, env, membershipSnapshot = null) {
+  const memberships = Array.isArray(membershipSnapshot)
+    ? membershipSnapshot
+    : await loadWhopMemberships(session);
 
   const grantedScopes = scopeSet(session);
   const activeMemberships = memberships.filter(membershipGrantsAccess);
