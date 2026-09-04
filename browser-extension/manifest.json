@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "SniperPlug Better Content Capture",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Capture Better Content pages you are already authorized to view in Whop and send the rendered guide content to SniperPlug for private review.",
   "permissions": ["storage", "tabs"],
   "host_permissions": [
-    "https://*.apps.whop.com/*",
+    "https://whop.com/*",
     "https://*.whop.com/*",
+    "https://*.apps.whop.com/*",
     "https://sniperplug.com/*"
   ],
   "background": {
@@ -19,7 +20,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.apps.whop.com/*", "https://*.whop.com/*"],
+      "matches": ["https://whop.com/*", "https://*.whop.com/*", "https://*.apps.whop.com/*"],
       "js": ["content-capture.js"],
       "all_frames": true,
       "run_at": "document_idle"
