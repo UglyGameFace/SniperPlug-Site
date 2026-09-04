@@ -1,0 +1,12 @@
+.browser-capture-helper{margin-top:1rem}
+.browser-capture-copy{display:grid;gap:.85rem;padding-top:.85rem}
+.browser-capture-copy>p{margin:0;color:var(--muted,#aab3c2);line-height:1.55}
+.browser-capture-token{display:grid;gap:.65rem;padding:.85rem;border:1px solid rgba(94,234,160,.25);border-radius:14px;background:rgba(12,35,26,.5)}
+.browser-capture-token>strong{color:#bfffd9}
+.browser-capture-token code{display:block;max-width:100%;padding:.75rem;border-radius:10px;background:#08111e;color:#eaf4ff;overflow-wrap:anywhere;word-break:break-all;user-select:all}
+.browser-capture-token small{color:var(--muted,#aab3c2)}
+.browser-capture-copy [data-capture-status][data-type="error"]{color:#ffb6c2}
+@media(max-width:620px){
+  .browser-capture-copy .button-row{align-items:stretch}
+  .browser-capture-copy .button-row>*{width:100%;text-align:center}
+}
