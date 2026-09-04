@@ -18,7 +18,7 @@ export async function onRequest(context) {
         token: session.token,
         expiresAt: session.expiresAt,
         maxUses: session.maxUses,
-        helperUrl: '/tools/sniperplug-authorized-capture.user.js',
+        helperUrl: '/sniperplug-capture.user.js',
       },
     });
   } catch (error) {
