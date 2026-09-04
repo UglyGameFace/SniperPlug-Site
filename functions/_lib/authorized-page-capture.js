@@ -100,6 +100,8 @@ export async function createAuthorizedCaptureSession(env, admin, { rightsConfirm
   if (rightsConfirmed !== true) {
     throw new HttpError(422, 'Confirm that you own this content or have explicit permission to store and republish it before creating a browser-capture token.');
   }
+  const ownerId = String(admin?.sid || '').trim();
+  if (!ownerId) throw new HttpError(401, 'Unlock the SniperPlug Control Center before creating a browser-capture token.');
   const db = await ensureCaptureSchema(env);
   const now = new Date();
   const token = `cap_${randomToken(24)}`;
@@ -112,7 +114,7 @@ export async function createAuthorizedCaptureSession(env, admin, { rightsConfirm
       token_hash, admin_session_id, allowed_origins_json, rights_confirmed,
       use_count, max_uses, expires_at, created_at, last_used_at
     ) VALUES (?, ?, ?, 1, 0, ?, ?, ?, NULL)
-  `).bind(tokenHash, String(admin?.sid || ''), JSON.stringify(allowedOrigins), CAPTURE_MAX_USES, expiresAt, now.toISOString()).run();
+  `).bind(tokenHash, ownerId, JSON.stringify(allowedOrigins), CAPTURE_MAX_USES, expiresAt, now.toISOString()).run();
   return {
     token,
     expiresAt,
@@ -247,6 +249,7 @@ export async function saveAuthorizedCapturedPage(request, env, input) {
   const slug = existing?.slug || `${slugBase.slice(0, 62)}-${(await sha256(sourcePostId)).slice(0, 12)}`;
   const now = new Date().toISOString();
   const expectedUpdatedAt = existing?.updated_at == null ? null : String(existing.updated_at);
+  const description = excerpt(prepared.body) || `Captured from ${capture.appName} for private review.`;
   const sourceMeta = {
     type: 'browser-capture',
     captureMode: 'rendered-dom',
@@ -282,31 +285,6 @@ export async function saveAuthorizedCapturedPage(request, env, input) {
     manualReviewCompleted: false,
   };
 
-  const write = await session.db.prepare(`
-    INSERT INTO guides (
-      slug, title, description, category_slug, body_markdown, status, featured, sort_order,
-      source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
-      attachment_json, integrity_json, author_json, source_created_at, source_updated_at,
-      imported_at, updated_at, published_at
-    ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 999, NULL, ?, ?, ?, ?, ?, ?, '{}', NULL, ?, ?, ?, NULL)
-    ON CONFLICT(id) DO NOTHING
-  `).bind(
-    slug,
-    capture.title,
-    excerpt(prepared.body) || `Captured from ${capture.appName} for private review.`,
-    category,
-    prepared.body,
-    CAPTURE_SOURCE_GROUP,
-    capture.experienceId,
-    sourcePostId,
-    sourceFingerprint,
-    JSON.stringify(attachment),
-    JSON.stringify(storedIntegrity),
-    now,
-    existing?.imported_at || now,
-    now,
-  ).run();
-
   let guide;
   if (existing) {
     const update = await session.db.prepare(`
@@ -317,7 +295,7 @@ export async function saveAuthorizedCapturedPage(request, env, input) {
       WHERE id = ? AND updated_at IS ?
     `).bind(
       capture.title,
-      excerpt(prepared.body) || `Captured from ${capture.appName} for private review.`,
+      description,
       category,
       prepared.body,
       CAPTURE_SOURCE_GROUP,
@@ -334,7 +312,30 @@ export async function saveAuthorizedCapturedPage(request, env, input) {
     if (Number(update.meta?.changes || 0) !== 1) throw new HttpError(409, 'This captured guide changed while SniperPlug was preparing the update. Refresh the Control Center before capturing it again.');
     guide = await session.db.prepare('SELECT * FROM guides WHERE id = ?').bind(Number(existing.id)).first();
   } else {
-    if (Number(write.meta?.changes || 0) !== 1) throw new HttpError(409, 'SniperPlug could not create the captured guide draft.');
+    const insert = await session.db.prepare(`
+      INSERT INTO guides (
+        slug, title, description, category_slug, body_markdown, status, featured, sort_order,
+        source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
+        attachment_json, integrity_json, author_json, source_created_at, source_updated_at,
+        imported_at, updated_at, published_at
+      ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 999, NULL, ?, ?, ?, ?, ?, ?, '{}', NULL, ?, ?, ?, NULL)
+    `).bind(
+      slug,
+      capture.title,
+      description,
+      category,
+      prepared.body,
+      CAPTURE_SOURCE_GROUP,
+      capture.experienceId,
+      sourcePostId,
+      sourceFingerprint,
+      JSON.stringify(attachment),
+      JSON.stringify(storedIntegrity),
+      now,
+      now,
+      now,
+    ).run();
+    if (Number(insert.meta?.changes || 0) !== 1) throw new HttpError(409, 'SniperPlug could not create the captured guide draft.');
     guide = await session.db.prepare(`
       SELECT * FROM guides
       WHERE source_key IS NULL AND source_group = ? AND source_post_id = ?
