@@ -1,10 +1,10 @@
+import { membershipGrantsAccess } from './discovery.js';
 import { HttpError } from './http.js';
 import { whopApi } from './whop.js';
 
 const PAGE_SIZE = 50;
 const MAX_PAGES = 100;
 const MAX_MEMBERSHIPS = 1000;
-const ACCESS_STATUSES = new Set(['active', 'trialing', 'past_due', 'completed', 'canceling']);
 
 function exactId(value, prefix) {
   const id = String(value || '').trim();
@@ -30,82 +30,44 @@ async function allMemberships(session) {
   throw new HttpError(502, 'Whop membership verification exceeded the safe page limit.');
 }
 
-function membershipLooksCurrent(membership) {
-  const status = String(membership?.status || '').trim().toLowerCase();
-  if (!ACCESS_STATUSES.has(status)) return false;
-  if (membership?.joined_at === null) return false;
-  const memberStatus = String(membership?.member?.status || '').trim().toLowerCase();
-  const accessLevel = String(membership?.member?.access_level || '').trim().toLowerCase();
-  if (memberStatus === 'left' || accessLevel === 'no_access') return false;
-  return true;
-}
-
-async function retrieveMemberTruth(session, memberId) {
-  try {
-    const payload = await whopApi(session, `members/${encodeURIComponent(memberId)}`);
-    const member = payload?.data || payload;
-    const status = String(member?.status || '').trim().toLowerCase();
-    const accessLevel = String(member?.access_level || '').trim().toLowerCase();
-    return {
-      verified: true,
-      grantsAccess: status === 'joined' && ['customer', 'admin'].includes(accessLevel),
-      status,
-      accessLevel,
-      companyId: exactId(member?.company?.id, 'biz_'),
-      userId: exactId(member?.user?.id, 'user_'),
-    };
-  } catch (error) {
-    if (error instanceof HttpError && [403, 404].includes(error.status)) {
-      return { verified: true, grantsAccess: false, status: 'unavailable', accessLevel: 'no_access', companyId: '', userId: '' };
-    }
-    throw error;
-  }
-}
-
-async function mapLimited(values, mapper, concurrency = 5) {
-  const output = new Array(values.length);
-  let cursor = 0;
-  async function worker() {
-    while (cursor < values.length) {
-      const index = cursor;
-      cursor += 1;
-      output[index] = await mapper(values[index], index);
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, values.length)) }, () => worker()));
-  return output;
+function membershipAccessSummary(membership) {
+  return {
+    membershipId: exactId(membership?.id, 'mem_'),
+    memberId: exactId(membership?.member?.id, 'mber_'),
+    productId: exactId(membership?.product?.id, 'prod_'),
+    status: String(membership?.status || '').trim().toLowerCase(),
+    cancelationStatus: String(membership?.cancelation_status || membership?.cancellation_status || '').trim().toLowerCase() || null,
+  };
 }
 
 export async function enforceLiveWhopAccess(session, discovery) {
   const memberships = await allMemberships(session);
-  const candidateMemberships = memberships.filter(membershipLooksCurrent);
+  const currentMemberships = memberships.filter(membershipGrantsAccess);
   const byCompany = new Map();
-  for (const membership of candidateMemberships) {
+
+  for (const membership of currentMemberships) {
     const companyId = exactId(membership?.company?.id, 'biz_');
-    const memberId = exactId(membership?.member?.id, 'mber_');
-    if (!companyId || !memberId) continue;
-    const current = byCompany.get(companyId) || new Set();
-    current.add(memberId);
-    byCompany.set(companyId, current);
+    if (!companyId) continue;
+    const entries = byCompany.get(companyId) || [];
+    entries.push(membershipAccessSummary(membership));
+    byCompany.set(companyId, entries);
   }
 
-  const requestedCompanyIds = [...new Set((discovery?.groups || []).map((group) => exactId(group?.company?.id, 'biz_')).filter(Boolean))];
-  const memberIds = [...new Set(requestedCompanyIds.flatMap((companyId) => [...(byCompany.get(companyId) || [])]))];
-  const memberTruth = await mapLimited(memberIds, async (memberId) => [memberId, await retrieveMemberTruth(session, memberId)]);
-  const truthByMember = new Map(memberTruth);
+  const requestedCompanyIds = [...new Set((discovery?.groups || [])
+    .map((group) => exactId(group?.company?.id, 'biz_'))
+    .filter(Boolean))];
 
   const allowedCompanies = new Set();
   const accessChecks = [];
   for (const companyId of requestedCompanyIds) {
-    const ids = [...(byCompany.get(companyId) || [])];
-    const checks = ids.map((id) => truthByMember.get(id)).filter(Boolean);
-    const granted = checks.some((check) => check.grantsAccess && (!check.companyId || check.companyId === companyId));
+    const entries = byCompany.get(companyId) || [];
+    const granted = entries.length > 0;
     if (granted) allowedCompanies.add(companyId);
     accessChecks.push({
       companyId,
       granted,
-      memberIds: ids,
-      results: checks.map((check) => ({ status: check.status, accessLevel: check.accessLevel })),
+      verifiedBy: 'membership-list',
+      memberships: entries,
     });
   }
 
@@ -128,6 +90,7 @@ export async function enforceLiveWhopAccess(session, discovery) {
       email: session?.profile?.email || null,
     },
     accessVerifiedAt: new Date().toISOString(),
+    accessVerification: 'membership-list',
     accessChecks,
     counts: {
       ...(discovery?.counts || {}),
