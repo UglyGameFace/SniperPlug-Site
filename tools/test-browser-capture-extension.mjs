@@ -12,6 +12,7 @@ import {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const manifest = JSON.parse(read('browser-extension/manifest.json'));
+const frameUrlCompat = read('browser-extension/frame-url-compat.js');
 const captureScript = read('browser-extension/content-capture.js');
 const background = read('browser-extension/background.js');
 const popup = read('browser-extension/popup.js');
@@ -30,6 +31,12 @@ assert.deepEqual(manifest.background?.scripts, ['background.js'], 'Firefox Andro
 assert.equal(manifest.background?.service_worker, 'background.js', 'Chromium service-worker background is missing.');
 assert.equal(manifest.browser_specific_settings?.gecko?.id, 'sniperplug-better-content@sniperplug.com', 'Firefox package ID is missing or unstable.');
 assert.ok(manifest.browser_specific_settings?.gecko_android, 'Firefox Android compatibility metadata is missing.');
+assert.equal(manifest.content_scripts?.[0]?.js?.[0], 'frame-url-compat.js', 'Firefox app-frame URL compatibility must load before the capture script.');
+assert.equal(manifest.content_scripts?.[0]?.js?.[1], 'content-capture.js', 'Rendered DOM capture script is no longer loaded after the URL compatibility shim.');
+assert.ok(frameUrlCompat.includes("location.protocol !== 'https:'") && frameUrlCompat.includes('isWhopHost(location.hostname)'), 'Firefox URL fallback is not restricted to an HTTPS Whop frame.');
+assert.ok(frameUrlCompat.includes('return `https://${location.host}${safePath}`'), 'Firefox URL fallback does not reduce the current app frame to a safe origin/path URL.');
+assert.ok(frameUrlCompat.includes('raw !== current') && frameUrlCompat.includes('new NativeURL(input, base)'), 'The compatibility shim can rewrite unrelated links instead of only the current app-frame URL.');
+assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage|\bfetch\s*\(/.test(frameUrlCompat), 'Firefox URL compatibility code reads credentials, browser storage, or network data.');
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(captureScript), 'The Whop content script reads browser credentials or persistent site storage.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
@@ -83,6 +90,7 @@ await assert.rejects(
 console.log('\nBETTER CONTENT BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension reads rendered DOM only and requests no cookie or blanket-host permission.');
 console.log('✓ One MV3 package supports Chromium service workers plus Firefox Android background scripts.');
+console.log('✓ Firefox Android current app-frame URLs have a bounded HTTPS Whop origin/path fallback.');
 console.log('✓ Firefox Android can discover the latest Better Content tab and link the Whop shell exp_ ID to its app iframe.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
