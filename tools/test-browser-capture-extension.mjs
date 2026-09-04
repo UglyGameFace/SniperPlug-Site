@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runInNewContext } from 'node:vm';
 import {
   authorizeBrowserCaptureExperience,
   BETTER_CONTENT_APP_ID,
@@ -13,7 +12,6 @@ import {
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 const manifest = JSON.parse(read('browser-extension/manifest.json'));
-const frameUrlCompat = read('browser-extension/frame-url-compat.js');
 const captureScript = read('browser-extension/content-capture.js');
 const background = read('browser-extension/background.js');
 const popup = read('browser-extension/popup.js');
@@ -23,7 +21,7 @@ const endpoint = read('functions/api/browser-capture.js');
 const service = read('functions/_lib/browser-capture.js');
 
 assert.equal(BETTER_CONTENT_APP_ID, 'app_zv9yxan92U9fNy', 'The capture bridge must stay pinned to the exact Better Content app ID.');
-assert.deepEqual(manifest.permissions.sort(), ['storage', 'tabs'], 'The extension gained an unexpected privileged browser permission.');
+assert.deepEqual(manifest.permissions.sort(), ['scripting', 'storage', 'tabs'], 'The Firefox live-recovery permissions changed unexpectedly.');
 assert.ok(!manifest.permissions.includes('cookies'), 'The capture extension must never request cookie access.');
 assert.ok(!JSON.stringify(manifest).includes('<all_urls>'), 'The extension must not gain blanket access to every site.');
 assert.ok(manifest.host_permissions.includes('https://*.apps.whop.com/*'), 'Whop-hosted app frames are not covered.');
@@ -32,54 +30,26 @@ assert.deepEqual(manifest.background?.scripts, ['background.js'], 'Firefox Andro
 assert.equal(manifest.background?.service_worker, 'background.js', 'Chromium service-worker background is missing.');
 assert.equal(manifest.browser_specific_settings?.gecko?.id, 'sniperplug-better-content@sniperplug.com', 'Firefox package ID is missing or unstable.');
 assert.ok(manifest.browser_specific_settings?.gecko_android, 'Firefox Android compatibility metadata is missing.');
-assert.equal(manifest.content_scripts?.[0]?.js?.[0], 'frame-url-compat.js', 'Firefox app-frame URL compatibility must load before the capture script.');
-assert.equal(manifest.content_scripts?.[0]?.js?.[1], 'content-capture.js', 'Rendered DOM capture script is no longer loaded after the URL compatibility shim.');
-assert.ok(frameUrlCompat.includes("location.protocol !== 'https:'") && frameUrlCompat.includes('isWhopHost(location.hostname)'), 'Firefox URL fallback is not restricted to an HTTPS Whop frame.');
-assert.ok(frameUrlCompat.includes('return `https://${location.host}${safePath}`'), 'Firefox URL fallback does not reduce the current app frame to a safe origin/path URL.');
-assert.ok(frameUrlCompat.includes('raw !== current') && frameUrlCompat.includes('new NativeURL(input, base)'), 'The compatibility shim can rewrite unrelated links instead of only the current app-frame URL.');
-assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage|\bfetch\s*\(/.test(frameUrlCompat), 'Firefox URL compatibility code reads credentials, browser storage, or network data.');
-
-const firefoxFrameHref = 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit?token=ephemeral&state=temporary#member';
-const compatContext = {
-  URL,
-  location: {
-    href: firefoxFrameHref,
-    protocol: 'https:',
-    hostname: 'mfk8y74zmein6tne8o5e.apps.whop.com',
-    host: 'mfk8y74zmein6tne8o5e.apps.whop.com',
-    pathname: '/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit',
-  },
-};
-compatContext.globalThis = compatContext;
-runInNewContext(frameUrlCompat, compatContext);
-const safeCurrentFrame = new compatContext.URL(firefoxFrameHref, firefoxFrameHref).toString();
-assert.equal(
-  safeCurrentFrame,
-  'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/iphone-profit',
-  'Firefox current-frame fallback did not remove unstable/sensitive query and hash data while preserving the HTTPS Whop route.',
-);
-const unrelatedUrl = new compatContext.URL('https://cdn.example.com/image.png?width=1200', firefoxFrameHref).toString();
-assert.equal(unrelatedUrl, 'https://cdn.example.com/image.png?width=1200', 'Firefox URL compatibility modified an unrelated URL.');
-const nonWhopContext = {
-  URL,
-  location: {
-    href: 'https://example.com/private?page=1',
-    protocol: 'https:',
-    hostname: 'example.com',
-    host: 'example.com',
-    pathname: '/private',
-  },
-};
-nonWhopContext.globalThis = nonWhopContext;
-runInNewContext(frameUrlCompat, nonWhopContext);
-assert.equal(new nonWhopContext.URL(nonWhopContext.location.href).toString(), 'https://example.com/private?page=1', 'Firefox fallback rewrote a non-Whop current page.');
+assert.deepEqual(manifest.content_scripts?.[0]?.js, ['content-capture.js'], 'Whop capture should load directly without a global URL monkeypatch.');
+assert.equal(manifest.content_scripts?.[0]?.all_frames, true, 'Better Content iframe capture no longer covers all matching frames.');
+assert.equal(manifest.content_scripts?.[0]?.match_about_blank, true, 'Whop-owned blank/srcdoc frames are no longer eligible for capture injection.');
+assert.equal(manifest.content_scripts?.[0]?.match_origin_as_fallback, true, 'Whop-origin fallback frames are no longer eligible for capture injection.');
+assert.ok(!existsSync(join(root, 'browser-extension/frame-url-compat.js')), 'The obsolete global URL compatibility monkeypatch still exists.');
 
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(captureScript), 'The Whop content script reads browser credentials or persistent site storage.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
+assert.ok(captureScript.includes('function safeCurrentFrameUrl') && captureScript.includes("location.protocol !== 'https:'"), 'Firefox current-frame HTTPS fallback moved outside the extractor or lost its scheme check.');
+assert.ok(captureScript.includes('isWhopHost(location.hostname)') && captureScript.includes('return currentFrameFallback'), 'Firefox current-frame fallback is not restricted to Whop or is not used when URL parsing fails.');
+assert.ok(captureScript.includes('__sniperplugBetterContentCapture') && captureScript.includes('registerCandidate'), 'Dynamic reinjection can create duplicate capture observers instead of reprobeing the existing frame.');
+assert.ok(!captureScript.includes('Object.defineProperty(globalThis, \'URL\'') && !captureScript.includes('SniperPlugURL'), 'The global URL constructor is being monkeypatched again.');
+
 assert.ok(background.includes('MAX_QUEUE = 25') && background.includes('sniperplug:auto-capture'), 'Bounded multi-page capture queue is missing.');
 assert.ok(background.includes('bestCandidateAcrossTabs') && background.includes('WHOP_TAB_PATTERNS'), 'Mobile capture still depends only on the tab where the extension popup was opened.');
 assert.ok(background.includes('linkExperienceAcrossFrames') && background.includes('EXPERIENCE_LINK_WINDOW_MS'), 'Whop shell experience IDs are not linked to Better Content iframe candidates.');
+assert.ok(background.includes('chrome.scripting.executeScript') && background.includes('allFrames: true'), 'Firefox cannot actively inject the capture script into an already-open Whop tab.');
+assert.ok(background.includes("files: ['content-capture.js']") && background.includes('recoverCandidateAcrossWhopTabs'), 'Live Whop recovery does not inject the same audited DOM-only content script.');
+assert.ok(background.includes('resolveCandidate(') && background.includes("message?.type === 'sniperplug:popup-state'"), 'Opening the extension does not invoke live candidate recovery.');
 assert.ok(background.includes("message?.type === 'sniperplug:open-whop'") && popup.includes("type: 'sniperplug:open-whop'"), 'Mobile UI cannot open/focus Whop inside Firefox when no browser tab is available.');
 assert.ok(popupHtml.includes('id="openWhop"') && popup.includes('native Whop app is separate from Firefox'), 'The mobile popup does not clearly distinguish Firefox-rendered Whop from the native Whop app.');
 assert.ok(relay.includes("fetch('/api/browser-capture'") && relay.includes("credentials: 'same-origin'"), 'Captured content is not handed off through the signed-in SniperPlug page.');
@@ -126,8 +96,9 @@ await assert.rejects(
 
 console.log('\nBETTER CONTENT BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension reads rendered DOM only and requests no cookie or blanket-host permission.');
-console.log('✓ One MV3 package supports Chromium service workers plus Firefox Android background scripts.');
-console.log('✓ Firefox Android current app-frame URLs have an executable bounded HTTPS Whop origin/path fallback.');
+console.log('✓ Firefox can actively inject the audited content script into already-open Whop tabs.');
+console.log('✓ Dynamic reinjection is idempotent and reprobes an existing frame instead of duplicating observers.');
+console.log('✓ Firefox current-frame HTTPS fallback lives inside the extractor and no longer replaces global URL.');
 console.log('✓ Firefox Android can discover the latest Better Content tab and link the Whop shell exp_ ID to its app iframe.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
