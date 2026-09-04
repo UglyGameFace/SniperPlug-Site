@@ -16,7 +16,7 @@ Repair the Whop importer end to end so the owner can connect Whop, keep legitima
 ## Status
 PR #34 is merged and fixed false membership-access denial. PR #35 is merged and the real owner production retest confirmed that the Whop OAuth authorization loop is fixed: the Control Center now reports `Connected & verified` after returning from Whop.
 
-That same production retest exposed the next defect in the same importer task: source discovery stayed on `Finding your active Whop content...` / `Checking current source access...`, while 36 saved approvals from earlier work remained visible. PR #36 (`fix/whop-discovery-loading-truth`) contains the structural discovery/load-state repair. Its first CI run reached the new source-access regression and failed only because the new test fixture marked the old source disapproved while asserting inactive-approval copy; the fixture was corrected. Final-head validation is now required.
+That same production retest exposed the next defect in the same importer task: source discovery stayed on `Finding your active Whop content...` / `Checking current source access...`, while 36 saved approvals from earlier work remained visible. PR #36 (`fix/whop-discovery-loading-truth`) contains the structural discovery/load-state repair. The corrected implementation passed the complete Node 22 suite on Verify SniperPlug #932. This task-record-only commit now requires the exact final-head check before merge.
 
 ## Findings / root cause
 - The owner OAuth connection is now genuinely established in production.
@@ -80,8 +80,11 @@ Approved native source scan path remains:
 - [x] Initial PR #36 discovery architecture audit passed.
 - [x] Initial PR #36 build reached the new source-access regression; failure was isolated to a contradictory test fixture, not implementation behavior.
 - [x] Contradictory test fixture corrected.
-- [ ] Exact final-head complete Node 22 build/audit suite passes.
-- [ ] Exact final-head source-access truth and shared-membership regressions pass.
+- [x] Verify SniperPlug #932 passed the complete Node 22.23.2 build/audit suite on implementation head `5e59a83484dea71da73f4cd072c2cebab5c65726`.
+- [x] Source-access truth regression passed: idle/loading/error/success are distinct, dashboard refresh preserves same-account discovery, and the 25-second stop is enforced by the runtime architecture.
+- [x] Shared-membership access-verifier regression passed and proves no second Whop membership fetch occurs inside access verification.
+- [x] Retired public deal-route verification #53 passed on the same implementation head.
+- [ ] Exact final-head CI passes after this task-record-only update.
 - [ ] PR #36 diff/review/branch inspection is clean.
 - [ ] PR #36 merges and post-merge `main` workflows pass.
 - [ ] Production `Load sources` resolves to a current source list or a bounded explicit error instead of hanging.
