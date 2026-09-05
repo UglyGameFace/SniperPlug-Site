@@ -174,7 +174,7 @@ const example = read('.dev.vars.example');
 
 assert.ok(auth.includes("SUBSCRIBER_PRINCIPAL_PREFIX = 'whop-user:'"));
 assert.ok(auth.includes("kind: 'subscriber'") && auth.includes('v: 5'));
-assert.ok(auth.includes('readAdminSession') && auth.includes("if (session?.kind !== 'owner') return null"), 'Owner-only auth no longer excludes subscriber sessions.');
+assert.ok(auth.includes('readAdminSession') && auth.includes("return session?.kind === 'owner' ? session : null"), 'Owner-only auth no longer excludes subscriber sessions.');
 assert.ok(subscriberAuth.includes('requireControlAccount') && subscriberAuth.includes('verifySubscriberAccountAccess'));
 assert.ok(subscriberAuth.includes('subscriberPrincipalIdForUser(whopUserId) !== account.principalId'), 'Subscriber account access does not rebind Whop identity to the stable principal.');
 assert.ok(subscriberAuth.includes('membershipGrantsAccess(entry)') && subscriberAuth.includes('membershipProductId(entry) === productId'));
