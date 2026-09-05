@@ -7,8 +7,6 @@
   const stateTitle = statePanel?.querySelector('strong');
   const stateCopy = statePanel?.querySelector('span');
   const status = editor.querySelector('[data-editor-status]');
-  const actions = editor.querySelector('.editor-actions');
-  const actionStatus = editor.querySelector('[data-editor-action-status]');
   const saveButton = editor.querySelector('button[type="submit"]');
   const publishButton = editor.querySelector('[data-publish-guide]');
   const rejectButton = editor.querySelector('[data-reject-guide]');
@@ -100,10 +98,5 @@
   editor.addEventListener('input', () => queueMicrotask(sync));
   editor.addEventListener('change', () => queueMicrotask(sync));
   root.addEventListener('sniperplug:guide-loaded', () => queueMicrotask(sync));
-
-  if (actionStatus instanceof HTMLElement) {
-    actionStatus.addEventListener('DOMSubtreeModified', () => {});
-  }
-
   sync();
 })();
