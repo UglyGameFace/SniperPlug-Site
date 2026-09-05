@@ -56,7 +56,7 @@ assert.ok(relay.includes("fetch('/api/browser-capture'") && relay.includes("cred
 assert.ok(!relay.includes('api.whop.com') && !background.includes('api.whop.com'), 'The extension must not impersonate the SniperPlug OAuth client or call Whop APIs directly.');
 assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession') && endpoint.includes('requireSameOrigin'), 'Browser capture endpoint is not protected by owner, Whop, and same-origin checks.');
 assert.ok(endpoint.includes('requireWhopAppFrameCaptures'), 'Server preflight no longer rejects captures outside HTTPS Whop app frames.');
-assert.ok(service.includes('inspectWhopApp') && service.includes('browserCaptureMatchesReader'), 'Server no longer binds rendered captures to the canonical app-reader decision and exact app frame host.');
+assert.ok(service.includes('inspectWhopApp') && service.includes('browserCaptureMatchesReader'), 'Server no longer binds rendered captures to the canonical app-reader decision and Whop app-frame boundary.');
 assert.ok(service.includes("captureMethod: 'extension-dom'") && service.includes("status = 'draft'"), 'Browser capture is not constrained to the private draft path.');
 assert.ok(service.includes('changed-published-held') && service.includes('changed-reviewed-held') && service.includes('removed-held'), 'A later browser capture can still overwrite published, reviewed, or removed work.');
 assert.ok(service.includes('autoPublishEligible: false') && service.includes('manualReviewCompleted: false'), 'Browser-captured content can bypass explicit review before publication.');
@@ -71,7 +71,7 @@ assert.ok(service.includes("decision = 'approved'") && service.includes('sourceT
 const normalized = normalizeBrowserCapture({
   experienceId: 'exp_hidden_123',
   title: 'Make Money Here — Test Guide',
-  pageUrl: 'https://better-content.apps.whop.com/experiences/exp_hidden_123/pages/guide?view=member&token=super-secret&state=oauth-state#section',
+  pageUrl: 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_hidden_123/pages/guide?view=member&token=super-secret&state=oauth-state#section',
   bodyMarkdown: '# Make Money Here\n\nThis is a rendered guide with enough instructional content to pass the browser capture minimum.',
   images: [
     { url: 'https://cdn.example.com/image.png?signature=private-value&width=1200', alt: 'Example image' },
@@ -107,11 +107,12 @@ const allowed = await authorizeBrowserCaptureExperience({}, 'exp_hidden_123', {
   inspectWhopAppFn: async () => betterMetadata,
 });
 assert.equal(allowed.app.id, BETTER_CONTENT_APP_ID);
-assert.equal(allowed._sniperplugAppReader.frameHost, 'better-content.apps.whop.com');
+assert.equal(allowed._sniperplugAppReader.framePolicy, 'whop-app-frame');
+assert.equal(allowed._sniperplugAppReader.metadataFrameHost, 'better-content.apps.whop.com');
 
 const verifiedContentId = 'app_verified_content_123';
 const contentAllowed = await authorizeBrowserCaptureExperience({}, 'exp_content_123', {
-  pageUrl: 'https://content-library.apps.whop.com/experiences/exp_content_123/page/guide_1',
+  pageUrl: 'https://render-instance-42.apps.whop.com/experiences/exp_content_123/page/guide_1',
   retrieveExperienceFn: async () => ({ id: 'exp_content_123', app: { id: verifiedContentId, name: 'Content' } }),
   inspectWhopAppFn: async () => ({
     id: verifiedContentId,
@@ -137,19 +138,19 @@ await assert.rejects(
 
 await assert.rejects(
   () => authorizeBrowserCaptureExperience({}, 'exp_hidden_123', {
-    pageUrl: 'https://another.apps.whop.com/experiences/exp_hidden_123',
+    pageUrl: 'https://example.com/experiences/exp_hidden_123',
     retrieveExperienceFn: async () => ({ id: 'exp_hidden_123', app: { id: BETTER_CONTENT_APP_ID, name: 'Better Content' } }),
     inspectWhopAppFn: async () => betterMetadata,
   }),
-  /frame host does not match/i,
-  'A capture from a different *.apps.whop.com app can be mislabeled as Better Content.',
+  /frame host does not match|rendered frame/i,
+  'A capture outside HTTPS *.apps.whop.com can enter a supported rendered reader.',
 );
 
 console.log('\nAUTHORIZED WHOP APP BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension remains rendered-DOM only and requests no cookie or blanket-host permission.');
 console.log('✓ Firefox preserves and verifies working candidates instead of deleting them during popup recovery.');
-console.log('✓ Server resolves the exact app reader and binds each capture to that app’s Whop frame host.');
-console.log('✓ Exact Better Content remains supported, and verified Content-family apps can use the same safe rendered reader.');
-console.log('✓ Lookalike/unverified apps and cross-app frame captures fail closed.');
+console.log('✓ Server resolves the exact app reader and constrains each capture to Whop’s HTTPS app-frame boundary.');
+console.log('✓ Real instance-specific Better Content hosts remain valid while exact Experience/app identity is reverified separately.');
+console.log('✓ Verified Content-family apps can use the same safe rendered reader; lookalike/unverified apps fail closed.');
 console.log('✓ Captures remain private drafts with reviewed/published/removed work protected.');
 console.log('✓ Sensitive query credentials are removed from stored capture URLs and image metadata.');
