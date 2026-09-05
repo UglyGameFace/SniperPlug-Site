@@ -1,14 +1,18 @@
+import { OWNER_PRINCIPAL_ID } from './auth.js';
 import { rejectionReasonForGuide } from './content-policy.js';
-import { requireDatabase } from './http.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom } from './importer-workspace.js';
 
 const MAX_GUIDES = 4000;
 const UPDATE_BATCH_SIZE = 75;
 const RECONCILE_THROTTLE_MS = 15 * 60_000;
-const MAINTENANCE_KEY = 'imported-guide-reconciliation-v4';
+const MAINTENANCE_PREFIX = 'imported-guide-reconciliation-v5';
 
-let lastRunAt = 0;
-let lastResult = null;
-let inFlight = null;
+const lastRuns = new Map();
+const inFlight = new Map();
+
+function maintenanceKey(principalId) {
+  return `${MAINTENANCE_PREFIX}:${principalId}`;
+}
 
 async function ensureMaintenanceTable(db) {
   await db.prepare(`
@@ -20,17 +24,17 @@ async function ensureMaintenanceTable(db) {
   `).run();
 }
 
-async function savedMaintenance(db) {
+async function savedMaintenance(db, principalId) {
   await ensureMaintenanceTable(db);
   const row = await db.prepare('SELECT completed_at, result_json FROM importer_maintenance WHERE maintenance_key = ?')
-    .bind(MAINTENANCE_KEY).first();
+    .bind(maintenanceKey(principalId)).first();
   if (!row) return null;
   const completedAt = Date.parse(row.completed_at || '');
   if (!Number.isFinite(completedAt)) return null;
   return { completedAt, result: safeJson(row.result_json, null) };
 }
 
-async function saveMaintenance(db, result) {
+async function saveMaintenance(db, principalId, result) {
   const completedAt = new Date().toISOString();
   await db.prepare(`
     INSERT INTO importer_maintenance (maintenance_key, completed_at, result_json)
@@ -38,7 +42,7 @@ async function saveMaintenance(db, result) {
     ON CONFLICT(maintenance_key) DO UPDATE SET
       completed_at = excluded.completed_at,
       result_json = excluded.result_json
-  `).bind(MAINTENANCE_KEY, completedAt, JSON.stringify(result)).run();
+  `).bind(maintenanceKey(principalId), completedAt, JSON.stringify(result)).run();
 }
 
 function safeJson(value, fallback) {
@@ -66,16 +70,16 @@ function chunks(values, size) {
   return output;
 }
 
-async function reconcile(env) {
-  const db = requireDatabase(env);
+async function reconcile(env, principalId) {
+  const db = await ensureImporterWorkspaceSchema(env);
   const rows = await db.prepare(`
     SELECT id, title, body_markdown, status, source_key, source_created_at, imported_at,
            updated_at, attachment_json, integrity_json
     FROM guides
-    WHERE source_key IS NOT NULL AND status IN ('draft', 'published')
+    WHERE principal_id = ? AND source_key IS NOT NULL AND status IN ('draft', 'published')
     ORDER BY CASE status WHEN 'published' THEN 0 ELSE 1 END, updated_at DESC
     LIMIT ${MAX_GUIDES}
-  `).all();
+  `).bind(principalId).all();
   const values = rows.results || [];
   if (!values.length) {
     return { checked: 0, rejected: 0, duplicates: 0, unpublished: 0, draftsRemoved: 0, capped: false, deferred: false };
@@ -130,20 +134,20 @@ async function reconcile(env) {
     statements.push(db.prepare(`
       UPDATE guides
       SET status = 'rejected', published_at = NULL, updated_at = ?, integrity_json = ?
-      WHERE id = ? AND status IN ('draft', 'published')
+      WHERE principal_id = ? AND id = ? AND status IN ('draft', 'published')
     `).bind(now, JSON.stringify({
       ...integrity,
       quarantined: true,
       quarantineReason: reason,
       quarantinedAt: now,
-      cleanupVersion: 4,
-    }), row.id));
+      cleanupVersion: 5,
+    }), principalId, row.id));
     if (row.source_key) {
       statements.push(db.prepare(`
         UPDATE whop_posts
         SET decision = 'disapproved', decision_updated_at = ?
-        WHERE source_key = ? AND decision != 'blocked'
-      `).bind(now, row.source_key));
+        WHERE principal_id = ? AND source_key = ? AND decision != 'blocked'
+      `).bind(now, principalId, row.source_key));
     }
   }
   for (const group of chunks(statements, UPDATE_BATCH_SIZE)) await db.batch(group);
@@ -159,24 +163,25 @@ async function reconcile(env) {
   };
 }
 
-export async function reconcileImportedGuides(env, { force = false } = {}) {
+export async function reconcileImportedGuides(env, principalValue = OWNER_PRINCIPAL_ID, { force = false } = {}) {
+  const principalId = principalIdFrom(principalValue);
   const now = Date.now();
-  if (!force && lastResult && now - lastRunAt < RECONCILE_THROTTLE_MS) return lastResult;
-  if (inFlight) return inFlight;
-  const db = requireDatabase(env);
+  const cached = lastRuns.get(principalId);
+  if (!force && cached?.result && now - cached.completedAt < RECONCILE_THROTTLE_MS) return cached.result;
+  if (inFlight.has(principalId)) return inFlight.get(principalId);
+  const db = await ensureImporterWorkspaceSchema(env);
   if (!force) {
-    const saved = await savedMaintenance(db).catch(() => null);
+    const saved = await savedMaintenance(db, principalId).catch(() => null);
     if (saved?.result && now - saved.completedAt < RECONCILE_THROTTLE_MS) {
-      lastRunAt = saved.completedAt;
-      lastResult = saved.result;
+      lastRuns.set(principalId, saved);
       return saved.result;
     }
   }
-  inFlight = reconcile(env)
+  const promise = reconcile(env, principalId)
     .then(async (result) => {
-      lastRunAt = Date.now();
-      lastResult = result;
-      await saveMaintenance(db, result);
+      const completedAt = Date.now();
+      lastRuns.set(principalId, { completedAt, result });
+      await saveMaintenance(db, principalId, result);
       return result;
     })
     .catch((error) => {
@@ -194,10 +199,11 @@ export async function reconcileImportedGuides(env, { force = false } = {}) {
           : 'runtime-retry',
       };
     })
-    .finally(() => { inFlight = null; });
-  return inFlight;
+    .finally(() => { inFlight.delete(principalId); });
+  inFlight.set(principalId, promise);
+  return promise;
 }
 
-export async function reconcileRecentBulkImports(env) {
-  return reconcileImportedGuides(env);
+export async function reconcileRecentBulkImports(env, principalValue) {
+  return reconcileImportedGuides(env, principalValue);
 }
