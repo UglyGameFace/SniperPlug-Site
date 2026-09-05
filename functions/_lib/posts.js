@@ -1,7 +1,14 @@
 import { classifyWhopItem, whopContentToMarkdown } from './content-policy.js';
 import { randomToken, sha256 } from './crypto.js';
-import { HttpError, requireDatabase } from './http.js';
+import { HttpError } from './http.js';
 import { prepareGuideBody } from './integrity.js';
+import {
+  ensureImporterWorkspaceSchema,
+  postStorageKey,
+  principalIdFrom,
+  upstreamExperienceId,
+  upstreamSourceKey,
+} from './importer-workspace.js';
 import { listExperienceItemsLite, sourceKeyForWhopItem } from './whop-items.js';
 import { resolveWhopExperienceType } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
@@ -41,15 +48,18 @@ function sourceTypeFromKey(sourceKey) {
   return 'forum';
 }
 
-async function normalizeItem(item, experienceId, sourceType) {
-  const sourceKey = sourceKeyForWhopItem(item);
+async function normalizeItem(item, principalId, storageExperienceId, logicalExperienceId, sourceType) {
+  const logicalSourceKey = sourceKeyForWhopItem(item);
+  const storageSourceKey = await postStorageKey(principalId, logicalSourceKey);
   const body = whopContentToMarkdown(item?.content);
   const attachments = normalizeAttachments(item?.attachments);
   const title = String(item?.title || fallbackTitle(body, sourceType)).trim().slice(0, 140);
   const policy = classifyWhopItem({ ...item, sourceType, title, content: body, attachments });
   const base = {
-    sourceKey,
-    experienceId,
+    sourceKey: logicalSourceKey,
+    storageSourceKey,
+    storageExperienceId,
+    experienceId: logicalExperienceId,
     postId: String(item?.id || ''),
     contentType: sourceType,
     title,
@@ -73,7 +83,7 @@ async function normalizeItem(item, experienceId, sourceType) {
 
   try {
     const integrity = await prepareGuideBody(body, { source: `Whop ${sourceType} item ${base.postId}` });
-    const sourceFingerprint = await sha256(JSON.stringify({ sourceKey, title: base.title, body: integrity.body, attachments: base.attachments, sourceUpdatedAt: base.sourceUpdatedAt, sourceMeta: base.sourceMeta }));
+    const sourceFingerprint = await sha256(JSON.stringify({ sourceKey: logicalSourceKey, title: base.title, body: integrity.body, attachments: base.attachments, sourceUpdatedAt: base.sourceUpdatedAt, sourceMeta: base.sourceMeta }));
     return {
       ...base,
       body: integrity.body,
@@ -94,11 +104,12 @@ async function normalizeItem(item, experienceId, sourceType) {
 
 function rowToItem(row) {
   const integrity = JSON.parse(row.integrity_json || '{}');
+  const logicalSourceKey = upstreamSourceKey(row);
   return {
-    sourceKey: row.source_key,
-    experienceId: row.experience_id,
+    sourceKey: logicalSourceKey,
+    experienceId: upstreamExperienceId(row),
     postId: row.post_id,
-    contentType: integrity.sourceType || sourceTypeFromKey(row.source_key),
+    contentType: integrity.sourceType || sourceTypeFromKey(logicalSourceKey),
     title: row.title,
     excerpt: row.excerpt,
     body: row.body_markdown,
@@ -170,64 +181,64 @@ async function ensureScanLeaseTable(db) {
   `).run();
 }
 
-async function acquireScanLease(db, experienceId) {
+async function acquireScanLease(db, storageExperienceId) {
   await ensureScanLeaseTable(db);
   const now = new Date();
   const nowIso = now.toISOString();
   const leaseToken = `scan_${randomToken(18)}`;
   const leaseUntil = new Date(now.getTime() + SCAN_LEASE_MS).toISOString();
-  await db.prepare('DELETE FROM whop_scan_leases WHERE experience_id = ? AND lease_until <= ?').bind(experienceId, nowIso).run();
+  await db.prepare('DELETE FROM whop_scan_leases WHERE experience_id = ? AND lease_until <= ?').bind(storageExperienceId, nowIso).run();
   const result = await db.prepare(`
     INSERT OR IGNORE INTO whop_scan_leases (experience_id, lease_token, lease_until, started_at, updated_at)
     VALUES (?, ?, ?, ?, ?)
-  `).bind(experienceId, leaseToken, leaseUntil, nowIso, nowIso).run();
+  `).bind(storageExperienceId, leaseToken, leaseUntil, nowIso, nowIso).run();
   if (Number(result.meta?.changes || 0) !== 1) {
-    throw new HttpError(409, 'This Whop Experience is already being scanned. Wait for that scan to finish, then refresh.', {
+    throw new HttpError(409, 'This Whop Experience is already being scanned in this SniperPlug account. Wait for that scan to finish, then refresh.', {
       code: 'source_scan_in_progress',
-      experienceId,
+      experienceId: storageExperienceId,
     });
   }
   return leaseToken;
 }
 
-async function renewScanLease(db, experienceId, leaseToken) {
+async function renewScanLease(db, storageExperienceId, leaseToken) {
   const now = new Date();
   const result = await db.prepare(`
     UPDATE whop_scan_leases
     SET lease_until = ?, updated_at = ?
     WHERE experience_id = ? AND lease_token = ?
-  `).bind(new Date(now.getTime() + SCAN_LEASE_MS).toISOString(), now.toISOString(), experienceId, leaseToken).run();
+  `).bind(new Date(now.getTime() + SCAN_LEASE_MS).toISOString(), now.toISOString(), storageExperienceId, leaseToken).run();
   if (Number(result.meta?.changes || 0) !== 1) {
     throw new HttpError(409, 'This source scan lost ownership before its results could be saved. Refresh instead of retrying blindly.', {
       code: 'source_scan_lease_lost',
-      experienceId,
+      experienceId: storageExperienceId,
     });
   }
 }
 
-async function releaseScanLease(db, experienceId, leaseToken) {
-  await db.prepare('DELETE FROM whop_scan_leases WHERE experience_id = ? AND lease_token = ?').bind(experienceId, leaseToken).run();
+async function releaseScanLease(db, storageExperienceId, leaseToken) {
+  await db.prepare('DELETE FROM whop_scan_leases WHERE experience_id = ? AND lease_token = ?').bind(storageExperienceId, leaseToken).run();
 }
 
-async function verifySavedScan(db, experienceId, scanMarker, posts) {
+async function verifySavedScan(db, principalId, logicalExperienceId, storageExperienceId, scanMarker, posts) {
   if (!posts.length) return [];
   const saved = await db.prepare(`
     SELECT * FROM whop_posts
-    WHERE experience_id = ? AND last_scanned_at = ?
+    WHERE principal_id = ? AND experience_id = ? AND last_scanned_at = ?
     ORDER BY CASE decision WHEN 'approved' THEN 0 WHEN 'pending' THEN 1 WHEN 'disapproved' THEN 2 ELSE 3 END,
              source_updated_at DESC, title ASC
-  `).bind(experienceId, scanMarker).all();
+  `).bind(principalId, storageExperienceId, scanMarker).all();
   const rows = saved.results || [];
-  const byKey = new Map(rows.map((row) => [String(row.source_key), row]));
+  const byKey = new Map(rows.map((row) => [upstreamSourceKey(row), row]));
   const missing = posts.filter((post) => !byKey.has(post.sourceKey)).map((post) => post.sourceKey);
   const mismatched = posts.filter((post) => {
     const row = byKey.get(post.sourceKey);
-    return row && (String(row.experience_id) !== experienceId || String(row.source_fingerprint || '') !== String(post.sourceFingerprint || ''));
+    return row && (upstreamExperienceId(row) !== logicalExperienceId || String(row.source_fingerprint || '') !== String(post.sourceFingerprint || ''));
   }).map((post) => post.sourceKey);
   if (missing.length || mismatched.length || rows.length !== posts.length) {
-    throw new HttpError(409, 'SniperPlug could not confirm the complete Whop scan in D1. The source was not presented as a complete refresh.', {
+    throw new HttpError(409, 'SniperPlug could not confirm the complete Whop scan in this account workspace. The source was not presented as a complete refresh.', {
       code: 'source_scan_unconfirmed',
-      experienceId,
+      experienceId: logicalExperienceId,
       expected: posts.length,
       confirmed: rows.length,
       missing,
@@ -237,32 +248,36 @@ async function verifySavedScan(db, experienceId, scanMarker, posts) {
   return rows.map(rowToItem);
 }
 
-export async function scanApprovedSource(env, whopSession, experience) {
+export async function scanApprovedSource(env, principalValue, whopSession, experience) {
   await ensureWhopBackupSchema(env);
-  const db = requireDatabase(env);
-  const experienceId = String(experience?.id || '');
-  await requireApprovedSource(env, experienceId);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const logicalExperienceId = String(experience?.id || '');
+  const source = await requireApprovedSource(env, principalId, logicalExperienceId);
+  const storageExperienceId = String(source.experience_id || '');
   const sourceType = await resolveWhopExperienceType(whopSession, experience);
   if (!['forum', 'course', 'chat'].includes(sourceType)) {
     throw new HttpError(422, `SniperPlug checked Whop’s official Course, Forum, and Chat read endpoints for “${String(experience?.app?.name || 'Unknown')}”, but none returned readable content. This app needs its publisher’s documented API and authorization method; SniperPlug will not guess or scrape a private app session.`);
   }
 
-  const leaseToken = await acquireScanLease(db, experienceId);
+  const leaseToken = await acquireScanLease(db, storageExperienceId);
   try {
     const rawItems = await listExperienceItemsLite(whopSession, experience);
     const topLevelItems = rawItems.filter((item) => sourceType !== 'chat' || !item?.sourceMeta?.replyingTo);
-    const posts = await Promise.all(topLevelItems.map((item) => normalizeItem(item, experienceId, sourceType)));
-    await renewScanLease(db, experienceId, leaseToken);
+    const posts = await Promise.all(topLevelItems.map((item) => normalizeItem(item, principalId, storageExperienceId, logicalExperienceId, sourceType)));
+    await renewScanLease(db, storageExperienceId, leaseToken);
     const scanMarker = new Date().toISOString();
 
     const statements = posts.map((post) => db.prepare(`
       INSERT INTO whop_posts (
-        source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
+        source_key, principal_id, upstream_source_key, experience_id, upstream_experience_id,
+        post_id, title, excerpt, body_markdown, author_json, attachment_json,
         source_created_at, source_updated_at, source_fingerprint, integrity_json,
         decision, decision_updated_at, last_scanned_at, stale_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
-      ON CONFLICT(source_key) DO UPDATE SET
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL)
+      ON CONFLICT(principal_id, upstream_source_key) DO UPDATE SET
         experience_id = excluded.experience_id,
+        upstream_experience_id = excluded.upstream_experience_id,
         post_id = excluded.post_id,
         title = excluded.title,
         excerpt = excluded.excerpt,
@@ -286,20 +301,34 @@ export async function scanApprovedSource(env, whopSession, experience) {
         last_scanned_at = excluded.last_scanned_at,
         stale_at = NULL
     `).bind(
-      post.sourceKey, post.experienceId, post.postId, post.title, post.excerpt, post.body,
-      JSON.stringify(post.author || {}), JSON.stringify(post.attachments), post.sourceCreatedAt,
-      post.sourceUpdatedAt, post.sourceFingerprint, JSON.stringify(post.integrity), post.scanDecision, scanMarker,
+      post.storageSourceKey,
+      principalId,
+      post.sourceKey,
+      post.storageExperienceId,
+      post.experienceId,
+      post.postId,
+      post.title,
+      post.excerpt,
+      post.body,
+      JSON.stringify(post.author || {}),
+      JSON.stringify(post.attachments),
+      post.sourceCreatedAt,
+      post.sourceUpdatedAt,
+      post.sourceFingerprint,
+      JSON.stringify(post.integrity),
+      post.scanDecision,
+      scanMarker,
     ));
     if (statements.length) await runStatementBatches(db, statements);
     await db.prepare(`
       UPDATE whop_posts
       SET stale_at = ?
-      WHERE experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL
-    `).bind(scanMarker, experienceId, scanMarker).run();
-    await reattachPreservedWhopGuides(env, experienceId);
-    return verifySavedScan(db, experienceId, scanMarker, posts);
+      WHERE principal_id = ? AND experience_id = ? AND last_scanned_at != ? AND stale_at IS NULL
+    `).bind(scanMarker, principalId, storageExperienceId, scanMarker).run();
+    await reattachPreservedWhopGuides(env, logicalExperienceId, principalId).catch(() => null);
+    return verifySavedScan(db, principalId, logicalExperienceId, storageExperienceId, scanMarker, posts);
   } finally {
-    await releaseScanLease(db, experienceId, leaseToken).catch(() => null);
+    await releaseScanLease(db, storageExperienceId, leaseToken).catch(() => null);
   }
 }
 
@@ -310,35 +339,37 @@ function normalizedSourceKeys(sourceKeys) {
   return keys;
 }
 
-async function rowsForSourceKeys(db, keys) {
+async function rowsForSourceKeys(db, principalId, keys) {
   if (!keys.length) return [];
   const output = [];
   for (let index = 0; index < keys.length; index += 500) {
     const group = keys.slice(index, index + 500);
     const placeholders = group.map(() => '?').join(',');
     const rows = await db.prepare(`
-      SELECT source_key, experience_id, title, decision, decision_updated_at
-      FROM whop_posts WHERE source_key IN (${placeholders})
-    `).bind(...group).all();
+      SELECT source_key, upstream_source_key, experience_id, upstream_experience_id, title, decision, decision_updated_at
+      FROM whop_posts
+      WHERE principal_id = ? AND upstream_source_key IN (${placeholders})
+    `).bind(principalId, ...group).all();
     output.push(...(rows.results || []));
   }
   return output;
 }
 
-export async function savePostDecisionVerified(env, sourceKeys, decision) {
+export async function savePostDecisionVerified(env, principalValue, sourceKeys, decision) {
   if (!['approved', 'disapproved', 'pending'].includes(decision)) throw new HttpError(422, 'Choose Approve, Disapprove, or Undo.');
+  const principalId = principalIdFrom(principalValue);
   const keys = normalizedSourceKeys(sourceKeys);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   const now = new Date().toISOString();
   const statements = keys.map((key) => db.prepare(`
     UPDATE whop_posts
     SET decision = ?, decision_updated_at = ?
-    WHERE source_key = ? AND decision != 'blocked'
-  `).bind(decision, decision === 'pending' ? null : now, key));
+    WHERE principal_id = ? AND upstream_source_key = ? AND decision != 'blocked'
+  `).bind(decision, decision === 'pending' ? null : now, principalId, key));
   const results = await runStatementBatches(db, statements);
   const changed = results.reduce((sum, result) => sum + Number(result.meta?.changes || 0), 0);
-  const rows = await rowsForSourceKeys(db, keys);
-  const byKey = new Map(rows.map((row) => [String(row.source_key), row]));
+  const rows = await rowsForSourceKeys(db, principalId, keys);
+  const byKey = new Map(rows.map((row) => [upstreamSourceKey(row), row]));
   const missing = keys.filter((key) => !byKey.has(key));
   const blocked = keys.filter((key) => byKey.get(key)?.decision === 'blocked');
   const mismatched = keys.filter((key) => {
@@ -355,14 +386,14 @@ export async function savePostDecisionVerified(env, sourceKeys, decision) {
     missing,
     mismatched,
     complete: missing.length === 0 && mismatched.length === 0 && blocked.length === 0 && confirmed.length === keys.length,
-    rows: rows.map((row) => ({ sourceKey: row.source_key, experienceId: row.experience_id, title: row.title, decision: row.decision, decisionUpdatedAt: row.decision_updated_at })),
+    rows: rows.map((row) => ({ sourceKey: upstreamSourceKey(row), experienceId: upstreamExperienceId(row), title: row.title, decision: row.decision, decisionUpdatedAt: row.decision_updated_at })),
   };
 }
 
-export async function savePostDecision(env, sourceKeys, decision) {
-  const result = await savePostDecisionVerified(env, sourceKeys, decision);
+export async function savePostDecision(env, principalValue, sourceKeys, decision) {
+  const result = await savePostDecisionVerified(env, principalValue, sourceKeys, decision);
   if (!result.complete) {
-    throw new HttpError(409, 'SniperPlug could not confirm every content decision in D1. Refresh the source before retrying.', {
+    throw new HttpError(409, 'SniperPlug could not confirm every content decision in this account workspace. Refresh the source before retrying.', {
       code: 'post_decision_unconfirmed',
       requested: result.requested,
       confirmed: result.confirmed,
@@ -374,22 +405,28 @@ export async function savePostDecision(env, sourceKeys, decision) {
   return result.changed;
 }
 
-export async function savedPostDetail(env, sourceKey) {
+export async function savedPostDetail(env, principalValue, sourceKey) {
   await ensureWhopBackupSchema(env);
+  const principalId = principalIdFrom(principalValue);
   const key = String(sourceKey || '').trim();
   if (!key) throw new HttpError(422, 'Choose a valid Whop content item.');
-  const db = requireDatabase(env);
-  const row = await db.prepare('SELECT * FROM whop_posts WHERE source_key = ? AND stale_at IS NULL').bind(key).first();
-  if (!row) throw new HttpError(404, 'That Whop content item is no longer available in the current scan.');
+  const db = await ensureImporterWorkspaceSchema(env);
+  const row = await db.prepare(`
+    SELECT * FROM whop_posts
+    WHERE principal_id = ? AND upstream_source_key = ? AND stale_at IS NULL
+  `).bind(principalId, key).first();
+  if (!row) throw new HttpError(404, 'That Whop content item is no longer available in this account’s current scan.');
   return rowToItem(row);
 }
 
-export async function listSavedPosts(env, experienceId) {
+export async function listSavedPosts(env, principalValue, experienceId) {
   await ensureWhopBackupSchema(env);
-  const db = requireDatabase(env);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const rows = await db.prepare(`
-    SELECT * FROM whop_posts WHERE experience_id = ? AND stale_at IS NULL
+    SELECT * FROM whop_posts
+    WHERE principal_id = ? AND upstream_experience_id = ? AND stale_at IS NULL
     ORDER BY source_updated_at DESC, title ASC
-  `).bind(experienceId).all();
+  `).bind(principalId, String(experienceId || '').trim()).all();
   return (rows.results || []).map(rowToItem);
 }
