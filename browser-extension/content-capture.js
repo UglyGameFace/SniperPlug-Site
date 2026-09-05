@@ -5,20 +5,10 @@
     return String(hostname || '').toLowerCase().endsWith('.apps.whop.com');
   }
 
-  function effectiveAppHost() {
-    if (isWhopAppHost(location.hostname)) return String(location.hostname || '').toLowerCase();
-    try {
-      const referrer = new URL(String(document.referrer || '').trim());
-      return referrer.protocol === 'https:' && isWhopAppHost(referrer.hostname)
-        ? referrer.hostname.toLowerCase()
-        : '';
-    } catch {
-      return '';
-    }
-  }
-
-  const APP_FRAME_HOST = effectiveAppHost();
-  if (!APP_FRAME_HOST) return;
+  const APP_FRAME_HOST = isWhopAppHost(location.hostname)
+    ? String(location.hostname || '').toLowerCase()
+    : '';
+  if (!APP_FRAME_HOST || location.protocol !== 'https:') return;
 
   if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
     globalThis.__sniperplugBetterContentCapture.registerCandidate();
@@ -39,18 +29,10 @@
   }
 
   function currentAppFrameFallbackUrl() {
-    if (location.protocol === 'https:' && isWhopAppHost(location.hostname) && location.host) {
-      const pathname = String(location.pathname || '/');
-      const safePath = pathname.startsWith('/') ? pathname : `/${pathname}`;
-      return `https://${location.host}${safePath}`;
-    }
-    try {
-      const referrer = new URL(String(document.referrer || '').trim());
-      if (referrer.protocol !== 'https:' || !isWhopAppHost(referrer.hostname)) return '';
-      return `${referrer.origin}${referrer.pathname || '/'}`;
-    } catch {
-      return '';
-    }
+    if (location.protocol !== 'https:' || !isWhopAppHost(location.hostname) || !location.host) return '';
+    const pathname = String(location.pathname || '/');
+    const safePath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return `https://${location.host}${safePath}`;
   }
 
   function safeCurrentFrameUrl(value) {
