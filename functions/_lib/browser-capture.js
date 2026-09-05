@@ -135,9 +135,6 @@ function currentMembershipAllowsExperience(experience, companies) {
   const experienceProductId = String(experience?.product?.id || experience?.product_id || '').trim();
   if (experienceCompanyId) return companyIds.has(experienceCompanyId);
   if (experienceProductId) return productIds.has(experienceProductId);
-  // Retrieve-experience is still an OAuth-gated Whop call. Some app experience
-  // shapes omit company/product relationships, so absence of those optional
-  // fields must not turn valid access into another false denial.
   return true;
 }
 
@@ -195,6 +192,67 @@ function captureImportPolicy() {
     code: 'browser_capture_manual_review',
     reason: 'Browser-captured app content always requires explicit owner review before publication.',
   };
+}
+
+async function upsertBrowserCaptureSourceRow(db, capture, sourceKey, sourceFingerprint, body, images, sourceMeta, policy, now) {
+  const attachmentJson = JSON.stringify(images);
+  const integrityJson = JSON.stringify({
+    blocked: false,
+    sourceType: BROWSER_CAPTURE_SOURCE_TYPE,
+    sourceMeta,
+    autoPublishEligible: false,
+    policy,
+    rightsConfirmed: true,
+  });
+
+  await db.prepare(`
+    INSERT INTO whop_posts (
+      source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
+      source_created_at, source_updated_at, source_fingerprint, integrity_json,
+      decision, decision_updated_at, last_scanned_at
+    ) VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, 'approved', ?, ?)
+    ON CONFLICT(source_key) DO UPDATE SET
+      experience_id = excluded.experience_id,
+      post_id = excluded.post_id,
+      title = excluded.title,
+      excerpt = excluded.excerpt,
+      body_markdown = excluded.body_markdown,
+      attachment_json = excluded.attachment_json,
+      source_updated_at = excluded.source_updated_at,
+      source_fingerprint = excluded.source_fingerprint,
+      integrity_json = excluded.integrity_json,
+      decision = 'approved',
+      decision_updated_at = excluded.decision_updated_at,
+      last_scanned_at = excluded.last_scanned_at
+  `).bind(
+    sourceKey,
+    capture.experienceId,
+    sourceKey,
+    capture.title,
+    excerpt(body),
+    body,
+    attachmentJson,
+    capture.capturedAt,
+    capture.capturedAt,
+    sourceFingerprint,
+    integrityJson,
+    now,
+    now,
+  ).run();
+
+  const saved = await db.prepare(`
+    SELECT source_key, experience_id, source_fingerprint, decision
+    FROM whop_posts WHERE source_key = ?
+  `).bind(sourceKey).first();
+  if (!saved
+    || String(saved.experience_id || '') !== capture.experienceId
+    || String(saved.source_fingerprint || '') !== sourceFingerprint
+    || saved.decision !== 'approved') {
+    throw new HttpError(409, 'SniperPlug could not confirm the browser-captured source row in D1. The queued page was preserved for retry.', {
+      code: 'browser_capture_source_unconfirmed',
+      sourceKey,
+    });
+  }
 }
 
 async function writeCaptureDraft(env, experience, capture) {
@@ -257,6 +315,18 @@ async function writeCaptureDraft(env, experience, capture) {
   };
   const expectedUpdatedAt = existing?.updated_at == null ? null : String(existing.updated_at);
 
+  await upsertBrowserCaptureSourceRow(
+    db,
+    capture,
+    sourceKey,
+    sourceFingerprint,
+    prepared.body,
+    images,
+    sourceMeta,
+    policy,
+    now,
+  );
+
   const write = await db.prepare(`
     INSERT INTO guides (
       slug, title, description, category_slug, body_markdown, status, featured, sort_order,
@@ -290,7 +360,7 @@ async function writeCaptureDraft(env, experience, capture) {
     sourceKey,
     sourceGroup,
     capture.experienceId,
-    capture.pageIdentity.slice(0, 240),
+    sourceKey,
     sourceFingerprint,
     JSON.stringify({ files: images, reviewCount: images.length, sourceType: BROWSER_CAPTURE_SOURCE_TYPE }),
     JSON.stringify({
