@@ -1,56 +1,45 @@
 # Active Task
 
 ## Active task / outcome
-Make finished bulk importer workflows unmistakable in the Control Center, especially the difference between a clean completion and a completion that safely held or failed some items.
+Implement issue #25: make authorized Whop app-specific experiences, especially Content / Better Content, report their real reader capability and use a supported reader without inventing private endpoints.
 
 ## Scope lock
-- Active scope: bulk-job completion outcome copy/presentation, the existing bulk reset/aftermath helper, targeted regression coverage, and only the package audit hook required to run that regression.
-- Keep `assets/js/control-center-v2.js` as the authoritative bulk progress/title renderer and keep `functions/_lib/bulk-jobs.js` as the authoritative server outcome source.
-- Do not add another mutation path, another job state machine, or another broad observer.
-- Do not alter Whop authorization, import/publish semantics, guide status, tenant ownership, recovery, media policy, billing, or private-guide safety.
-- Remaining requested work will continue sequentially after this focused task: branch-check governance where connector permissions allow it, issue #25 custom Whop app readers, paid-subscriber onboarding, and the larger product/UX redesign.
+- Active scope: Whop custom-app capability metadata, reader selection, the existing browser-capture reader for rendered Whop app content, discovery truth/UX copy, and targeted regressions directly coupled to issue #25.
+- Preserve existing native Course, Forum, and Chat readers and their OAuth scope requirements.
+- Preserve owner membership/access checks and tenant-scoped source approval before any app-specific content becomes an importable private draft.
+- Do not guess undocumented custom-app API paths. A custom app is readable only through an explicitly supported reader or a documented interface exposed by Whop/app metadata.
+- Do not weaken browser-capture origin validation, private-guide publication review, recovery, media policy, or billing gates.
 
 ## Starting state / root cause
-- Starting `main`: `2c1c6336fc0de14a116801a45a25619b20b3812c`.
-- Working branch: `improve/bulk-completion-outcome`.
-- PR #58: **Clarify bulk completion outcomes**.
-- `functions/_lib/bulk-jobs.js` already returns `outcome: completed-with-issues|completed-successfully` and `issueCount` from server-confirmed failures/held categories.
-- `assets/js/control-center-v2.js` renders every completed workflow with the generic heading `Bulk job completed`, followed by counts. A workflow with held/failed items therefore looked deceptively similar to a clean run.
-- `assets/js/control-center-bulk-reset.js` already owns finished-job aftermath/reset UI and already refreshes `/api/bulk-jobs`, making it the narrowest place for a subordinate explanation without duplicating the authoritative progress renderer.
+- Starting `main`: `23d1b6dbc9c21ac78b1a96a94f3b1efd02716475` after PR #58 passed post-merge Node 22, production visual/affiliate, guide-privacy, and retired-route checks.
+- Working branch: `feature/whop-authorized-app-readers`.
+- Issue #25 is open: **Read authorized Whop Content / Better Content experiences**.
+- Discovery already confirms membership and preserves external app modules, but native reader resolution only returns `forum`, `course`, `chat`, or `unsupported`.
+- `whop-app-reader.js` already resolves exact public app metadata by stable app ID and safely exposes app origin, experience path, OpenAPI path, and Skills path when Whop publishes them.
+- Better Content already has a real, tested browser-capture reader restricted to exact app ID `app_zv9yxan92U9fNy`; the real Android path has successfully produced private SniperPlug drafts.
+- The current discovery UI can say a custom app advertises OpenAPI/Skills, but it has no canonical reader descriptor and cannot distinguish a working app-specific reader from a documented contract that still lacks a SniperPlug adapter.
+- The browser-capture server and messages are hard-coded to Better Content, preventing the same safe rendered-app reader from being selected for another verified Content-family app even when Whop metadata confirms the exact app and frame origin.
 
-## Implementation
-- [x] Added a persistent, accessible `data-bulk-job-outcome` note under the existing bulk job summary.
-- [x] Clean completion explicitly says every processed source finished without held or failed items.
-- [x] Completed-with-issues explicitly states the issue count, says successful publications remain published, and says held/failed items need review rather than being silently treated as clean success.
-- [x] Exposes the server-provided nonzero breakdown for source failures, item failures, held files, integrity/policy holds, link holds, and permission holds.
-- [x] Leaves active/canceled jobs without a misleading completion outcome note.
-- [x] Keeps reset/stop behavior unchanged.
-- [x] Keeps `control-center-v2.js` as the authoritative bulk title/progress renderer. The helper does not query or rewrite `[data-bulk-job-title]` or `[data-bulk-job-summary]`.
-- [x] Keeps `/api/bulk-jobs` read-only in the helper; only the pre-existing `/api/bulk-job-reset` endpoint mutates finished-job state.
-- [x] Adds `tools/test-bulk-completion-outcome.mjs` to the full audit chain.
-- [x] Adds no `MutationObserver`, second state machine, or duplicate publication/import mutation path.
+## Branch-governance backlog result
+- `GET /repos/UglyGameFace/SniperPlug-Site/branches/main/protection` returned 403 `Resource not accessible by integration` through the active GitHub App.
+- Repository rulesets are readable and currently return an empty list.
+- The connector exposes no administration write for branch protection/rulesets, so required-check governance is blocked by connector administration capability rather than silently skipped or fabricated.
 
-## Validation / results
-- [x] Net PR diff inspected: exactly four scoped files (`ACTIVE_TASK.md`, `assets/js/control-center-bulk-reset.js`, `package.json`, and `tools/test-bulk-completion-outcome.mjs`). Temporary files accidentally created while operating the connector were deleted immediately and are absent from the PR diff.
-- [x] Code head `80c79761359c290af6178fc24cb0fa0162630c09` passed **Verify SniperPlug #1038**, including the complete Node 22 audit/build suite and Firefox Android extension packaging.
-- [x] The same code head passed **Verify affiliate-ready preview #112**.
-- [x] The same code head passed **Verify retired public deal routes #112**.
-- [x] PR #58 is mergeable and has no inline review threads.
-- [ ] Fresh exact-head validation after this final task-record commit.
-- [ ] Merge PR #58 only after the fresh exact head remains green.
-- [ ] Post-merge Node 22, production affiliate/visual, private-guide privacy, and any path-triggered retired-route checks.
-
-## Safety / compatibility
-- No Whop authorization, import, publication, guide status, tenant ownership, recovery, media, billing, or private-guide implementation changed.
-- Successful publications are never described as rolled back merely because another item was held or failed.
-- The helper consumes the existing server `outcome`, `issueCount`, `summary`, and `failures`; it does not independently decide import success from client-only state.
-- Static JavaScript delivery uses `Cache-Control: public, max-age=0, must-revalidate`, so the updated helper is revalidated without introducing another cache-bust mechanism.
+## Definition of Done
+- [ ] Add one canonical app-reader descriptor to `whop-app-reader.js` instead of a parallel reader registry elsewhere.
+- [ ] Keep exact Better Content app ID as an explicitly supported rendered-app reader.
+- [ ] Permit other Content-family rendered-app readers only when Whop resolves the exact stable app ID, marks the app verified, exposes a safe HTTPS `*.apps.whop.com` origin, and the app name matches the supported family.
+- [ ] Bind browser-capture authorization to the resolved app metadata and captured frame host, not merely any `*.apps.whop.com` frame.
+- [ ] Discovery must clearly distinguish `access confirmed · reader available`, `access confirmed · documented contract advertised but adapter unavailable`, and `access confirmed · reader unavailable` from actual access denial.
+- [ ] Preserve explicit unsupported behavior when no authorized readable interface exists.
+- [ ] Do not auto-execute arbitrary OpenAPI/Skills operations. Their presence is capability evidence only until a concrete adapter can normalize them safely.
+- [ ] Add targeted tests for exact Better Content selection, verified Content-family selection, spoof/unverified rejection, frame-origin binding, metadata failure, and unsupported fallback.
+- [ ] Run exact-head full Node 22 plus applicable Cloudflare checks, inspect final diff/reviews, merge, then require post-merge production validation.
 
 ## Backlog after this task
-- Required branch-check governance if repository administration endpoints are writable through the active GitHub connection.
-- Issue #25 custom Whop app readers.
-- Paid-subscriber authentication/billing onboarding.
+- Paid-subscriber authentication/billing onboarding with tenant-scoped real subscriber identity.
 - Larger product/brand/UX redesign across the public site and Control Center.
+- Required branch-check governance remains blocked until repository administration writes are available through the connection or configured outside this integration.
 
 ## Next step
-Require fresh CI on this exact task-record head. If all scheduled checks remain green and review state stays clean, merge PR #58 and verify the resulting production `main` before closing this task and moving directly to the next backlog item.
+Extend the existing app metadata helper into the canonical reader selector, wire that selector into discovery and browser-capture authorization, then add focused regressions before changing any other system.
