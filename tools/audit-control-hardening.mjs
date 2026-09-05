@@ -37,10 +37,12 @@ assert.equal(allowedAudit.blockedCount, 0, 'Server-verified durable Whop files s
 const codeAudit = auditGuideLinks('`https://whop.com/not-a-link`\n\n```text\nhttps://whop.com/code\n```');
 assert.equal(codeAudit.total, 0, 'URLs inside inline or fenced code must not be audited as clickable links.');
 
-assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Whop connection is still tied to a temporary browser session ID.');
-assert.ok(auth.includes("OWNER_SESSION_ID = 'sniperplug-owner'"), 'Control Center owner identity is not deterministic.');
+assert.ok(auth.includes("OWNER_PRINCIPAL_ID = 'sniperplug-owner'"), 'The owner account principal is not deterministic.');
+assert.ok(auth.includes('principalId: OWNER_PRINCIPAL_ID'), 'Authenticated storage is not explicitly account/principal scoped.');
+assert.ok(auth.includes('browserSid: `admin_${randomToken(24)}`'), 'Browser logins do not have an independent random session identity.');
+assert.ok(auth.includes('sid: OWNER_PRINCIPAL_ID') && auth.includes('session.sid !== session.principalId'), 'Compatibility storage key can diverge from the authenticated account principal.');
 assert.ok(!auth.includes('resolveOwnerWhopSessionId') && !auth.includes('copySessionToOwner'), 'Legacy Whop-session adoption logic can resurrect an unrelated account.');
-assert.ok(auth.includes('session.v === 1') && auth.includes('sid: OWNER_SESSION_ID'), 'Legacy owner cookies are not normalized to the one canonical owner session.');
+assert.ok(auth.includes('session.v <= 3') && auth.includes('principalId: OWNER_PRINCIPAL_ID'), 'Legacy owner cookies are not normalized onto the explicit owner principal.');
 assert.ok(control.includes('verifiedWhopSummary') && control.includes('requireWhopSession(request, env, admin)'), 'Dashboard reports connected from a stale row without opening the saved Whop session.');
 assert.ok(control.includes('[401, 403].includes(error.status)'), 'Invalid Whop sessions are not cleared before the UI reports connection state.');
 assert.ok(reconciliation.includes('Optional import reconciliation was deferred') && reconciliation.includes('deferred: true'), 'Optional cleanup can still take down the entire Control Center.');
@@ -68,7 +70,7 @@ assert.ok(html.includes('/assets/js/control-center-lifecycle.js'), 'Draft safety
 
 assert.ok(html.includes('data-source-search') && html.includes('data-source-filter'), 'Source search and filtering controls are missing.');
 assert.ok(runtime.includes('setGroupExpanded') && runtime.includes("dataset.action = 'group-toggle'"), 'Large source groups cannot be collapsed.');
-assert.ok(html.includes('data-draft-search') && html.includes('data-draft-status-filter'), 'Draft search and status filtering are missing.');
+assert.ok(html.includes('data-draft-search') && html.includes('data-draft-status-filter'), 'Draft search and status filtering controls are missing.');
 assert.ok(html.includes('data-bulk-job-panel') && html.includes('data-resume-bulk-job'), 'Resumable job status controls are missing.');
 assert.ok(html.includes('data-progress-bar') && html.includes('data-progress-timeline'), 'Interactive progress details are missing.');
 assert.ok(html.includes('data-undo-selected-actions') && html.includes('data-undo-all-actions'), 'Recent-action recovery controls are missing.');
@@ -123,7 +125,7 @@ for (const file of syntaxFiles) {
 console.log('\nSNIPERPLUG CONTROL HARDENING AUDIT PASSED\n');
 console.log('✓ Locked and unlocked Control Center states cannot render together.');
 console.log('✓ Connect and Disconnect cannot render together.');
-console.log('✓ Existing Whop sessions survive older D1 schemas and browser-login changes.');
+console.log('✓ Browser login sessions are distinct from the stable SniperPlug account principal used for Whop storage.');
 console.log('✓ Dashboard connection status requires a decryptable, refreshable Whop session.');
 console.log('✓ Optional cleanup cannot block the Control Center.');
 console.log('✓ Bulk source work persists in D1 and resumes after refreshes, logins, or dropped connections.');
