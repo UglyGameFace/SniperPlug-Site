@@ -18,10 +18,10 @@ assert.deepEqual(
   ['https://*.apps.whop.com/*'],
   'Rendered Better Content extraction must not be statically injected into the top-level whop.com shell.',
 );
-const appGuard = captureScript.indexOf('const APP_FRAME_HOST = effectiveAppHost();');
+const appGuard = captureScript.indexOf('const APP_FRAME_HOST = isWhopAppHost(location.hostname)');
 const idempotentGuard = captureScript.indexOf('globalThis.__sniperplugBetterContentCapture?.registerCandidate');
 assert.ok(appGuard >= 0 && idempotentGuard > appGuard, 'App-frame validation must run before the reinjection/idempotence shortcut.');
-assert.ok(captureScript.includes('if (!APP_FRAME_HOST) return;'), 'Non-app Whop frames are not rejected before DOM extraction.');
+assert.ok(captureScript.includes("if (!APP_FRAME_HOST || location.protocol !== 'https:') return;"), 'Non-HTTPS or non-app Whop frames are not rejected before DOM extraction.');
 assert.ok(background.includes("candidate?.likelyAppFrame !== true || !isWhopAppHost(candidate?.host)"), 'Background candidate storage still accepts the Whop shell.');
 assert.ok(background.includes('const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);'), 'The current top-level Whop exp_ ID is not linked to the app frame.');
 assert.ok(background.includes('await clearCandidatesForTab(tab.id);'), 'A fresh popup probe can still reuse stale frame candidates.');
