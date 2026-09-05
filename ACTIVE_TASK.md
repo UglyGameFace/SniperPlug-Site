@@ -21,47 +21,52 @@ Repair the Whop importer end to end so the owner can connect Whop, retain legiti
 - PR #38 merged: user-OAuth-compatible custom-app metadata / reader-contract truth.
 - PR #39 merged: Better Content rendered-DOM capture bridge → private draft.
 - PR #41 merged: Firefox Android package support.
-- PR #44 merged: v0.1.3 attempted Firefox app-frame URL compatibility.
-- Live v0.1.2 evidence: exact Better Content `exp_...`, app-frame host, title, and 3,428 rendered characters were detected; capture then failed only on page-URL sanitation.
-- Live v0.1.3 evidence: the same Firefox Whop tab visibly renders an individual Make Money Here guide, but the popup reports `1 Whop tab found` and zero Better Content candidates.
-- PR #45 (`fix/firefox-live-injection-capture`) repairs that regression. Implementation head `6e8edb34bd4d5097afa81e6f78379d8f0e5959e1` passed the full Node 22 build/regression suite and packaged the Firefox Android extension successfully.
+- PR #44 merged: v0.1.3 Firefox app-frame URL compatibility attempt.
+- PR #45 merged at `47c2293513f2394e440fe8e91e44a1fead71ada2`: v0.1.4 removed the URL monkeypatch and added live all-frame recovery for already-open Whop tabs.
+- Live v0.1.4 evidence: the extension successfully queued/handoff-preserved a Better Content page and opened SniperPlug Control Center, which then reported `Capture was not saved: Unexpected SniperPlug importer error. The extension kept the queued pages so you can retry without recapturing them.`
+- PR #46 (`fix/browser-capture-source-row`) fixes the confirmed D1 write-model mismatch causing that server error.
 
 ## Findings / root cause
-- The owner is using the correct Firefox tab and an individual Better Content guide is visibly rendered. This is not user error.
-- The current failure is before server import: popup → candidate resolution → content-script context.
-- v0.1.3 introduced a global `URL` constructor monkeypatch before `content-capture.js`; after that release the previously working candidate disappeared.
-- Manifest content scripts are load-time registrations. Reinstalling/updating the extension while the Whop SPA tab stays open can leave that already-open document without the new capture script.
-- Therefore the extension must not depend solely on declarative page-load injection or on replacing a browser global.
+### Firefox / extension
+- v0.1.4 is no longer blocked at candidate discovery. The owner reached the SniperPlug browser-capture handoff with the captured page preserved for retry.
+- No new extension package is required for the D1 fix in PR #46.
+
+### D1 draft write
+- Production schema defines `FOREIGN KEY (source_key) REFERENCES whop_posts(source_key)` on `guides`.
+- The browser-capture path generated a new `browser-capture:...` source key and attempted to insert the guide directly.
+- Unlike native Forum/Course/Chat imports, it never materialized that source key in `whop_posts` first.
+- With D1 foreign keys enabled, the first real guide insert therefore fails before a draft can exist. `handleError()` converts the raw non-Http D1 exception to the generic `Unexpected SniperPlug importer error.` seen in the live screenshot.
+- This is the confirmed structural mismatch now being repaired; do not change Firefox injection again unless new live evidence points back there.
+
+### Cross-device Whop connection
+- SniperPlug's Whop OAuth tokens are intentionally server-side in D1 under the single owner identity `sniperplug-owner`.
+- A browser/device that successfully unlocks the SniperPlug owner Control Center reads that same server-side owner Whop connection; it is not proof that Firefox copied the user's Whop browser cookies to the new device.
+- The current UI does not explain this distinction well and makes the server connection look like a device-local Whop login.
 
 ## Execution path
-`Firefox Whop tab → Better Content rendered frame → content-capture.js → candidate message → background candidate cache → popup Capture page → extension queue → SniperPlug Control Center relay → POST /api/browser-capture → requireAdmin + requireWhopSession + exact exp_ verification + exact Better Content app ID → private D1 draft → manual review/publish`.
+`Firefox Whop tab → Better Content rendered frame → content-capture.js → background candidate/cache → extension queue → SniperPlug Control Center relay → POST /api/browser-capture → requireAdmin + requireWhopSession + exact exp_ verification + exact Better Content app ID → persist browser-capture source row in whop_posts → private D1 guide draft → manual review/publish`.
 
-PR #45 adds a recovery path before candidate failure:
-`popup/capture/auto request → query already-open Whop tabs → chrome.scripting.executeScript(allFrames, content-capture.js) → idempotent reprobe → candidate resolution`.
-
-## Changes in PR #45
-- Remove `frame-url-compat.js` and stop replacing `globalThis.URL`.
-- Move the current-frame HTTPS Whop URL fallback inside `content-capture.js`.
-- Make dynamic reinjection idempotent; existing frame contexts reprobe instead of creating duplicate observers/listeners.
-- Add MV3 `scripting` permission only; existing restricted Whop host permissions still bound injection.
-- Actively inject the audited DOM-only capture script across already-open Whop frames when no candidate exists.
-- Retry recovery from popup state, Capture page, and auto-capture setup.
-- Allow Whop-origin about:blank/origin-fallback frames under the same restricted match patterns.
-- Bump extension to v0.1.4.
-- Update `tools/test-browser-capture-extension.mjs` to fail if the URL monkeypatch returns, live injection disappears, reinjection loses idempotency, or credential/network boundaries weaken.
+## Changes in PR #46
+- Persist each Better Content browser capture as a typed `whop_posts` source row before inserting/updating the guide.
+- Reuse the exact same `source_key` for the source row and foreign-keyed guide.
+- Keep the rendered/sanitized body and image metadata on the source row.
+- Mark the capture source approved under the existing browser-capture manual-review-only policy.
+- Verify the source-row round trip (`source_key`, experience ID, fingerprint, decision) before attempting the guide insert.
+- Store the same stable browser source identifier in `guides.source_post_id`; page identity remains in `sourceMeta`.
+- Extend the browser-capture regression so it explicitly models the production `guides.source_key → whop_posts.source_key` foreign key and fails if the guide write moves before source persistence.
 
 ## Validation
-- [x] User screenshot proves Whop and the individual Better Content guide are open in Firefox.
-- [x] v0.1.2 live capture detection proved Better Content DOM is readable from Firefox.
-- [x] PR #45 full Node 22 regression suite passed on implementation head `6e8edb34bd4d5097afa81e6f78379d8f0e5959e1`.
-- [x] PR #45 Firefox Android package step passed on the same implementation head.
-- [x] No cookie permission, `<all_urls>`, token reading, storage reading, or Better Content private-API probing added.
+- [x] Live v0.1.4 screenshot proves capture reached SniperPlug and the extension preserved the queue after server failure.
+- [x] Production migration confirms `guides.source_key` references `whop_posts(source_key)`.
+- [x] Old browser-capture service path had no `INSERT INTO whop_posts` before `INSERT INTO guides`.
+- [x] PR #46 adds verified source persistence before the guide write.
+- [x] PR #46 regression explicitly guards the foreign-key ordering.
+- [x] PR #46 first full Node 22 build/regression suite passed on `f104f7bb7c7e5627a5ecd9ca310e67976fb64ed8`.
 - [ ] Exact final-head CI after this task-record update.
-- [ ] PR #45 diff/review/branch state clean and current with main.
-- [ ] PR #45 merged and post-merge main workflows green.
-- [ ] v0.1.4 installed on owner Firefox Android and one visible Make Money Here guide queues successfully.
-- [ ] That capture reaches SniperPlug as a private draft.
-- [ ] Multi-page auto-capture validated only after the one-page path succeeds.
+- [ ] PR #46 branch/review state clean and current with main.
+- [ ] PR #46 merged and post-merge main workflows green.
+- [ ] Owner presses existing **Retry capture** and one queued Make Money Here page becomes a private SniperPlug draft.
+- [ ] Multi-page auto-capture validated only after the one-page draft succeeds.
 
 ## Cleanup / conflicts
 - No extra Whop OAuth scopes.
@@ -69,16 +74,18 @@ PR #45 adds a recovery path before candidate failure:
 - No guessed Better Content endpoints.
 - No Whop iframe credential theft/forwarding.
 - No automatic publishing.
-- No unrelated site/database work.
+- No database table rebuild/migration required; browser capture now satisfies the existing source foreign-key model.
 - Issue #20 remains locked out while this active task is incomplete.
 
 ## Blockers / risks
-- CI cannot render the owner's private live Better Content iframe, so the final proof remains one real Firefox Android capture.
-- Firefox dynamic all-frame injection requires the MV3 `scripting` permission plus host permission; both are now explicit and remain restricted to Whop/SniperPlug hosts.
+- CI cannot execute against the owner's private production D1 row plus private Better Content page, so the final proof remains the existing queued capture retried after deployment.
+- A source row can remain if a later guide write fails; this is safe and makes the retry idempotent because the same source key is upserted and re-verified.
 
-## Backlog
+## Backlog after importer is complete
+- Consolidate/restructure the Control Center UI. Current cards, status explanations, and repeated sections are too verbose and visually repetitive on mobile.
+- Make connection scope explicit: distinguish **SniperPlug server-connected Whop account** from **Whop signed into this browser/device** so a second authorized device does not look mysteriously logged into Whop.
 - Issue #25 remains the broader custom-app reader work; Better Content is the first live adapter.
 - Other third-party Whop apps remain out of scope until Better Content works end to end.
 
 ## Next step
-Require green CI on the exact PR #45 final head, inspect branch/review state, merge if clean, verify post-merge main, download the generated v0.1.4 Firefox Android XPI, then retest the same visible Make Money Here guide. Success for this stage is **1 page queued**, followed by the private SniperPlug draft.
+Require green CI on the exact PR #46 final head, inspect branch/review state, merge if clean, verify post-merge main, then use the already-preserved v0.1.4 queue and press **Retry capture**. Success for this stage is the queued Make Money Here page appearing as a private SniperPlug draft without recapturing or reinstalling the extension.

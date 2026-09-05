@@ -19,6 +19,7 @@ const popupHtml = read('browser-extension/popup.html');
 const relay = read('browser-extension/sniperplug-relay.js');
 const endpoint = read('functions/api/browser-capture.js');
 const service = read('functions/_lib/browser-capture.js');
+const schema = read('migrations/0001_whop_guides.sql');
 
 assert.equal(BETTER_CONTENT_APP_ID, 'app_zv9yxan92U9fNy', 'The capture bridge must stay pinned to the exact Better Content app ID.');
 assert.deepEqual(manifest.permissions.sort(), ['scripting', 'storage', 'tabs'], 'The Firefox live-recovery permissions changed unexpectedly.');
@@ -58,6 +59,13 @@ assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSes
 assert.ok(service.includes("captureMethod: 'extension-dom'") && service.includes("status = 'draft'"), 'Browser capture is not constrained to the private draft path.');
 assert.ok(service.includes('changed-published-held') && service.includes('changed-reviewed-held') && service.includes('removed-held'), 'A later browser capture can still overwrite published, reviewed, or removed owner work.');
 assert.ok(service.includes('autoPublishEligible: false') && service.includes('manualReviewCompleted: false'), 'Browser-captured content can bypass explicit owner review before publication.');
+
+assert.ok(schema.includes('FOREIGN KEY (source_key) REFERENCES whop_posts(source_key)'), 'The regression no longer models the production guide source foreign key.');
+const sourceRowWrite = service.indexOf('INSERT INTO whop_posts (');
+const guideRowWrite = service.indexOf('INSERT INTO guides (');
+assert.ok(sourceRowWrite >= 0 && guideRowWrite > sourceRowWrite, 'Browser capture writes a guide before materializing the whop_posts source row required by D1 foreign keys.');
+assert.ok(service.includes('upsertBrowserCaptureSourceRow') && service.includes('browser_capture_source_unconfirmed'), 'Browser-capture source persistence is not verified before guide creation.');
+assert.ok(service.includes("decision = 'approved'") && service.includes('sourceType: BROWSER_CAPTURE_SOURCE_TYPE'), 'Browser-capture source rows are not retained as approved, typed source records.');
 
 const normalized = normalizeBrowserCapture({
   experienceId: 'exp_hidden_123',
@@ -100,6 +108,7 @@ console.log('✓ Firefox can actively inject the audited content script into alr
 console.log('✓ Dynamic reinjection is idempotent and reprobes an existing frame instead of duplicating observers.');
 console.log('✓ Firefox current-frame HTTPS fallback lives inside the extractor and no longer replaces global URL.');
 console.log('✓ Firefox Android can discover the latest Better Content tab and link the Whop shell exp_ ID to its app iframe.');
+console.log('✓ Browser captures persist a verified whop_posts source row before the foreign-keyed guide draft.');
 console.log('✓ Multi-page captures cross into SniperPlug through a same-origin Control Center relay.');
 console.log('✓ Server re-verifies the exact Better Content Whop experience before writing anything.');
 console.log('✓ Captures are private drafts, manual-review only, with previously reviewed/published/removed work protected.');
