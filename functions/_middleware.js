@@ -14,6 +14,10 @@ const CONTROL_CENTER_RUNTIME_SCRIPTS = Object.freeze([
   '/assets/js/control-center-whop-flash.js?v=20260811.1',
 ]);
 
+const publicContentSecurityPolicy = "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; frame-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+const privateContentSecurityPolicy = "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; frame-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+const courseVideoContentSecurityPolicy = "default-src 'none'; frame-src https://player.mux.com; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'";
+
 function missingControlConfiguration(env) {
   return REQUIRED_CONTROL_CONFIGURATION.filter((name) => {
     if (name === 'SNIPERPLUG_DB') return !env?.SNIPERPLUG_DB;
@@ -125,6 +129,7 @@ function secureResponse(response, url, pathname) {
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
   const privateGuideContent = privateGuidePage || privateGuideAsset;
   const retiredPublicDealPath = isRetiredPublicDealPath(pathname);
+  const needsPrivateStyleCompatibility = controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent;
 
   response.headers.set('X-Frame-Options', courseVideoFrame ? 'SAMEORIGIN' : 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
@@ -132,8 +137,10 @@ function secureResponse(response, url, pathname) {
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
   response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
   response.headers.set('Content-Security-Policy', courseVideoFrame
-    ? "default-src 'none'; frame-src https://player.mux.com; style-src 'unsafe-inline'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'"
-    : "default-src 'self'; img-src 'self' data: https:; media-src 'self' https:; frame-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    ? courseVideoContentSecurityPolicy
+    : needsPrivateStyleCompatibility
+      ? privateContentSecurityPolicy
+      : publicContentSecurityPolicy);
   if (url.protocol === 'https:') {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
