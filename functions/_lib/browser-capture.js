@@ -10,9 +10,15 @@ import {
   upstreamSourceKey,
 } from './importer-workspace.js';
 import { requireApprovedSource, saveSourceDecision, sourceDecision } from './source-policy.js';
+import {
+  BETTER_CONTENT_APP_ID,
+  browserCaptureMatchesReader,
+  inspectWhopApp,
+  resolveWhopAppReader,
+} from './whop-app-reader.js';
 import { retrieveExperience } from './whop.js';
 
-export const BETTER_CONTENT_APP_ID = 'app_zv9yxan92U9fNy';
+export { BETTER_CONTENT_APP_ID };
 export const BROWSER_CAPTURE_SOURCE_TYPE = 'browser-capture';
 
 const MAX_CAPTURES_PER_BATCH = 25;
@@ -110,7 +116,7 @@ export function validateBrowserCaptureBatch(input) {
   const rawCaptures = Array.isArray(input?.captures)
     ? input.captures
     : input?.capture ? [input.capture] : [];
-  if (!rawCaptures.length) throw new HttpError(422, 'Capture at least one rendered Better Content page.');
+  if (!rawCaptures.length) throw new HttpError(422, 'Capture at least one rendered supported Whop app page.');
   if (rawCaptures.length > MAX_CAPTURES_PER_BATCH) throw new HttpError(422, `Send at most ${MAX_CAPTURES_PER_BATCH} captured pages at once.`);
   const captures = rawCaptures.map(normalizeBrowserCapture);
   const totalBytes = captures.reduce((sum, capture) => sum + capture.bodyBytes, 0);
@@ -120,12 +126,17 @@ export function validateBrowserCaptureBatch(input) {
 
 export async function authorizeBrowserCaptureExperience(whopSession, experienceId, options = {}) {
   const retrieve = options.retrieveExperienceFn || retrieveExperience;
+  const inspect = options.inspectWhopAppFn || inspectWhopApp;
   const experience = await retrieve(whopSession, experienceId);
-  const appId = String(experience?.app?.id || '').trim();
-  if (appId !== BETTER_CONTENT_APP_ID) {
-    throw new HttpError(422, 'The browser capture bridge is currently restricted to the exact Better Content Whop app.');
+  const metadata = await inspect(whopSession, experience);
+  const reader = resolveWhopAppReader(metadata, experience);
+  if (reader.status !== 'available' || reader.mode !== 'browser-capture') {
+    throw new HttpError(422, `SniperPlug does not have an authorized rendered-app reader for ${String(experience?.app?.name || 'this Whop app').trim() || 'this Whop app'}. Access can still be valid without a supported reader.`);
   }
-  return experience;
+  if (options.pageUrl && !browserCaptureMatchesReader(reader, options.pageUrl)) {
+    throw new HttpError(422, `Browser capture was rejected because the rendered frame host does not match Whop’s resolved ${reader.appName || 'app'} origin.`);
+  }
+  return { ...experience, _sniperplugAppReader: reader };
 }
 
 function currentMembershipAllowsExperience(experience, companies) {
@@ -289,9 +300,10 @@ async function writeCaptureDraft(env, principalValue, experience, capture) {
   const db = await ensureImporterWorkspaceSchema(env);
   const approvedSource = await requireApprovedSource(env, principalId, capture.experienceId);
   const storageExperienceId = String(approvedSource.experience_id || '').trim();
-  if (!storageExperienceId) throw new HttpError(409, 'The approved Better Content source is missing its account-scoped storage identity. Refresh the source before retrying.');
+  const appName = String(experience?._sniperplugAppReader?.appName || experience?.app?.name || 'Whop app').trim() || 'Whop app';
+  if (!storageExperienceId) throw new HttpError(409, `The approved ${appName} source is missing its account-scoped storage identity. Refresh the source before retrying.`);
 
-  const prepared = await prepareGuideBody(capture.bodyMarkdown, { source: `Better Content browser capture “${capture.title}”` });
+  const prepared = await prepareGuideBody(capture.bodyMarkdown, { source: `${appName} browser capture “${capture.title}”` });
   if (new TextEncoder().encode(prepared.body).byteLength > MAX_CAPTURE_BODY_BYTES) throw new HttpError(422, `“${capture.title}” is too large to import safely.`);
 
   const sourceKey = await sourceKeyForCapture(capture);
@@ -331,20 +343,23 @@ async function writeCaptureDraft(env, principalValue, experience, capture) {
   const now = new Date().toISOString();
   const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
   const policy = captureImportPolicy();
-  const sourceGroup = String(experience?.company?.title || experience?.company?.name || 'Better Content').trim().slice(0, 120);
+  const sourceGroup = String(experience?.company?.title || experience?.company?.name || appName).trim().slice(0, 120);
   const images = capture.images.map((image, index) => ({
     id: `browser-image-${index + 1}`,
     filename: image.alt || `Captured image ${index + 1}`,
     contentType: null,
     url: image.url,
     role: 'browser-captured-image',
-    reviewReason: 'This image URL came from the rendered Better Content page. Confirm it is durable or replace it with account-owned media before publishing or exporting.',
+    reviewReason: `This image URL came from the rendered ${appName} page. Confirm it is durable or replace it with account-owned media before publishing or exporting.`,
   }));
+  const reader = experience?._sniperplugAppReader || {};
   const sourceMeta = {
     type: BROWSER_CAPTURE_SOURCE_TYPE,
     captureMethod: 'extension-dom',
-    appId: BETTER_CONTENT_APP_ID,
-    appName: String(experience?.app?.name || 'Better Content').trim(),
+    appId: String(reader.appId || experience?.app?.id || '').trim() || null,
+    appName,
+    readerVerifiedBy: reader.verifiedBy || null,
+    readerFrameHost: reader.frameHost || null,
     experienceTitle: String(experience?.name || '').trim() || null,
     pageUrl: capture.pageUrl,
     pageIdentity: capture.pageIdentity,
@@ -449,6 +464,8 @@ async function writeCaptureDraft(env, principalValue, experience, capture) {
     title: saved.title,
     status: saved.status,
     category,
+    appId: sourceMeta.appId,
+    appName,
     action: existing ? 'updated-draft' : 'created-draft',
     imageReviewCount: images.length,
   };
@@ -461,27 +478,33 @@ export async function importBrowserCaptures(env, principalValue, whopSession, in
   const companies = membershipCompanies(memberships);
   const experienceCache = new Map();
   const results = [];
+  const appIds = new Set();
 
   for (const capture of captures) {
     let experience = experienceCache.get(capture.experienceId);
     if (!experience) {
-      experience = await authorizeBrowserCaptureExperience(whopSession, capture.experienceId);
+      experience = await authorizeBrowserCaptureExperience(whopSession, capture.experienceId, { pageUrl: capture.pageUrl });
+      const appName = String(experience?._sniperplugAppReader?.appName || experience?.app?.name || 'Whop app').trim() || 'Whop app';
       if (!currentMembershipAllowsExperience(experience, companies)) {
-        throw new HttpError(403, 'The connected Whop account no longer has a current membership that grants access to this Better Content experience.');
+        throw new HttpError(403, `The connected Whop account no longer has a current membership that grants access to this ${appName} experience.`);
       }
       const decision = await sourceDecision(env, principalId, experience, capture.experienceId);
       if (decision.decision === 'disapproved') {
-        throw new HttpError(409, 'This Better Content source is disapproved in this SniperPlug account. Approve it before capturing pages from it.');
+        throw new HttpError(409, `This ${appName} source is disapproved in this SniperPlug account. Approve it before capturing pages from it.`);
       }
       if (decision.decision !== 'approved') await saveSourceDecision(env, principalId, experience, capture.experienceId, 'approved');
       experienceCache.set(capture.experienceId, experience);
     }
+    const appId = String(experience?._sniperplugAppReader?.appId || experience?.app?.id || '').trim();
+    if (appId) appIds.add(appId);
     results.push(await writeCaptureDraft(env, principalId, experience, capture));
   }
 
+  const resolvedAppIds = [...appIds];
   return {
     captureMethod: 'extension-dom',
-    appId: BETTER_CONTENT_APP_ID,
+    appId: resolvedAppIds.length === 1 ? resolvedAppIds[0] : null,
+    appIds: resolvedAppIds,
     received: captures.length,
     created: results.filter((result) => result.action === 'created-draft').length,
     updated: results.filter((result) => result.action === 'updated-draft').length,

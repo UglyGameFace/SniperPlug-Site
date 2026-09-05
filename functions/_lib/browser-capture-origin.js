@@ -16,7 +16,7 @@ export function requireWhopAppFrameCaptures(input) {
 
   for (const capture of captures) {
     if (!isWhopAppFrameUrl(capture?.pageUrl || capture?.frameUrl)) {
-      throw new HttpError(422, 'Browser capture was rejected because it did not come from the rendered Better Content app frame. Reopen the individual guide and capture it again.');
+      throw new HttpError(422, 'Browser capture was rejected because it did not come from a rendered Better Content app frame or another supported HTTPS Whop app frame. Reopen the individual content page and capture it again.');
     }
   }
 
