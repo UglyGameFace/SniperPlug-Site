@@ -1,7 +1,6 @@
-import { OWNER_SESSION_ID } from '../../../_lib/auth.js';
-import { appendCookie, HttpError, redirect } from '../../../_lib/http.js';
+import { appendCookie, redirect } from '../../../_lib/http.js';
 import { clearWhopOAuthFlowCookie, requireWhopOAuthFlow } from '../../../_lib/whop-oauth-flow.js';
-import { finishWhopOAuth, purgeLegacyWhopSessions } from '../../../_lib/whop.js';
+import { finishWhopOAuth } from '../../../_lib/whop.js';
 
 function oauthErrorRedirect(request, error) {
   const url = new URL('/control-center/', request.url);
@@ -15,12 +14,7 @@ export async function onRequest(context) {
   let response;
   try {
     await requireWhopOAuthFlow(context.request);
-    const result = await finishWhopOAuth(context.request, context.env);
-    if (result.adminSessionId !== OWNER_SESSION_ID) {
-      await purgeLegacyWhopSessions(context.env);
-      throw new HttpError(403, 'Whop OAuth returned to a different Control Center session. Start the connection again.');
-    }
-    await purgeLegacyWhopSessions(context.env);
+    await finishWhopOAuth(context.request, context.env);
     response = redirect(`${new URL(context.request.url).origin}/control-center/?whop=connected#whop-importer`);
   } catch (error) {
     response = oauthErrorRedirect(context.request, error);
