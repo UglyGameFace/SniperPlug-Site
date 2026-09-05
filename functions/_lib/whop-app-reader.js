@@ -65,17 +65,18 @@ export function resolveWhopAppReader(app, experience = null) {
   const normalizedName = normalizeName(appName);
   const metadataResolved = app?.metadataStatus === 'resolved';
   const resolvedOrigin = safeHttpsUrl(app?.origin);
-  const resolvedHost = whopAppFrameHost(resolvedOrigin);
+  const metadataFrameHost = whopAppFrameHost(resolvedOrigin);
 
   if (appId === BETTER_CONTENT_APP_ID) {
-    const origin = resolvedHost ? resolvedOrigin : BETTER_CONTENT_CANONICAL_ORIGIN;
+    const origin = metadataFrameHost ? resolvedOrigin : BETTER_CONTENT_CANONICAL_ORIGIN;
     return {
       status: 'available',
       mode: 'browser-capture',
       appId,
       appName,
       origin,
-      frameHost: whopAppFrameHost(origin),
+      metadataFrameHost: whopAppFrameHost(origin),
+      framePolicy: 'whop-app-frame',
       verifiedBy: metadataResolved && app?.verified ? 'whop-app-metadata+stable-app-id' : 'stable-app-id',
       requiresRenderedMemberPage: true,
       autoPublishEligible: false,
@@ -87,7 +88,7 @@ export function resolveWhopAppReader(app, experience = null) {
     && metadataResolved
     && app?.verified === true
     && RENDERED_CONTENT_APP_NAMES.has(normalizedName)
-    && resolvedHost
+    && metadataFrameHost
   ) {
     return {
       status: 'available',
@@ -95,7 +96,8 @@ export function resolveWhopAppReader(app, experience = null) {
       appId,
       appName,
       origin: resolvedOrigin,
-      frameHost: resolvedHost,
+      metadataFrameHost,
+      framePolicy: 'whop-app-frame',
       verifiedBy: 'whop-app-metadata+stable-app-id',
       requiresRenderedMemberPage: true,
       autoPublishEligible: false,
@@ -145,14 +147,13 @@ export function resolveWhopAppReader(app, experience = null) {
 
 export function browserCaptureMatchesReader(reader, pageUrl) {
   if (reader?.status !== 'available' || reader?.mode !== 'browser-capture') return false;
-  const expectedHost = String(reader?.frameHost || '').trim().toLowerCase();
-  const actualHost = whopAppFrameHost(pageUrl);
-  return Boolean(expectedHost && actualHost && expectedHost === actualHost);
+  if (reader?.framePolicy !== 'whop-app-frame') return false;
+  return Boolean(whopAppFrameHost(pageUrl));
 }
 
 export function appReaderReason(reader) {
   if (reader?.status === 'available' && reader?.mode === 'browser-capture') {
-    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the verified rendered-app capture path. The captured frame must match the app origin Whop resolved, and every captured guide remains a private draft until account review.`;
+    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the rendered-app capture path. Captures must stay inside Whop’s HTTPS app-frame boundary; the server separately re-verifies the exact Experience, membership, and app identity before creating a private draft.`;
   }
   if (reader?.status === 'contract-advertised') {
     const interfaceName = reader.documentedInterface === 'skills' ? 'Skills interface' : 'OpenAPI contract';
