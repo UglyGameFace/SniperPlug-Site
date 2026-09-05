@@ -21,8 +21,9 @@ import {
   removeOtherCourseVideos,
 } from './course-video.js';
 import { acquireImportLeases, releaseImportLeases, renewImportLeases } from './import-leases.js';
-import { HttpError, requireDatabase } from './http.js';
+import { HttpError } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom, upstreamSourceKey } from './importer-workspace.js';
 import { mediaMarkdown, mirrorWhopMedia } from './media.js';
 import { pruneDetachedGuideMedia } from './media-storage.js';
 import { whopApi } from './whop.js';
@@ -38,7 +39,7 @@ function nextVersion(previous = '') {
   return now.toISOString();
 }
 
-async function reserveGuideVersion(db, id, expectedUpdatedAt) {
+async function reserveGuideVersion(db, principalId, id, expectedUpdatedAt) {
   const expected = String(expectedUpdatedAt || '').trim();
   if (!expected) {
     throw new HttpError(409, 'Refresh this guide before saving so SniperPlug can confirm you are editing the newest version.', {
@@ -47,16 +48,21 @@ async function reserveGuideVersion(db, id, expectedUpdatedAt) {
     });
   }
   const reservation = nextVersion(expected);
-  const result = await db.prepare('UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?')
-    .bind(reservation, id, expected).run();
+  const result = await db.prepare(`
+    UPDATE guides SET updated_at = ?
+    WHERE principal_id = ? AND id = ? AND updated_at = ?
+  `).bind(reservation, principalId, id, expected).run();
   if (Number(result.meta?.changes || 0) !== 1) {
-    const current = await db.prepare('SELECT updated_at, status FROM guides WHERE id = ?').bind(id).first();
+    const current = await db.prepare(`
+      SELECT updated_at, status FROM guides WHERE principal_id = ? AND id = ?
+    `).bind(principalId, id).first();
+    if (!current) throw new HttpError(404, 'Guide draft not found in this account workspace.');
     throw new HttpError(409, 'This guide changed in another tab or workflow. Your older copy was not saved; refresh to load the newest version.', {
       code: 'guide_version_stale',
       guideId: Number(id),
       expectedUpdatedAt: expected,
-      currentUpdatedAt: current?.updated_at || null,
-      currentStatus: current?.status || null,
+      currentUpdatedAt: current.updated_at || null,
+      currentStatus: current.status || null,
     });
   }
   return reservation;
@@ -72,19 +78,24 @@ function cleanupMatchesSavedGuide(row, saved, attachments) {
   return JSON.stringify(safeJson(row.attachment_json, {})) === JSON.stringify(attachments || {});
 }
 
-export async function saveGuideDraft(env, id, input) {
-  const db = requireDatabase(env);
-  const before = await db.prepare('SELECT integrity_json, updated_at FROM guides WHERE id = ?').bind(id).first();
-  if (!before) throw new HttpError(404, 'Guide draft not found.');
+export async function saveGuideDraft(env, principalValue, id, input) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const before = await db.prepare(`
+    SELECT integrity_json, updated_at FROM guides WHERE principal_id = ? AND id = ?
+  `).bind(principalId, id).first();
+  if (!before) throw new HttpError(404, 'Guide draft not found in this account workspace.');
   const previousIntegrity = safeJson(before.integrity_json, {});
   const expectedUpdatedAt = String(input?.expectedUpdatedAt || '').trim();
-  const reservation = await reserveGuideVersion(db, id, expectedUpdatedAt);
+  const reservation = await reserveGuideVersion(db, principalId, id, expectedUpdatedAt);
   let saved;
   try {
-    saved = await saveGuideDraftBase(env, id, input);
+    saved = await saveGuideDraftBase(env, principalId, id, input);
   } catch (error) {
-    await db.prepare('UPDATE guides SET updated_at = ? WHERE id = ? AND updated_at = ?')
-      .bind(expectedUpdatedAt, id, reservation).run().catch(() => null);
+    await db.prepare(`
+      UPDATE guides SET updated_at = ?
+      WHERE principal_id = ? AND id = ? AND updated_at = ?
+    `).bind(expectedUpdatedAt, principalId, id, reservation).run().catch(() => null);
     throw error;
   }
   const pruned = await pruneDetachedGuideMedia(env, id, saved.body);
@@ -98,11 +109,12 @@ export async function saveGuideDraft(env, id, input) {
     quarantinedAt: null,
     publishHoldReason: null,
     editedByOwnerAt: new Date().toISOString(),
+    editedByPrincipalId: principalId,
   };
   const cleaned = await db.prepare(`
     SELECT title, description, category_slug, body_markdown, status, featured, attachment_json, updated_at
-    FROM guides WHERE id = ?
-  `).bind(id).first();
+    FROM guides WHERE principal_id = ? AND id = ?
+  `).bind(principalId, id).first();
   if (!cleanupMatchesSavedGuide(cleaned, saved, attachments)) {
     throw new HttpError(409, 'The guide changed while SniperPlug was cleaning up detached media. The newer version was preserved; refresh before editing again.', {
       code: 'guide_save_cleanup_stale',
@@ -114,8 +126,8 @@ export async function saveGuideDraft(env, id, input) {
   const finalizedAt = nextVersion(cleaned.updated_at);
   const finalized = await db.prepare(`
     UPDATE guides SET integrity_json = ?, updated_at = ?
-    WHERE id = ? AND updated_at = ? AND status = 'draft'
-  `).bind(JSON.stringify(nextIntegrity), finalizedAt, id, cleaned.updated_at).run();
+    WHERE principal_id = ? AND id = ? AND updated_at = ? AND status = 'draft'
+  `).bind(JSON.stringify(nextIntegrity), finalizedAt, principalId, id, cleaned.updated_at).run();
   if (Number(finalized.meta?.changes || 0) !== 1) {
     throw new HttpError(409, 'The guide changed while SniperPlug was finishing its save. The newer version was preserved; refresh before editing again.', {
       code: 'guide_save_finalize_stale',
@@ -146,7 +158,8 @@ function normalizedFilename(value, fallback) {
 }
 
 async function courseSupplementFiles(env, whopSession, row, mediaContext = null) {
-  if (!String(row.source_key || '').startsWith('course-lesson:') || !row.source_post_id) {
+  const logicalSourceKey = upstreamSourceKey(row);
+  if (!logicalSourceKey.startsWith('course-lesson:') || !row.source_post_id) {
     await removeOtherCourseVideos(env, row.id).catch(() => null);
     return { files: [], videoKey: null };
   }
@@ -209,7 +222,7 @@ async function courseSupplementFiles(env, whopSession, row, mediaContext = null)
   const registration = await registerCourseVideo(env, {
     guideId: row.id,
     lessonId: lesson.id || row.source_post_id,
-    sourceKey: row.source_key,
+    sourceKey: logicalSourceKey,
     title: label,
     asset,
   });
@@ -287,11 +300,14 @@ function uniqueFiles(values) {
   return output;
 }
 
-async function enhanceGuideMedia(env, whopSession, result) {
+async function enhanceGuideMedia(env, principalValue, whopSession, result) {
   if (!result?.guideId || !['created-draft', 'updated-draft', 'unchanged'].includes(result.action)) return result;
   if (result.action === 'unchanged' && !String(result.sourceKey || '').startsWith('course-lesson:')) return result;
-  const db = requireDatabase(env);
-  const row = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(result.sourceKey).first();
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const row = await db.prepare(`
+    SELECT * FROM guides WHERE principal_id = ? AND upstream_source_key = ?
+  `).bind(principalId, result.sourceKey).first();
   if (!row) return result;
   const expectedUpdatedAt = String(row.updated_at || '');
   const expectedFingerprint = row.source_fingerprint == null ? null : String(row.source_fingerprint);
@@ -311,7 +327,7 @@ async function enhanceGuideMedia(env, whopSession, result) {
   ]);
   const preparedFiles = [];
   for (const file of files) {
-    const preparedFile = file.sourceBacked ? file : await mirrorWhopMedia(env, file, result.sourceKey);
+    const preparedFile = file.sourceBacked ? file : await mirrorWhopMedia(env, file, row.source_key);
     if (file.optionalMirror && (!preparedFile.durable || !preparedFile.url)) continue;
     preparedFiles.push(preparedFile);
   }
@@ -336,7 +352,7 @@ async function enhanceGuideMedia(env, whopSession, result) {
   const updatedAt = new Date().toISOString();
   const write = await db.prepare(`
     UPDATE guides SET body_markdown = ?, attachment_json = ?, integrity_json = ?, updated_at = ?
-    WHERE id = ? AND updated_at = ? AND source_fingerprint IS ?
+    WHERE principal_id = ? AND id = ? AND updated_at = ? AND source_fingerprint IS ?
   `).bind(
     prepared.body,
     JSON.stringify({
@@ -347,6 +363,7 @@ async function enhanceGuideMedia(env, whopSession, result) {
     }),
     JSON.stringify({ ...currentIntegrity, ...integrity, mediaMirrored: mirroredMedia, mediaReviewCount: reviewCount }),
     updatedAt,
+    principalId,
     row.id,
     expectedUpdatedAt,
     expectedFingerprint,
@@ -362,14 +379,15 @@ async function enhanceGuideMedia(env, whopSession, result) {
   return { ...result, mirroredMedia, attachmentReviewCount: reviewCount };
 }
 
-export async function importApprovedPosts(env, whopSession, input) {
-  const lease = await acquireImportLeases(env, input?.sourceKeys);
+export async function importApprovedPosts(env, principalValue, whopSession, input) {
+  const principalId = principalIdFrom(principalValue);
+  const lease = await acquireImportLeases(env, principalId, input?.sourceKeys);
   try {
-    const output = await importBase(env, whopSession, input);
+    const output = await importBase(env, principalId, whopSession, input);
     const results = [];
     for (const result of output.results || []) {
       await renewImportLeases(env, lease);
-      const enhanced = await enhanceGuideMedia(env, whopSession, result);
+      const enhanced = await enhanceGuideMedia(env, principalId, whopSession, result);
       const { _mediaContext, ...publicResult } = enhanced || {};
       results.push(publicResult);
     }
