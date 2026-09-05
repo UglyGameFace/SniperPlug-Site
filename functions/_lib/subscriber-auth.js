@@ -1,4 +1,6 @@
 import {
+  OWNER_PRINCIPAL_ID,
+  requireAccount,
   subscriberPrincipalIdForUser,
   whopUserIdFromProfile,
 } from './auth.js';
@@ -105,6 +107,13 @@ export async function verifySubscriberAccountAccess(request, env, account) {
   return { ...account, entitlement: await verifySubscriberEntitlement(whopSession, env) };
 }
 
+export async function requireControlAccount(request, env) {
+  const account = await requireAccount(request, env);
+  if (account.kind === 'owner' && account.principalId === OWNER_PRINCIPAL_ID) return account;
+  if (account.kind === 'subscriber') return verifySubscriberAccountAccess(request, env, account);
+  throw new HttpError(403, 'This SniperPlug account cannot open the importer workspace.');
+}
+
 function pendingSubscriberKey() {
   return `${PENDING_SUBSCRIBER_PREFIX}${randomToken(24)}`;
 }
@@ -146,38 +155,35 @@ async function promotePendingWhopSession(env, pendingPrincipalId, principalId) {
     });
   }
   const now = new Date().toISOString();
-  const writes = [
-    db.prepare(`
-      INSERT INTO whop_sessions (
-        admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
-        user_json, token_version, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(admin_session_id) DO UPDATE SET
-        access_cipher = excluded.access_cipher,
-        refresh_cipher = excluded.refresh_cipher,
-        token_type = excluded.token_type,
-        scopes = excluded.scopes,
-        expires_at = excluded.expires_at,
-        user_json = excluded.user_json,
-        token_version = whop_sessions.token_version + 1,
-        updated_at = excluded.updated_at
-    `).bind(
-      principalId,
-      row.access_cipher,
-      row.refresh_cipher,
-      row.token_type,
-      row.scopes,
-      row.expires_at,
-      row.user_json,
-      Math.max(1, Number(row.token_version || 1)),
-      row.created_at || now,
-      now,
-    ),
-    db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(pendingPrincipalId),
-    db.prepare('DELETE FROM whop_oauth_states WHERE admin_session_id = ?').bind(pendingPrincipalId),
-    db.prepare('DELETE FROM whop_refresh_leases WHERE admin_session_id = ?').bind(pendingPrincipalId),
-  ];
-  await db.batch(writes);
+  await db.prepare(`
+    INSERT INTO whop_sessions (
+      admin_session_id, access_cipher, refresh_cipher, token_type, scopes, expires_at,
+      user_json, token_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(admin_session_id) DO UPDATE SET
+      access_cipher = excluded.access_cipher,
+      refresh_cipher = excluded.refresh_cipher,
+      token_type = excluded.token_type,
+      scopes = excluded.scopes,
+      expires_at = excluded.expires_at,
+      user_json = excluded.user_json,
+      token_version = whop_sessions.token_version + 1,
+      updated_at = excluded.updated_at
+  `).bind(
+    principalId,
+    row.access_cipher,
+    row.refresh_cipher,
+    row.token_type,
+    row.scopes,
+    row.expires_at,
+    row.user_json,
+    Math.max(1, Number(row.token_version || 1)),
+    row.created_at || now,
+    now,
+  ).run();
+  await db.prepare('DELETE FROM whop_sessions WHERE admin_session_id = ?').bind(pendingPrincipalId).run();
+  await db.prepare('DELETE FROM whop_oauth_states WHERE admin_session_id = ?').bind(pendingPrincipalId).run().catch(() => null);
+  await db.prepare('DELETE FROM whop_refresh_leases WHERE admin_session_id = ?').bind(pendingPrincipalId).run().catch(() => null);
   const promoted = await db.prepare('SELECT admin_session_id, user_json FROM whop_sessions WHERE admin_session_id = ?').bind(principalId).first();
   if (!promoted || String(promoted.admin_session_id || '') !== principalId) {
     throw new HttpError(409, 'SniperPlug could not confirm the subscriber Whop connection under the stable account principal.', {
