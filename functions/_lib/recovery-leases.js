@@ -1,5 +1,6 @@
 import { HttpError, requireDatabase } from './http.js';
 import { randomToken } from './crypto.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom } from './importer-workspace.js';
 
 const RECOVERY_LEASE_MS = 5 * 60_000;
 
@@ -25,8 +26,17 @@ async function removeExpired(db, nowIso) {
   await db.prepare('DELETE FROM guide_recovery_leases WHERE expires_at <= ?').bind(nowIso).run();
 }
 
-export async function acquireRecoveryLease(env, guideId) {
-  const db = requireDatabase(env);
+async function requireOwnedGuide(db, principalId, guideId) {
+  const row = await db.prepare('SELECT id FROM guides WHERE principal_id = ? AND id = ?')
+    .bind(principalId, guideId).first();
+  if (!row) throw new HttpError(404, 'Guide not found in this account workspace.');
+  return row;
+}
+
+export async function acquireRecoveryLease(env, principalValue, guideId) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  await requireOwnedGuide(db, principalId, guideId);
   await ensureRecoveryLeaseTable(db);
   const now = new Date();
   const nowIso = now.toISOString();
@@ -42,12 +52,13 @@ export async function acquireRecoveryLease(env, guideId) {
       guideId: Number(guideId),
     });
   }
-  return { guideId: Number(guideId), token };
+  return { guideId: Number(guideId), principalId, token };
 }
 
 export async function renewRecoveryLease(env, lease) {
-  if (!lease?.guideId || !lease?.token) throw new HttpError(409, 'Recovery ownership is missing. Refresh before retrying.');
-  const db = requireDatabase(env);
+  if (!lease?.guideId || !lease?.principalId || !lease?.token) throw new HttpError(409, 'Recovery ownership is missing. Refresh before retrying.');
+  const db = await ensureImporterWorkspaceSchema(env);
+  await requireOwnedGuide(db, lease.principalId, lease.guideId);
   const now = new Date();
   const result = await db.prepare(`
     UPDATE guide_recovery_leases
@@ -64,8 +75,9 @@ export async function renewRecoveryLease(env, lease) {
 }
 
 export async function assertRecoveryLeaseOwned(env, lease) {
-  if (!lease?.guideId || !lease?.token) throw new HttpError(409, 'Recovery ownership is missing.');
-  const db = requireDatabase(env);
+  if (!lease?.guideId || !lease?.principalId || !lease?.token) throw new HttpError(409, 'Recovery ownership is missing.');
+  const db = await ensureImporterWorkspaceSchema(env);
+  await requireOwnedGuide(db, lease.principalId, lease.guideId);
   const nowIso = new Date().toISOString();
   await removeExpired(db, nowIso);
   const row = await db.prepare(`
@@ -81,8 +93,10 @@ export async function assertRecoveryLeaseOwned(env, lease) {
   return true;
 }
 
-export async function assertGuideNotRecovering(env, guideId) {
-  const db = requireDatabase(env);
+export async function assertGuideNotRecovering(env, principalValue, guideId) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  await requireOwnedGuide(db, principalId, guideId);
   await ensureRecoveryLeaseTable(db);
   const nowIso = new Date().toISOString();
   await removeExpired(db, nowIso);

@@ -460,7 +460,7 @@ async function capability(session, experience, grantedScopes, cache, budget, wri
   };
 }
 
-async function classifyCompanySources(session, env, listing, grantedScopes, capabilityCache, budget, writes) {
+async function classifyCompanySources(session, env, principalValue, listing, grantedScopes, capabilityCache, budget, writes) {
   const sources = [];
   const externalApps = [];
   const failures = new Set(listing.failures || []);
@@ -493,7 +493,7 @@ async function classifyCompanySources(session, env, listing, grantedScopes, capa
     experience.resolved_source_type = details.sourceType;
     let savedSource;
     try {
-      savedSource = await sourceDecision(env, experience, experience.id);
+      savedSource = await sourceDecision(env, principalValue, experience, experience.id);
     } catch (error) {
       failures.add(discoveryFailure(`${experience.name || experience.id} saved decision`, error));
       savedSource = {
@@ -515,7 +515,7 @@ async function classifyCompanySources(session, env, listing, grantedScopes, capa
   return { company: listing.company, sources, externalApps, failures: [...failures], error };
 }
 
-export async function discoverWhopSources(session, env, membershipSnapshot = null) {
+export async function discoverWhopSources(session, env, principalValue, membershipSnapshot = null) {
   const memberships = Array.isArray(membershipSnapshot)
     ? membershipSnapshot
     : await loadWhopMemberships(session);
@@ -544,6 +544,7 @@ export async function discoverWhopSources(session, env, membershipSnapshot = nul
   const results = await mapConcurrent(listings, (listing) => classifyCompanySources(
     session,
     env,
+    principalValue,
     listing,
     grantedScopes,
     capabilityCache,

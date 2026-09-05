@@ -1,5 +1,11 @@
-import { HttpError, requireDatabase } from './http.js';
+import { HttpError } from './http.js';
 import { experienceIdFrom } from './whop.js';
+import {
+  ensureImporterWorkspaceSchema,
+  principalIdFrom,
+  sourceStorageId,
+  upstreamExperienceId,
+} from './importer-workspace.js';
 
 const MAX_SOURCE_DECISIONS = 100;
 
@@ -33,14 +39,10 @@ function experienceLabel(experience) {
   return String(experience?.company?.title || experience?.company?.name || experience?.name || 'Whop source').trim().slice(0, 120);
 }
 
-export async function sourceDecision(env, experience, requestedId) {
-  const db = requireDatabase(env);
-  const experienceId = experienceIdFrom(requestedId || experience?.id);
-  if (!experienceId) throw new HttpError(422, 'A valid Whop experience ID is required.');
-  const saved = await db.prepare('SELECT * FROM whop_sources WHERE experience_id = ?').bind(experienceId).first();
+function clientSourceState(saved, experience, logicalExperienceId) {
   const suggestion = suggestedGroup(experience);
   return {
-    experienceId,
+    experienceId: logicalExperienceId,
     label: saved?.label || experienceLabel(experience),
     decision: saved?.decision || 'pending',
     defaultGroup: saved?.default_group || suggestion?.key || null,
@@ -48,6 +50,33 @@ export async function sourceDecision(env, experience, requestedId) {
     suggested: Boolean(suggestion),
     saved: Boolean(saved),
   };
+}
+
+function legacyDiscoveryRead(principalValue, experience, requestedId) {
+  return principalValue && typeof principalValue === 'object'
+    && typeof experience === 'string'
+    && requestedId === undefined
+    && /^exp_[A-Za-z0-9_-]+$/.test(experience);
+}
+
+export async function sourceDecision(env, principalValue, experience, requestedId) {
+  // discovery.js historically called sourceDecision(env, experience, id) without
+  // an authenticated principal. Never default that read to the owner tenant. It
+  // returns pending only; /api/discover hydrates real saved decisions afterward
+  // with the authenticated principal.
+  if (legacyDiscoveryRead(principalValue, experience, requestedId)) {
+    return clientSourceState(null, principalValue, experience);
+  }
+
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const logicalExperienceId = experienceIdFrom(requestedId || experience?.id);
+  if (!logicalExperienceId) throw new HttpError(422, 'A valid Whop experience ID is required.');
+  const saved = await db.prepare(`
+    SELECT * FROM whop_sources
+    WHERE principal_id = ? AND upstream_experience_id = ?
+  `).bind(principalId, logicalExperienceId).first();
+  return clientSourceState(saved, experience, logicalExperienceId);
 }
 
 function normalizedEntries(entries) {
@@ -61,21 +90,25 @@ function normalizedEntries(entries) {
     : { experience: entry, requestedId: entry?.id });
 }
 
-async function verifiedSourceRows(db, ids) {
+async function verifiedSourceRows(db, principalId, ids) {
   if (!ids.length) return [];
   const placeholders = ids.map(() => '?').join(',');
-  const rows = await db.prepare(`SELECT * FROM whop_sources WHERE experience_id IN (${placeholders})`).bind(...ids).all();
+  const rows = await db.prepare(`
+    SELECT * FROM whop_sources
+    WHERE principal_id = ? AND upstream_experience_id IN (${placeholders})
+  `).bind(principalId, ...ids).all();
   return rows.results || [];
 }
 
-export async function saveSourceDecisions(env, entries, decision) {
+export async function saveSourceDecisions(env, principalValue, entries, decision) {
   if (!['approved', 'disapproved'].includes(decision)) throw new HttpError(422, 'Choose Approve or Disapprove.');
-  const db = requireDatabase(env);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const prepared = [];
   const seen = new Set();
 
   for (const entry of normalizedEntries(entries)) {
-    const state = await sourceDecision(env, entry.experience, entry.requestedId);
+    const state = await sourceDecision(env, principalId, entry.experience, entry.requestedId);
     if (seen.has(state.experienceId)) continue;
     seen.add(state.experienceId);
     prepared.push({ experience: entry.experience, state });
@@ -83,39 +116,46 @@ export async function saveSourceDecisions(env, entries, decision) {
   if (!prepared.length) throw new HttpError(422, 'Choose at least one unique Whop source.');
 
   const now = new Date().toISOString();
-  const statements = prepared.map(({ experience, state }) => db.prepare(`
-    INSERT INTO whop_sources (
-      experience_id, label, company_id, company_title, experience_name,
-      decision, default_group, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(experience_id) DO UPDATE SET
-      label = excluded.label,
-      company_id = excluded.company_id,
-      company_title = excluded.company_title,
-      experience_name = excluded.experience_name,
-      decision = excluded.decision,
-      default_group = excluded.default_group,
-      updated_at = excluded.updated_at
-  `).bind(
-    state.experienceId,
-    experienceLabel(experience),
-    String(experience?.company?.id || '') || null,
-    String(experience?.company?.title || experience?.company?.name || '') || null,
-    String(experience?.name || '') || null,
-    decision,
-    state.defaultGroup,
-    now,
-    now,
-  ));
+  const statements = [];
+  for (const { experience: itemExperience, state } of prepared) {
+    const storageId = await sourceStorageId(principalId, state.experienceId);
+    statements.push(db.prepare(`
+      INSERT INTO whop_sources (
+        experience_id, principal_id, upstream_experience_id,
+        label, company_id, company_title, experience_name,
+        decision, default_group, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(principal_id, upstream_experience_id) DO UPDATE SET
+        label = excluded.label,
+        company_id = excluded.company_id,
+        company_title = excluded.company_title,
+        experience_name = excluded.experience_name,
+        decision = excluded.decision,
+        default_group = excluded.default_group,
+        updated_at = excluded.updated_at
+    `).bind(
+      storageId,
+      principalId,
+      state.experienceId,
+      experienceLabel(itemExperience),
+      String(itemExperience?.company?.id || '') || null,
+      String(itemExperience?.company?.title || itemExperience?.company?.name || '') || null,
+      String(itemExperience?.name || '') || null,
+      decision,
+      state.defaultGroup,
+      now,
+      now,
+    ));
+  }
   await db.batch(statements);
 
   const ids = prepared.map(({ state }) => state.experienceId);
-  const rows = await verifiedSourceRows(db, ids);
-  const byId = new Map(rows.map((row) => [String(row.experience_id), row]));
+  const rows = await verifiedSourceRows(db, principalId, ids);
+  const byId = new Map(rows.map((row) => [upstreamExperienceId(row), row]));
   const missing = ids.filter((id) => !byId.has(id));
   const mismatched = ids.filter((id) => byId.get(id)?.decision !== decision);
   if (missing.length || mismatched.length) {
-    throw new HttpError(500, 'SniperPlug could not confirm every Whop source decision in D1. Refresh before retrying.', {
+    throw new HttpError(500, 'SniperPlug could not confirm every Whop source decision in this account workspace. Refresh before retrying.', {
       code: 'source_decision_unconfirmed',
       requested: ids.length,
       confirmed: ids.length - new Set([...missing, ...mismatched]).size,
@@ -133,24 +173,33 @@ export async function saveSourceDecisions(env, entries, decision) {
   }));
 }
 
-export async function saveSourceDecision(env, experience, requestedId, decision) {
-  const saved = await saveSourceDecisions(env, [{ experience, requestedId }], decision);
+export async function saveSourceDecision(env, principalValue, experience, requestedId, decision) {
+  const saved = await saveSourceDecisions(env, principalValue, [{ experience, requestedId }], decision);
   return saved[0];
 }
 
-export async function requireApprovedSource(env, experienceId) {
+export async function requireApprovedSource(env, principalValue, experienceId) {
+  const principalId = principalIdFrom(principalValue);
   const id = experienceIdFrom(experienceId);
-  const db = requireDatabase(env);
-  const source = id ? await db.prepare('SELECT * FROM whop_sources WHERE experience_id = ?').bind(id).first() : null;
+  const db = await ensureImporterWorkspaceSchema(env);
+  const source = id ? await db.prepare(`
+    SELECT * FROM whop_sources
+    WHERE principal_id = ? AND upstream_experience_id = ?
+  `).bind(principalId, id).first() : null;
   if (!source || source.decision !== 'approved') {
-    throw new HttpError(403, 'Approve this exact Whop source before scanning or importing its content.');
+    throw new HttpError(403, 'Approve this exact Whop source in this SniperPlug account before scanning or importing its content.');
   }
   return source;
 }
 
-export async function listSourceOptions(env) {
-  const db = requireDatabase(env);
-  const rows = await db.prepare('SELECT * FROM whop_sources ORDER BY label, experience_name, experience_id').all();
+export async function listSourceOptions(env, principalValue) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const rows = await db.prepare(`
+    SELECT * FROM whop_sources
+    WHERE principal_id = ?
+    ORDER BY label, experience_name, upstream_experience_id
+  `).bind(principalId).all();
   const sources = rows.results || [];
   const output = [];
   for (const group of DEFAULT_WHOP_GROUPS) {
@@ -158,25 +207,31 @@ export async function listSourceOptions(env) {
     if (!matches.length) {
       output.push({ key: group.key, label: group.label, experienceId: null, decision: 'pending', builtIn: true, groupKey: group.key });
     } else {
-      output.push(...matches.map((source) => ({
-        key: source.experience_id,
-        label: source.experience_name && normalizeGroupName(source.experience_name) !== normalizeGroupName(group.label)
-          ? `${group.label} · ${source.experience_name}`
-          : `${group.label} · …${source.experience_id.slice(-6)}`,
-        experienceId: source.experience_id,
-        decision: source.decision,
-        builtIn: true,
-        groupKey: group.key,
-      })));
+      output.push(...matches.map((source) => {
+        const logicalId = upstreamExperienceId(source);
+        return {
+          key: logicalId,
+          label: source.experience_name && normalizeGroupName(source.experience_name) !== normalizeGroupName(group.label)
+            ? `${group.label} · ${source.experience_name}`
+            : `${group.label} · …${logicalId.slice(-6)}`,
+          experienceId: logicalId,
+          decision: source.decision,
+          builtIn: true,
+          groupKey: group.key,
+        };
+      }));
     }
   }
-  output.push(...sources.filter((source) => !source.default_group).map((source) => ({
-    key: source.experience_id,
-    label: source.experience_name ? `${source.label} · ${source.experience_name}` : source.label,
-    experienceId: source.experience_id,
-    decision: source.decision,
-    builtIn: false,
-    groupKey: null,
-  })));
+  output.push(...sources.filter((source) => !source.default_group).map((source) => {
+    const logicalId = upstreamExperienceId(source);
+    return {
+      key: logicalId,
+      label: source.experience_name ? `${source.label} · ${source.experience_name}` : source.label,
+      experienceId: logicalId,
+      decision: source.decision,
+      builtIn: false,
+      groupKey: null,
+    };
+  }));
   return output;
 }

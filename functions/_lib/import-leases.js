@@ -1,5 +1,6 @@
 import { randomToken } from './crypto.js';
 import { HttpError, requireDatabase } from './http.js';
+import { postStorageKey, principalIdFrom } from './importer-workspace.js';
 
 const IMPORT_LEASE_MS = 10 * 60_000;
 
@@ -29,9 +30,11 @@ async function releaseRows(db, keys, token) {
   }
 }
 
-export async function acquireImportLeases(env, sourceKeys) {
-  const keys = normalizedKeys(sourceKeys);
-  if (!keys.length) throw new HttpError(422, 'Choose at least one exact Whop item to import.');
+export async function acquireImportLeases(env, principalValue, sourceKeys) {
+  const principalId = principalIdFrom(principalValue);
+  const logicalKeys = normalizedKeys(sourceKeys);
+  if (!logicalKeys.length) throw new HttpError(422, 'Choose at least one exact Whop item to import.');
+  const storageKeys = await Promise.all(logicalKeys.map((key) => postStorageKey(principalId, key)));
   const db = requireDatabase(env);
   await ensureTable(db);
   const now = new Date();
@@ -42,20 +45,21 @@ export async function acquireImportLeases(env, sourceKeys) {
 
   try {
     await db.prepare('DELETE FROM whop_import_leases WHERE lease_until <= ?').bind(nowIso).run();
-    for (const key of keys) {
+    for (let index = 0; index < storageKeys.length; index += 1) {
+      const storageKey = storageKeys[index];
       const result = await db.prepare(`
         INSERT OR IGNORE INTO whop_import_leases (source_key, lease_token, lease_until, started_at, updated_at)
         VALUES (?, ?, ?, ?, ?)
-      `).bind(key, token, leaseUntil, nowIso, nowIso).run();
+      `).bind(storageKey, token, leaseUntil, nowIso, nowIso).run();
       if (Number(result.meta?.changes || 0) !== 1) {
-        throw new HttpError(409, 'This exact Whop item is already being imported or restored. Refresh its saved state before retrying.', {
+        throw new HttpError(409, 'This exact Whop item is already being imported or restored in this SniperPlug account. Refresh its saved state before retrying.', {
           code: 'guide_import_in_progress',
-          sourceKey: key,
+          sourceKey: logicalKeys[index],
         });
       }
-      acquired.push(key);
+      acquired.push(storageKey);
     }
-    return { token, keys };
+    return { token, keys: storageKeys, logicalKeys, principalId };
   } catch (error) {
     await releaseRows(db, acquired, token);
     throw error;
@@ -70,7 +74,8 @@ export async function renewImportLeases(env, lease) {
   const now = new Date();
   const nowIso = now.toISOString();
   const leaseUntil = new Date(now.getTime() + IMPORT_LEASE_MS).toISOString();
-  for (const key of lease.keys) {
+  for (let index = 0; index < lease.keys.length; index += 1) {
+    const key = lease.keys[index];
     const result = await db.prepare(`
       UPDATE whop_import_leases
       SET lease_until = ?, updated_at = ?
@@ -79,7 +84,7 @@ export async function renewImportLeases(env, lease) {
     if (Number(result.meta?.changes || 0) !== 1) {
       throw new HttpError(409, 'This guide import lost ownership before all media could be saved. Refresh instead of retrying blindly.', {
         code: 'guide_import_lease_lost',
-        sourceKey: key,
+        sourceKey: lease.logicalKeys?.[index] || null,
       });
     }
   }

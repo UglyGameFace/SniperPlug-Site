@@ -123,7 +123,7 @@ assert.notEqual(suggestedCategoryForText('Line of credit guide'), 'sports-bettin
 assert.equal(suggestedCategoryForText('Stock trading technical analysis guide'), 'crypto-trading');
 assert.equal(suggestedCategoryForText('Walmart marketplace selling guide'), 'reselling');
 
-assert.ok(bulk.includes('const JOB_VERSION = 4'), 'Bulk jobs are not versioned for safe recovery.');
+assert.ok(bulk.includes('const JOB_VERSION = 5'), 'Bulk jobs are not versioned for tenant-safe recovery.');
 assert.ok(bulk.includes('cancelLegacyRow'), 'Unsafe active legacy jobs are not canceled automatically.');
 assert.ok(bulk.includes("AND lease_until = ?"), 'A stale bulk worker can overwrite a newer worker after losing its lease.');
 assert.ok(bulk.includes('completed-with-issues') && bulk.includes('completed-successfully'), 'Bulk completion does not distinguish clean success from held or failed items.');
@@ -146,7 +146,7 @@ assert.ok(imports.includes("existing.status !== 'rejected'"), 'Rejected imported
 assert.ok(imports.includes('exactRecoveryContext') && imports.includes('recoveryGuideId'), 'Recovery does not validate one exact rejected guide inside the importer.');
 assert.ok(imports.includes("row.status !== 'rejected'") && imports.includes('Recovery context does not match'), 'Recovery can bypass normal approval checks without matching the rejected guide, source key, and Experience.');
 assert.ok(repair.includes('recoveryGuideId: id'), 'The recovery endpoint does not use the exact rejected-guide import context.');
-assert.ok(!repair.includes('saveSourceDecision') && !repair.includes('savePostDecision'), 'Recovery still mutates owner source or item approval decisions.');
+assert.ok(!repair.includes('saveSourceDecision') && !repair.includes('savePostDecision'), 'Recovery still mutates account source or item approval decisions.');
 assert.ok(repair.includes('restoreGuideSnapshot') && repair.includes('snapshotCourseVideos') && repair.includes('restoreCourseVideos'), 'Failed recovery does not restore both the guide row and course-video routes.');
 assert.ok(courseVideo.includes('snapshotCourseVideos') && courseVideo.includes('restoreCourseVideos'), 'Course-video rollback helpers are missing.');
 assert.ok(recent.includes("status = 'rejected'") && recent.includes("status IN ('published', 'rejected')"), 'Rejected imported guides are missing from 48-hour restore or cannot return to draft.');
@@ -155,7 +155,7 @@ assert.ok(/Removed Whop imports/i.test(page) && /restore/i.test(page), 'The Cont
 
 assert.ok(reconcile.includes("status IN ('draft', 'published')"), 'Cleanup does not inspect the full active imported guide queue.');
 assert.ok(reconcile.includes('reconcileImportedGuides'), 'Unified imported-guide cleanup is missing.');
-assert.ok(reconcile.includes('cleanupVersion: 4'), 'Current cleanup version is not recorded.');
+assert.ok(reconcile.includes('cleanupVersion: 5'), 'Current tenant-aware cleanup version is not recorded.');
 assert.ok(reconcile.includes("status = 'rejected'"), 'Junk cleanup does not move items out of the normal review queue.');
 assert.ok(reconcile.includes('Duplicate of'), 'Imported duplicate cleanup is missing.');
 assert.ok(!reconcile.includes('LOOKBACK_HOURS'), 'Cleanup is still limited to a recent time window.');

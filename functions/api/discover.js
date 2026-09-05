@@ -27,7 +27,7 @@ export async function onRequest(context) {
     const admin = await requireAdmin(context.request, context.env);
     const session = await requireWhopSession(context.request, context.env, admin);
     const memberships = await loadWhopMemberships(session);
-    const discovered = await discoverWhopSources(session, context.env, memberships);
+    const discovered = await discoverWhopSources(session, context.env, admin, memberships);
     return json(await enforceLiveWhopAccess(session, discovered, memberships));
   } catch (error) {
     return discoveryError(error);

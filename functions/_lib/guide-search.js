@@ -1,5 +1,6 @@
-import { requireDatabase } from './http.js';
+import { OWNER_PRINCIPAL_ID } from './auth.js';
 import { reconcileRecentBulkImports } from './import-reconciliation.js';
+import { ensureImporterWorkspaceSchema } from './importer-workspace.js';
 
 const DEFAULT_PAGE_SIZE = 18;
 const MAX_PAGE_SIZE = 48;
@@ -30,15 +31,15 @@ function normalize(row) {
 }
 
 export async function searchPublicGuides(env, input = {}) {
-  await reconcileRecentBulkImports(env);
-  const db = requireDatabase(env);
+  await reconcileRecentBulkImports(env, OWNER_PRINCIPAL_ID);
+  const db = await ensureImporterWorkspaceSchema(env);
   const page = clampInteger(input.page, 1, 100_000, 1);
   const pageSize = clampInteger(input.pageSize, 1, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE);
   const category = String(input.category || '').trim().slice(0, 48);
   const query = String(input.query || '').trim().slice(0, 100);
   const pattern = searchPattern(query);
-  const clauses = ["guides.status = 'published'"];
-  const bindings = [];
+  const clauses = ["guides.principal_id = ?", "guides.status = 'published'"];
+  const bindings = [OWNER_PRINCIPAL_ID];
   if (category) {
     clauses.push('guides.category_slug = ?');
     bindings.push(category);

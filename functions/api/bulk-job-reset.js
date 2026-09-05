@@ -8,13 +8,12 @@ import {
   requireDatabase,
   requireSameOrigin,
 } from '../_lib/http.js';
-
+import { principalIdFrom } from '../_lib/importer-workspace.js';
 
 export async function onRequest(context) {
   try {
     const admin = await requireAdmin(context.request, context.env);
-    if (!admin?.sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
-    const ownerKey = String(admin.sid);
+    const ownerKey = principalIdFrom(admin);
     if (context.request.method !== 'POST') return methodNotAllowed(['POST']);
     requireSameOrigin(context.request);
     const input = await readJson(context.request, { maxBytes: 20_000 });

@@ -1,4 +1,6 @@
-import { HttpError, requireDatabase } from './http.js';
+import { OWNER_PRINCIPAL_ID } from './auth.js';
+import { HttpError } from './http.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom } from './importer-workspace.js';
 import { auditGuideLinks, assertPublishableLinks } from './link-audit.js';
 
 const MAX_GUIDES = 500;
@@ -22,6 +24,14 @@ function uniqueGuideIds(value) {
   return ids;
 }
 
+function requirePublicPublisher(principalValue) {
+  const principalId = principalIdFrom(principalValue);
+  if (principalId !== OWNER_PRINCIPAL_ID) {
+    throw new HttpError(403, 'Subscription workspaces cannot publish onto SniperPlug’s public guide site.');
+  }
+  return principalId;
+}
+
 function allowedAttachmentUrls(attachments) {
   return (Array.isArray(attachments?.files) ? attachments.files : [])
     .filter((file) => file?.durable === true && file?.url)
@@ -43,7 +53,7 @@ function publishHoldReason(integrity) {
   return null;
 }
 
-async function auditRow(db, row) {
+async function auditRow(db, principalId, row) {
   const attachments = safeJson(row.attachment_json, {});
   const integrity = safeJson(row.integrity_json, {});
   const linkAudit = auditGuideLinks(row.body_markdown || '', {
@@ -51,19 +61,20 @@ async function auditRow(db, row) {
   });
   const holdReason = publishHoldReason(integrity);
   const nextIntegrity = { ...integrity, linkAudit, publishHoldReason: holdReason, linkAuditedAt: new Date().toISOString() };
-  await db.prepare('UPDATE guides SET integrity_json = ? WHERE id = ?')
-    .bind(JSON.stringify(nextIntegrity), row.id).run();
+  await db.prepare('UPDATE guides SET integrity_json = ? WHERE principal_id = ? AND id = ?')
+    .bind(JSON.stringify(nextIntegrity), principalId, row.id).run();
   return { attachments, integrity: nextIntegrity, linkAudit, holdReason };
 }
 
-export async function assertGuidePublishable(env, id) {
-  const db = requireDatabase(env);
+export async function assertGuidePublishable(env, principalValue, id) {
+  const principalId = requirePublicPublisher(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const row = await db.prepare(`
     SELECT id, title, status, source_key, body_markdown, attachment_json, integrity_json
-    FROM guides WHERE id = ?
-  `).bind(id).first();
-  if (!row) throw new HttpError(404, 'Guide not found.');
-  const { attachments, integrity, holdReason } = await auditRow(db, row);
+    FROM guides WHERE principal_id = ? AND id = ?
+  `).bind(principalId, id).first();
+  if (!row) throw new HttpError(404, 'Guide not found in this account workspace.');
+  const { attachments, integrity, holdReason } = await auditRow(db, principalId, row);
   if (Number(attachments.reviewCount || 0) > 0) {
     throw new HttpError(422, 'Resolve or replace every flagged private or expiring Whop file before publishing.', { code: 'attachment_review' });
   }
@@ -77,44 +88,48 @@ export async function assertGuidePublishable(env, id) {
   return integrity.linkAudit;
 }
 
-async function rowsForRequest(db, input) {
+async function rowsForRequest(db, principalId, input) {
   const ids = uniqueGuideIds(input?.guideIds);
   if (ids.length) {
     const placeholders = ids.map(() => '?').join(',');
     const rows = await db.prepare(`
       SELECT id, title, status, source_key, body_markdown, attachment_json, integrity_json
-      FROM guides WHERE id IN (${placeholders})
-    `).bind(...ids).all();
+      FROM guides WHERE principal_id = ? AND id IN (${placeholders})
+    `).bind(principalId, ...ids).all();
     return { requestedIds: ids, rows: rows.results || [] };
   }
   if (input?.allImported === true) {
     const rows = await db.prepare(`
       SELECT id, title, status, source_key, body_markdown, attachment_json, integrity_json
       FROM guides
-      WHERE source_key IS NOT NULL AND status = 'draft'
+      WHERE principal_id = ? AND source_key IS NOT NULL AND status = 'draft'
       ORDER BY updated_at DESC
       LIMIT ${MAX_GUIDES}
-    `).all();
+    `).bind(principalId).all();
     const values = rows.results || [];
     return { requestedIds: values.map((row) => Number(row.id)), rows: values };
   }
   throw new HttpError(422, 'Choose imported drafts to publish.');
 }
 
-async function confirmedRows(db, ids) {
+async function confirmedRows(db, principalId, ids) {
   const output = [];
   for (const group of chunks(ids, UPDATE_CHUNK)) {
     if (!group.length) continue;
     const placeholders = group.map(() => '?').join(',');
-    const rows = await db.prepare(`SELECT id, title, status FROM guides WHERE id IN (${placeholders})`).bind(...group).all();
+    const rows = await db.prepare(`
+      SELECT id, title, status FROM guides
+      WHERE principal_id = ? AND id IN (${placeholders})
+    `).bind(principalId, ...group).all();
     output.push(...(rows.results || []));
   }
   return output;
 }
 
-export async function publishReadyGuides(env, input) {
-  const db = requireDatabase(env);
-  const { requestedIds, rows } = await rowsForRequest(db, input);
+export async function publishReadyGuides(env, principalValue, input) {
+  const principalId = requirePublicPublisher(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const { requestedIds, rows } = await rowsForRequest(db, principalId, input);
   const ready = [];
   const skippedFiles = [];
   const skippedIntegrity = [];
@@ -124,7 +139,7 @@ export async function publishReadyGuides(env, input) {
   const publishFailures = [];
 
   for (const row of rows) {
-    const { attachments, integrity, linkAudit, holdReason } = await auditRow(db, row);
+    const { attachments, integrity, linkAudit, holdReason } = await auditRow(db, principalId, row);
     if (!row.source_key) {
       skippedStatus.push({ id: row.id, title: row.title, reason: 'Not an imported Whop guide.' });
     } else if (row.status === 'published') {
@@ -149,8 +164,8 @@ export async function publishReadyGuides(env, input) {
       await db.prepare(`
         UPDATE guides
         SET status = 'published', updated_at = ?, published_at = ?
-        WHERE status = 'draft' AND id IN (${placeholders})
-      `).bind(now, now, ...group).run();
+        WHERE principal_id = ? AND status = 'draft' AND id IN (${placeholders})
+      `).bind(now, now, principalId, ...group).run();
     } catch (error) {
       const message = String(error?.message || 'Database publication update failed.').slice(0, 500);
       publishFailures.push({ guideIds: group, message });
@@ -161,7 +176,7 @@ export async function publishReadyGuides(env, input) {
     }
   }
 
-  const confirmation = await confirmedRows(db, ready);
+  const confirmation = await confirmedRows(db, principalId, ready);
   const confirmedById = new Map(confirmation.map((row) => [Number(row.id), row]));
   const publishedGuideIds = ready.filter((id) => confirmedById.get(id)?.status === 'published');
   for (const id of ready) {

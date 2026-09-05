@@ -1,11 +1,17 @@
+import { OWNER_PRINCIPAL_ID } from './auth.js';
 import { randomToken, sha256, signValue, verifyValue } from './crypto.js';
+import { HttpError, requireDatabase } from './http.js';
+import {
+  ensureImporterWorkspaceSchema,
+  principalIdFrom,
+  upstreamExperienceId,
+} from './importer-workspace.js';
 import {
   cancelMediaCopy,
   completeMediaCopy,
   extractMediaStorageKeys,
   prepareMediaCopy,
 } from './media-storage.js';
-import { HttpError, requireDatabase } from './http.js';
 
 export const WHOP_BACKUP_SCHEMA_VERSION = 2;
 const MAX_BACKUP_ROWS = 50_000;
@@ -14,6 +20,7 @@ const JSON_BATCH_BYTES = 1_400_000;
 const RESET_TOKEN_TTL_MS = 15 * 60_000;
 
 const GUIDE_COLUMNS = Object.freeze([
+  'principal_id', 'upstream_source_key',
   'slug', 'title', 'description', 'category_slug', 'body_markdown', 'status', 'featured', 'sort_order',
   'source_key', 'source_group', 'source_experience_id', 'source_post_id', 'source_fingerprint',
   'attachment_json', 'integrity_json', 'author_json', 'source_created_at', 'source_updated_at',
@@ -135,7 +142,8 @@ async function addBackupColumns(db) {
   }
 }
 
-async function repairSchema(db) {
+async function repairSchema(env) {
+  const db = await ensureImporterWorkspaceSchema(env);
   await addColumn(db, 'whop_posts', 'stale_at', 'TEXT');
   await db.batch([
     db.prepare(`
@@ -165,17 +173,17 @@ async function repairSchema(db) {
         deleted_at TEXT
       )
     `),
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_posts_current ON whop_posts (experience_id, stale_at, source_updated_at DESC)'),
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_import_backups_created ON whop_import_backups (deleted_at, created_at DESC)'),
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_import_backups_scope ON whop_import_backups (scope, experience_id, deleted_at, created_at DESC)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_posts_current ON whop_posts (principal_id, upstream_experience_id, stale_at, source_updated_at DESC)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_import_backups_created ON whop_import_backups (owner_session_id, deleted_at, created_at DESC)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_import_backups_scope ON whop_import_backups (owner_session_id, scope, experience_id, deleted_at, created_at DESC)'),
   ]);
   await addBackupColumns(db);
+  return db;
 }
 
 export async function ensureWhopBackupSchema(env) {
-  const db = requireDatabase(env);
   if (!schemaPromise) {
-    schemaPromise = repairSchema(db).then(() => db).catch((error) => {
+    schemaPromise = repairSchema(env).catch((error) => {
       schemaPromise = null;
       throw error;
     });
@@ -193,10 +201,10 @@ async function optionalRows(db, sql, bindings = [], missing = '') {
   }
 }
 
-async function optionalRowsByJsonValues(db, sql, values, missing = '') {
+async function optionalRowsByJsonValues(db, sql, bindings, values, missing = '') {
   const output = [];
   for (const group of backupJsonBatches(values)) {
-    output.push(...await optionalRows(db, sql, [stableBackupJson(group)], missing));
+    output.push(...await optionalRows(db, sql, [...bindings, stableBackupJson(group)], missing));
   }
   return output;
 }
@@ -222,9 +230,11 @@ export function backupJsonBatches(rows, maxBytes = JSON_BATCH_BYTES) {
   return output;
 }
 
-async function runJsonBatches(db, rows, sql) {
+async function runJsonBatches(db, rows, sql, bindings = []) {
   const results = [];
-  for (const group of backupJsonBatches(rows)) results.push(await db.prepare(sql).bind(stableBackupJson(group)).run());
+  for (const group of backupJsonBatches(rows)) {
+    results.push(await db.prepare(sql).bind(...bindings, stableBackupJson(group)).run());
+  }
   return results;
 }
 
@@ -232,20 +242,16 @@ function normalizedAttachments(value) {
   return safeJson(value, {}) || {};
 }
 
-async function currentScopeRows(db, scope) {
-  const sourceWhere = scope.scope === 'source' ? 'WHERE experience_id = ?' : '';
-  const sourceBindings = scope.scope === 'source' ? [scope.experienceId] : [];
-  const guideWhere = scope.scope === 'source'
-    ? 'WHERE source_experience_id = ?'
-    : 'WHERE source_experience_id IS NOT NULL';
-  const guideBindings = scope.scope === 'source' ? [scope.experienceId] : [];
-  const postWhere = scope.scope === 'source' ? 'WHERE experience_id = ?' : '';
-  const postBindings = scope.scope === 'source' ? [scope.experienceId] : [];
+async function currentScopeRows(db, principalId, scope) {
+  const sourceClause = scope.scope === 'source' ? 'AND upstream_experience_id = ?' : '';
+  const sourceBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
+  const guideClause = scope.scope === 'source' ? 'AND source_experience_id = ?' : '';
+  const guideBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
 
   const [sources, posts, guides] = await Promise.all([
-    optionalRows(db, `SELECT * FROM whop_sources ${sourceWhere} ORDER BY experience_id`, sourceBindings, 'whop_sources'),
-    optionalRows(db, `SELECT * FROM whop_posts ${postWhere} ORDER BY source_key`, postBindings, 'whop_posts'),
-    optionalRows(db, `SELECT * FROM guides ${guideWhere} ORDER BY id`, guideBindings, 'guides'),
+    optionalRows(db, `SELECT * FROM whop_sources WHERE principal_id = ? ${sourceClause} ORDER BY upstream_experience_id`, sourceBindings, 'whop_sources'),
+    optionalRows(db, `SELECT * FROM whop_posts WHERE principal_id = ? ${sourceClause} ORDER BY upstream_source_key`, sourceBindings, 'whop_posts'),
+    optionalRows(db, `SELECT * FROM guides WHERE principal_id = ? AND source_experience_id IS NOT NULL ${guideClause} ORDER BY id`, guideBindings, 'guides'),
   ]);
 
   const categorySlugs = [...new Set(guides.map((row) => String(row.category_slug || '')).filter(Boolean))];
@@ -253,6 +259,7 @@ async function currentScopeRows(db, scope) {
     ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM guide_categories WHERE slug IN (SELECT value FROM json_each(?)) ORDER BY slug',
+      [],
       categorySlugs,
       'guide_categories',
     )
@@ -263,6 +270,7 @@ async function currentScopeRows(db, scope) {
     ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM course_video_sources WHERE guide_id IN (SELECT CAST(value AS INTEGER) FROM json_each(?)) ORDER BY video_key',
+      [],
       guideIds,
       'course_video_sources',
     )
@@ -277,24 +285,26 @@ async function currentScopeRows(db, scope) {
     ? await optionalRowsByJsonValues(
       db,
       'SELECT * FROM media_objects WHERE storage_key IN (SELECT value FROM json_each(?)) ORDER BY storage_key',
+      [],
       mediaKeys,
       'media_objects',
     )
     : [];
 
   const sourceIds = [...new Set([
-    ...sources.map((row) => String(row.experience_id || '')),
-    ...posts.map((row) => String(row.experience_id || '')),
+    ...sources.map((row) => upstreamExperienceId(row)),
+    ...posts.map((row) => upstreamExperienceId(row)),
     ...guides.map((row) => String(row.source_experience_id || '')),
   ].filter(Boolean))].sort();
 
   return { sources, posts, categories, guides, courseVideos, mediaObjects, mediaKeys, sourceIds };
 }
 
-async function snapshotScope(env, input) {
+async function snapshotScope(env, principalValue, input) {
+  const principalId = principalIdFrom(principalValue);
   const scope = normalizedScope(input);
   const db = await ensureWhopBackupSchema(env);
-  const rows = await currentScopeRows(db, scope);
+  const rows = await currentScopeRows(db, principalId, scope);
   const totalRows = rows.sources.length + rows.posts.length + rows.categories.length + rows.guides.length + rows.courseVideos.length + rows.mediaObjects.length;
   if (totalRows > MAX_BACKUP_ROWS) throw new HttpError(413, 'This importer contains too many records for one backup. Back up one source at a time.');
   const entities = {
@@ -326,7 +336,7 @@ async function snapshotScope(env, input) {
     mediaReferences: rows.mediaKeys.length,
     mediaObjects: rows.mediaObjects.length,
   };
-  return { scope, rows, entities, entityChecksum, contentChecksum, counts };
+  return { principalId, scope, rows, entities, entityChecksum, contentChecksum, counts };
 }
 
 function backupLabel(scope, rows) {
@@ -347,12 +357,13 @@ function backupSignatureValue(row) {
   ].join('.');
 }
 
-function manifestFor(backupId, ownerSessionId, snapshot, createdAt, archiveKey) {
+function manifestFor(backupId, principalId, snapshot, createdAt, archiveKey) {
   return {
     format: 'sniperplug-whop-import-backup',
     schemaVersion: WHOP_BACKUP_SCHEMA_VERSION,
     backupId,
-    ownerSessionId,
+    ownerSessionId: principalId,
+    principalId,
     scope: snapshot.scope.scope,
     experienceId: snapshot.scope.experienceId,
     sourceIds: snapshot.rows.sourceIds,
@@ -387,25 +398,23 @@ function backupSummary(row) {
   };
 }
 
-async function backupRow(db, backupId) {
+async function backupRow(db, principalId, backupId) {
   const id = String(backupId || '').trim();
   if (!/^wib_[A-Za-z0-9_-]{12,}$/.test(id)) throw new HttpError(422, 'Choose a valid Whop backup.');
-  const row = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ? AND deleted_at IS NULL').bind(id).first();
-  if (!row) throw new HttpError(404, 'Whop backup not found.');
+  const row = await db.prepare(`
+    SELECT * FROM whop_import_backups
+    WHERE backup_id = ? AND owner_session_id = ? AND deleted_at IS NULL
+  `).bind(id, principalId).first();
+  if (!row) throw new HttpError(404, 'Whop backup not found in this account workspace.');
   return row;
 }
 
-function assertArchiveShape(archive, row) {
-  if (!archive || typeof archive !== 'object' || !archive.manifest || !archive.entities) {
-    throw new HttpError(409, 'The Whop backup archive is not readable.');
-  }
+function assertArchiveShape(archive, row, principalId) {
+  if (!archive || typeof archive !== 'object' || !archive.manifest || !archive.entities) throw new HttpError(409, 'The Whop backup archive is not readable.');
   if (archive.signature !== row.signature) throw new HttpError(409, 'The Whop backup archive signature does not match D1.');
-  if (archive.manifest.backupId !== row.backup_id || archive.manifest.archiveKey !== row.archive_key) {
-    throw new HttpError(409, 'The Whop backup archive identity does not match D1.');
-  }
-  if (Number(archive.manifest.schemaVersion) !== WHOP_BACKUP_SCHEMA_VERSION) {
-    throw new HttpError(409, 'The Whop backup archive uses an unsupported schema version.');
-  }
+  if (archive.manifest.backupId !== row.backup_id || archive.manifest.archiveKey !== row.archive_key) throw new HttpError(409, 'The Whop backup archive identity does not match D1.');
+  if (String(archive.manifest.principalId || archive.manifest.ownerSessionId || '') !== principalId) throw new HttpError(403, 'This backup belongs to a different SniperPlug account.');
+  if (Number(archive.manifest.schemaVersion) !== WHOP_BACKUP_SCHEMA_VERSION) throw new HttpError(409, 'The Whop backup archive uses an unsupported schema version.');
 }
 
 function archiveCounts(entities) {
@@ -426,13 +435,39 @@ function archiveCounts(entities) {
   };
 }
 
-async function verifyBackup(env, backupId, { allowCreating = false } = {}) {
+function normalizedEntity(row, principalId, kind) {
+  const value = { ...(row || {}) };
+  const savedPrincipal = String(value.principal_id || '').trim();
+  if (savedPrincipal && savedPrincipal !== principalId) throw new HttpError(403, `This backup contains ${kind} data owned by a different SniperPlug account.`);
+  if (!savedPrincipal && principalId !== OWNER_PRINCIPAL_ID) throw new HttpError(409, 'A legacy owner-only backup cannot be restored into a subscriber workspace.');
+  value.principal_id = principalId;
+  if (kind === 'source') value.upstream_experience_id = String(value.upstream_experience_id || value.experience_id || '');
+  if (kind === 'post') {
+    value.upstream_source_key = String(value.upstream_source_key || value.source_key || '');
+    value.upstream_experience_id = String(value.upstream_experience_id || value.experience_id || '');
+  }
+  if (kind === 'guide') value.upstream_source_key = value.source_key == null ? null : String(value.upstream_source_key || value.source_key || '');
+  return value;
+}
+
+function normalizeBackupEntities(entities, principalId) {
+  return {
+    ...(entities || {}),
+    sources: (entities?.sources || []).map((row) => normalizedEntity(row, principalId, 'source')),
+    posts: (entities?.posts || []).map((row) => normalizedEntity(row, principalId, 'post')),
+    guides: (entities?.guides || []).map((row) => normalizedEntity(row, principalId, 'guide')),
+    categories: Array.isArray(entities?.categories) ? entities.categories : [],
+    courseVideos: Array.isArray(entities?.courseVideos) ? entities.courseVideos : [],
+    mediaObjects: Array.isArray(entities?.mediaObjects) ? entities.mediaObjects : [],
+  };
+}
+
+async function verifyBackup(env, principalValue, backupId, { allowCreating = false } = {}) {
+  const principalId = principalIdFrom(principalValue);
   if (!env?.SNIPERPLUG_MEDIA) throw new HttpError(503, 'Whop backup storage is unavailable because SNIPERPLUG_MEDIA is not connected.');
   const db = await ensureWhopBackupSchema(env);
-  const row = await backupRow(db, backupId);
-  if (row.status !== 'verified' && !(allowCreating && row.status === 'creating')) {
-    throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');
-  }
+  const row = await backupRow(db, principalId, backupId);
+  if (row.status !== 'verified' && !(allowCreating && row.status === 'creating')) throw new HttpError(409, 'This Whop backup is not verified and cannot be used.');
   const signatureValid = await verifyValue(backupSignatureValue(row), row.signature, env?.SNIPERPLUG_SESSION_SECRET);
   if (!signatureValid) throw new HttpError(409, 'This Whop backup signature is invalid. Do not reset or restore from it.');
   const object = await env.SNIPERPLUG_MEDIA.get(row.archive_key);
@@ -443,15 +478,11 @@ async function verifyBackup(env, backupId, { allowCreating = false } = {}) {
   const archiveChecksum = await sha256(archiveJson);
   if (archiveChecksum !== row.archive_checksum) throw new HttpError(409, 'The Whop backup archive checksum does not match D1.');
   const archive = safeJson(archiveJson, null);
-  assertArchiveShape(archive, row);
+  assertArchiveShape(archive, row, principalId);
   const manifest = safeJson(row.manifest_json, null);
-  if (!manifest || stableBackupJson(manifest) !== stableBackupJson(archive.manifest)) {
-    throw new HttpError(409, 'The Whop backup manifest does not match its R2 archive.');
-  }
+  if (!manifest || stableBackupJson(manifest) !== stableBackupJson(archive.manifest)) throw new HttpError(409, 'The Whop backup manifest does not match its R2 archive.');
   const entityChecksum = await sha256(stableBackupJson(archive.entities));
-  if (entityChecksum !== row.checksum || entityChecksum !== manifest.entityChecksum) {
-    throw new HttpError(409, 'The Whop backup content checksum is invalid.');
-  }
+  if (entityChecksum !== row.checksum || entityChecksum !== manifest.entityChecksum) throw new HttpError(409, 'The Whop backup content checksum is invalid.');
   const contentChecksum = await sha256(stableBackupJson({
     sources: archive.entities.sources || [],
     posts: archive.entities.posts || [],
@@ -461,17 +492,15 @@ async function verifyBackup(env, backupId, { allowCreating = false } = {}) {
   if (contentChecksum !== manifest.contentChecksum) throw new HttpError(409, 'The Whop backup reset checksum is invalid.');
   const actual = archiveCounts(archive.entities);
   for (const [key, value] of Object.entries(actual)) {
-    if (Number(manifest.counts?.[key] || 0) !== Number(value || 0)) {
-      throw new HttpError(409, `The Whop backup ${key} count does not match its manifest.`);
-    }
+    if (Number(manifest.counts?.[key] || 0) !== Number(value || 0)) throw new HttpError(409, `The Whop backup ${key} count does not match its manifest.`);
   }
-  if (Number(manifest.counts?.mediaReferences || 0) !== (manifest.mediaKeys || []).length) {
-    throw new HttpError(409, 'The Whop backup media-reference count does not match its manifest.');
-  }
-  return { db, row, manifest, entities: archive.entities, archiveJson };
+  if (Number(manifest.counts?.mediaReferences || 0) !== (manifest.mediaKeys || []).length) throw new HttpError(409, 'The Whop backup media-reference count does not match its manifest.');
+  const entities = normalizeBackupEntities(archive.entities, principalId);
+  return { db, row, manifest, entities, archiveJson, principalId };
 }
 
-async function issueResetToken(env, row, options) {
+async function issueResetToken(env, principalValue, row, options) {
+  const principalId = principalIdFrom(principalValue);
   const db = await ensureWhopBackupSchema(env);
   const token = `wrt_${randomToken(24)}`;
   const tokenHash = await sha256(token);
@@ -484,8 +513,8 @@ async function issueResetToken(env, row, options) {
   const result = await db.prepare(`
     UPDATE whop_import_backups
     SET reset_token_hash = ?, reset_token_expires_at = ?, reset_options_json = ?, reset_used_at = NULL
-    WHERE backup_id = ? AND status = 'verified' AND deleted_at IS NULL
-  `).bind(tokenHash, expiresAt, stableBackupJson(normalized), row.backup_id).run();
+    WHERE backup_id = ? AND owner_session_id = ? AND status = 'verified' AND deleted_at IS NULL
+  `).bind(tokenHash, expiresAt, stableBackupJson(normalized), row.backup_id, principalId).run();
   if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not authorize this verified backup for reset.');
   return {
     token,
@@ -495,16 +524,15 @@ async function issueResetToken(env, row, options) {
   };
 }
 
-async function buildWhopBackupArchive(env, snapshot, ownerSessionId) {
+async function buildWhopBackupArchive(env, snapshot, principalId) {
   const createdAt = nowIso();
   const backupId = `wib_${randomToken(18)}`;
-  const ownerId = String(ownerSessionId || 'sniperplug-owner');
-  const digest = await sha256(`backup:${backupId}:${snapshot.entityChecksum}`);
+  const digest = await sha256(`backup:${principalId}:${backupId}:${snapshot.entityChecksum}`);
   const archiveKey = `whop-${digest.slice(0, 32)}-whop-import-backup.json`;
-  const manifest = manifestFor(backupId, ownerId, snapshot, createdAt, archiveKey);
+  const manifest = manifestFor(backupId, principalId, snapshot, createdAt, archiveKey);
   const unsigned = {
     backup_id: backupId,
-    owner_session_id: ownerId,
+    owner_session_id: principalId,
     checksum: snapshot.entityChecksum,
     archive_key: archiveKey,
     created_at: createdAt,
@@ -516,22 +544,13 @@ async function buildWhopBackupArchive(env, snapshot, ownerSessionId) {
   const archiveJson = stableBackupJson({ manifest, signature, entities: snapshot.entities });
   const archiveBytes = byteLength(archiveJson);
   if (archiveBytes > MAX_BACKUP_BYTES) throw new HttpError(413, 'This source is larger than the 10 MB safe backup limit. Back up a smaller source before resetting.');
-  return {
-    createdAt,
-    backupId,
-    ownerId,
-    archiveKey,
-    manifest,
-    signature,
-    archiveJson,
-    archiveBytes,
-    archiveChecksum: await sha256(archiveJson),
-  };
+  return { createdAt, backupId, principalId, archiveKey, manifest, signature, archiveJson, archiveBytes, archiveChecksum: await sha256(archiveJson) };
 }
 
-export async function previewWhopReset(env, ownerSessionId, input = {}) {
-  const snapshot = await snapshotScope(env, input);
-  const archive = await buildWhopBackupArchive(env, snapshot, ownerSessionId);
+export async function previewWhopReset(env, principalValue, input = {}) {
+  const principalId = principalIdFrom(principalValue);
+  const snapshot = await snapshotScope(env, principalId, input);
+  const archive = await buildWhopBackupArchive(env, snapshot, principalId);
   return {
     scope: snapshot.scope.scope,
     experienceId: snapshot.scope.experienceId,
@@ -542,48 +561,41 @@ export async function previewWhopReset(env, ownerSessionId, input = {}) {
     confirmationPhrase: resetConfirmationPhrase(snapshot.scope, input.deletePublished === true),
     warnings: [
       'A signed R2 recovery archive will be created and read back before deletion starts.',
-      input.deletePublished === true ? 'Published guides are included in this reset.' : 'Published guides remain in the private library.',
+      input.deletePublished === true ? 'Published guides in this account workspace are included in this reset.' : 'Published guides in this account workspace remain preserved.',
       'Referenced media and the recovery archive remain pinned until this backup is deleted.',
     ],
   };
 }
 
-export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
+export async function createWhopImportBackup(env, principalValue, input = {}) {
+  const principalId = principalIdFrom(principalValue);
   if (!env?.SNIPERPLUG_MEDIA) throw new HttpError(503, 'Connect the SNIPERPLUG_MEDIA R2 bucket before creating a restorable Whop backup.');
-  const snapshot = await snapshotScope(env, input);
+  const snapshot = await snapshotScope(env, principalId, input);
   const db = await ensureWhopBackupSchema(env);
-  const archive = await buildWhopBackupArchive(env, snapshot, ownerSessionId);
-  const {
-    createdAt, backupId, ownerId, archiveKey, manifest, signature,
-    archiveJson, archiveBytes, archiveChecksum,
-  } = archive;
-  const prepared = await prepareMediaCopy(env, archiveKey, {
-    declaredSize: archiveBytes,
+  const archive = await buildWhopBackupArchive(env, snapshot, principalId);
+  const prepared = await prepareMediaCopy(env, archive.archiveKey, {
+    declaredSize: archive.archiveBytes,
     contentType: 'application/json',
-    sourceKey: `whop-backup:${backupId}`,
+    sourceKey: `whop-backup:${principalId}:${archive.backupId}`,
   });
-  if (prepared.status !== 'reserved') {
-    throw new HttpError(409, prepared.reason || `SniperPlug could not reserve R2 storage for this backup (${prepared.status}).`, {
-      code: 'backup_storage_reservation_failed',
-      status: prepared.status,
-    });
-  }
+  if (prepared.status !== 'reserved') throw new HttpError(409, prepared.reason || `SniperPlug could not reserve R2 storage for this backup (${prepared.status}).`, { code: 'backup_storage_reservation_failed', status: prepared.status });
   const reservation = prepared.reservation;
   let stored = false;
   try {
-    const storedObject = await env.SNIPERPLUG_MEDIA.put(archiveKey, new Blob([archiveJson], { type: 'application/json' }), {
+    const storedObject = await env.SNIPERPLUG_MEDIA.put(archive.archiveKey, new Blob([archive.archiveJson], { type: 'application/json' }), {
       storageClass: 'Standard',
       httpMetadata: {
         contentType: 'application/json; charset=utf-8',
         cacheControl: 'private, no-store, max-age=0',
-        contentDisposition: `attachment; filename="sniperplug-whop-backup-${backupId}.json"`,
+        contentDisposition: `attachment; filename="sniperplug-whop-backup-${archive.backupId}.json"`,
       },
       customMetadata: {
         source: 'sniperplug-whop-import-backup',
-        backupId,
+        backupId: archive.backupId,
+        principalId,
         scope: snapshot.scope.scope,
         experienceId: snapshot.scope.experienceId || '',
-        checksum: archiveChecksum,
+        checksum: archive.archiveChecksum,
       },
     });
     if (!storedObject) throw new HttpError(409, 'R2 did not confirm the Whop backup archive write.');
@@ -595,64 +607,50 @@ export async function createWhopImportBackup(env, ownerSessionId, input = {}) {
         archive_bytes, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'creating', ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      backupId,
-      ownerId,
-      snapshot.scope.scope,
-      snapshot.scope.experienceId,
-      backupLabel(snapshot.scope, snapshot.rows),
-      WHOP_BACKUP_SCHEMA_VERSION,
-      stableBackupJson(manifest),
-      snapshot.entityChecksum,
-      signature,
-      archiveBytes,
-      archiveKey,
-      archiveChecksum,
-      Number(storedObject.size || archiveBytes),
-      createdAt,
+      archive.backupId, principalId, snapshot.scope.scope, snapshot.scope.experienceId,
+      backupLabel(snapshot.scope, snapshot.rows), WHOP_BACKUP_SCHEMA_VERSION,
+      stableBackupJson(archive.manifest), snapshot.entityChecksum, archive.signature, archive.archiveBytes,
+      archive.archiveKey, archive.archiveChecksum, Number(storedObject.size || archive.archiveBytes), archive.createdAt,
     ).run();
-    await verifyBackup(env, backupId, { allowCreating: true });
-    const stableScope = await snapshotScope(env, snapshot.scope);
-    if (stableScope.contentChecksum !== snapshot.contentChecksum) {
-      throw new HttpError(409, 'The importer changed while SniperPlug was creating this backup. The incomplete archive was not verified; create it again.', {
-        code: 'backup_scope_changed_during_create',
-        backupId,
-      });
-    }
+    await verifyBackup(env, principalId, archive.backupId, { allowCreating: true });
+    const stableScope = await snapshotScope(env, principalId, snapshot.scope);
+    if (stableScope.contentChecksum !== snapshot.contentChecksum) throw new HttpError(409, 'The importer changed while SniperPlug was creating this backup. The incomplete archive was not verified; create it again.', { code: 'backup_scope_changed_during_create', backupId: archive.backupId });
     await completeMediaCopy(env, reservation, {
-      sizeBytes: Number(storedObject.size || archiveBytes),
+      sizeBytes: Number(storedObject.size || archive.archiveBytes),
       contentType: 'application/json',
-      sourceKey: `whop-backup:${backupId}`,
+      sourceKey: `whop-backup:${principalId}:${archive.backupId}`,
     });
     const verifiedAt = nowIso();
     const verifiedUpdate = await db.prepare(`
       UPDATE whop_import_backups SET status = 'verified', verified_at = ?
-      WHERE backup_id = ? AND status = 'creating'
-    `).bind(verifiedAt, backupId).run();
+      WHERE backup_id = ? AND owner_session_id = ? AND status = 'creating'
+    `).bind(verifiedAt, archive.backupId, principalId).run();
     if (changes(verifiedUpdate) !== 1) throw new HttpError(409, 'The Whop backup changed before verification could be finalized.');
-    const fresh = await db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first();
-    const authorization = input.authorizeReset === true ? await issueResetToken(env, fresh, input) : null;
+    const fresh = await backupRow(db, principalId, archive.backupId);
+    const authorization = input.authorizeReset === true ? await issueResetToken(env, principalId, fresh, input) : null;
     return { backup: backupSummary(fresh), authorization };
   } catch (error) {
-    await db.prepare("UPDATE whop_import_backups SET status = 'failed' WHERE backup_id = ? AND status = 'creating'").bind(backupId).run().catch(() => null);
-    if (stored) await env.SNIPERPLUG_MEDIA.delete(archiveKey).catch(() => null);
+    await db.prepare("UPDATE whop_import_backups SET status = 'failed' WHERE backup_id = ? AND owner_session_id = ? AND status = 'creating'").bind(archive.backupId, principalId).run().catch(() => null);
+    if (stored) await env.SNIPERPLUG_MEDIA.delete(archive.archiveKey).catch(() => null);
     await cancelMediaCopy(env, reservation).catch(() => null);
     throw error;
   }
 }
 
-export async function listWhopImportBackups(env, { limit = 30 } = {}) {
+export async function listWhopImportBackups(env, principalValue, { limit = 30 } = {}) {
+  const principalId = principalIdFrom(principalValue);
   const db = await ensureWhopBackupSchema(env);
   const safeLimit = Math.max(1, Math.min(100, Number(limit || 30)));
   const rows = await db.prepare(`
     SELECT * FROM whop_import_backups
-    WHERE deleted_at IS NULL
+    WHERE owner_session_id = ? AND deleted_at IS NULL
     ORDER BY created_at DESC LIMIT ?
-  `).bind(safeLimit).all();
+  `).bind(principalId, safeLimit).all();
   return (rows.results || []).map(backupSummary);
 }
 
-export async function verifiedWhopResetContext(env, backupId) {
-  const verified = await verifyBackup(env, backupId);
+export async function verifiedWhopResetContext(env, principalValue, backupId) {
+  const verified = await verifyBackup(env, principalValue, backupId);
   const options = safeJson(verified.row.reset_options_json, {}) || {};
   return {
     backupId: verified.row.backup_id,
@@ -663,27 +661,20 @@ export async function verifiedWhopResetContext(env, backupId) {
       resync: options.resync === true,
       disconnectWhop: options.disconnectWhop === true,
     },
-    confirmationPhrase: resetConfirmationPhrase({
-      scope: verified.row.scope,
-      experienceId: verified.row.experience_id,
-    }, options.deletePublished === true),
+    confirmationPhrase: resetConfirmationPhrase({ scope: verified.row.scope, experienceId: verified.row.experience_id }, options.deletePublished === true),
   };
 }
 
-export async function authorizeWhopReset(env, backupId, options = {}) {
-  const verified = await verifyBackup(env, backupId);
-  const current = await snapshotScope(env, { scope: verified.row.scope, experienceId: verified.row.experience_id });
-  if (current.contentChecksum !== verified.manifest.contentChecksum) {
-    throw new HttpError(409, 'The importer changed after this backup was created. Create a new backup before resetting so no newer work is lost.', {
-      code: 'backup_scope_changed',
-      backupId: verified.row.backup_id,
-    });
-  }
-  return issueResetToken(env, verified.row, options);
+export async function authorizeWhopReset(env, principalValue, backupId, options = {}) {
+  const principalId = principalIdFrom(principalValue);
+  const verified = await verifyBackup(env, principalId, backupId);
+  const current = await snapshotScope(env, principalId, { scope: verified.row.scope, experienceId: verified.row.experience_id });
+  if (current.contentChecksum !== verified.manifest.contentChecksum) throw new HttpError(409, 'The importer changed after this backup was created. Create a new backup before resetting so no newer work is lost.', { code: 'backup_scope_changed', backupId: verified.row.backup_id });
+  return issueResetToken(env, principalId, verified.row, options);
 }
 
-export async function exportWhopImportBackup(env, backupId) {
-  const verified = await verifyBackup(env, backupId);
+export async function exportWhopImportBackup(env, principalValue, backupId) {
+  const verified = await verifyBackup(env, principalValue, backupId);
   return { backup: backupSummary(verified.row), archiveJson: verified.archiveJson };
 }
 
@@ -692,48 +683,43 @@ function guideEquivalent(current, snapshot) {
   return GUIDE_COLUMNS.every((column) => (current[column] ?? null) === (snapshot[column] ?? null));
 }
 
-async function restoreSourcesAndPosts(db, entities) {
+async function restoreSourcesAndPosts(db, principalId, entities) {
   await runJsonBatches(db, entities.sources || [], `
     INSERT OR IGNORE INTO whop_sources (
-      experience_id, label, company_id, company_title, experience_name,
+      experience_id, principal_id, upstream_experience_id, label, company_id, company_title, experience_name,
       decision, default_group, created_at, updated_at
     )
     SELECT
-      json_extract(value, '$.experience_id'), json_extract(value, '$.label'),
-      json_extract(value, '$.company_id'), json_extract(value, '$.company_title'),
-      json_extract(value, '$.experience_name'), json_extract(value, '$.decision'),
-      json_extract(value, '$.default_group'), json_extract(value, '$.created_at'),
-      json_extract(value, '$.updated_at')
+      json_extract(value, '$.experience_id'), ?, json_extract(value, '$.upstream_experience_id'),
+      json_extract(value, '$.label'), json_extract(value, '$.company_id'), json_extract(value, '$.company_title'),
+      json_extract(value, '$.experience_name'), json_extract(value, '$.decision'), json_extract(value, '$.default_group'),
+      json_extract(value, '$.created_at'), json_extract(value, '$.updated_at')
     FROM json_each(?)
-  `);
+  `, [principalId]);
   await runJsonBatches(db, entities.categories || [], `
-    INSERT OR IGNORE INTO guide_categories (
-      slug, label, description, sort_order, active, created_at, updated_at
-    )
-    SELECT
-      json_extract(value, '$.slug'), json_extract(value, '$.label'),
-      json_extract(value, '$.description'), json_extract(value, '$.sort_order'),
-      json_extract(value, '$.active'), json_extract(value, '$.created_at'),
-      json_extract(value, '$.updated_at')
+    INSERT OR IGNORE INTO guide_categories (slug, label, description, sort_order, active, created_at, updated_at)
+    SELECT json_extract(value, '$.slug'), json_extract(value, '$.label'), json_extract(value, '$.description'),
+      json_extract(value, '$.sort_order'), json_extract(value, '$.active'), json_extract(value, '$.created_at'), json_extract(value, '$.updated_at')
     FROM json_each(?)
   `);
   await runJsonBatches(db, entities.posts || [], `
     INSERT OR IGNORE INTO whop_posts (
-      source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
+      source_key, principal_id, upstream_source_key, experience_id, upstream_experience_id,
+      post_id, title, excerpt, body_markdown, author_json, attachment_json,
       source_created_at, source_updated_at, source_fingerprint, integrity_json,
       decision, decision_updated_at, last_scanned_at, stale_at
     )
     SELECT
-      json_extract(value, '$.source_key'), json_extract(value, '$.experience_id'),
-      json_extract(value, '$.post_id'), json_extract(value, '$.title'),
-      json_extract(value, '$.excerpt'), json_extract(value, '$.body_markdown'),
-      json_extract(value, '$.author_json'), json_extract(value, '$.attachment_json'),
+      json_extract(value, '$.source_key'), ?, json_extract(value, '$.upstream_source_key'),
+      json_extract(value, '$.experience_id'), json_extract(value, '$.upstream_experience_id'),
+      json_extract(value, '$.post_id'), json_extract(value, '$.title'), json_extract(value, '$.excerpt'),
+      json_extract(value, '$.body_markdown'), json_extract(value, '$.author_json'), json_extract(value, '$.attachment_json'),
       json_extract(value, '$.source_created_at'), json_extract(value, '$.source_updated_at'),
       json_extract(value, '$.source_fingerprint'), json_extract(value, '$.integrity_json'),
       json_extract(value, '$.decision'), json_extract(value, '$.decision_updated_at'),
       json_extract(value, '$.last_scanned_at'), json_extract(value, '$.stale_at')
     FROM json_each(?)
-  `);
+  `, [principalId]);
 }
 
 async function restoreMediaLedger(db, entities) {
@@ -743,13 +729,10 @@ async function restoreMediaLedger(db, entities) {
         storage_key, size_bytes, reserved_bytes, status, reservation_id, managed,
         content_type, source_key, created_at, updated_at, last_referenced_at, unreferenced_at
       )
-      SELECT
-        json_extract(value, '$.storage_key'), json_extract(value, '$.size_bytes'),
-        json_extract(value, '$.reserved_bytes'), json_extract(value, '$.status'),
-        json_extract(value, '$.reservation_id'), json_extract(value, '$.managed'),
-        json_extract(value, '$.content_type'), json_extract(value, '$.source_key'),
-        json_extract(value, '$.created_at'), json_extract(value, '$.updated_at'),
-        json_extract(value, '$.last_referenced_at'), NULL
+      SELECT json_extract(value, '$.storage_key'), json_extract(value, '$.size_bytes'),
+        json_extract(value, '$.reserved_bytes'), json_extract(value, '$.status'), json_extract(value, '$.reservation_id'),
+        json_extract(value, '$.managed'), json_extract(value, '$.content_type'), json_extract(value, '$.source_key'),
+        json_extract(value, '$.created_at'), json_extract(value, '$.updated_at'), json_extract(value, '$.last_referenced_at'), NULL
       FROM json_each(?)
     `);
   } catch (error) {
@@ -763,35 +746,37 @@ function guideLookupKey(row) {
   return `slug:${row?.slug || ''}`;
 }
 
-async function currentGuidesForBatch(db, batch) {
+async function currentGuidesForBatch(db, principalId, batch) {
   const payload = stableBackupJson(batch);
   const rows = await db.prepare(`
     SELECT * FROM guides
-    WHERE source_key IN (
-      SELECT json_extract(value, '$.source_key') FROM json_each(?)
-      WHERE json_extract(value, '$.source_key') IS NOT NULL
+    WHERE principal_id = ? AND (
+      source_key IN (
+        SELECT json_extract(value, '$.source_key') FROM json_each(?)
+        WHERE json_extract(value, '$.source_key') IS NOT NULL
+      )
+      OR slug IN (
+        SELECT json_extract(value, '$.slug') FROM json_each(?)
+        WHERE json_extract(value, '$.source_key') IS NULL
+      )
+      OR EXISTS (
+        SELECT 1 FROM json_each(?) AS input
+        WHERE guides.source_key IS NULL
+          AND guides.source_experience_id = json_extract(input.value, '$.source_experience_id')
+          AND guides.source_post_id = json_extract(input.value, '$.source_post_id')
+      )
     )
-    OR slug IN (
-      SELECT json_extract(value, '$.slug') FROM json_each(?)
-      WHERE json_extract(value, '$.source_key') IS NULL
-    )
-    OR EXISTS (
-      SELECT 1 FROM json_each(?) AS input
-      WHERE guides.source_key IS NULL
-        AND guides.source_experience_id = json_extract(input.value, '$.source_experience_id')
-        AND guides.source_post_id = json_extract(input.value, '$.source_post_id')
-    )
-  `).bind(payload, payload, payload).all();
+  `).bind(principalId, payload, payload, payload).all();
   return rows.results || [];
 }
 
-async function restoreGuides(db, guideRows) {
+async function restoreGuides(db, principalId, guideRows) {
   const restored = [];
   const unchanged = [];
   const conflicts = [];
   const guideIdMap = new Map();
   for (const batch of backupJsonBatches(guideRows)) {
-    const beforeRows = await currentGuidesForBatch(db, batch);
+    const beforeRows = await currentGuidesForBatch(db, principalId, batch);
     const beforeByKey = new Map();
     for (const row of beforeRows) {
       beforeByKey.set(guideLookupKey(row), row);
@@ -799,21 +784,17 @@ async function restoreGuides(db, guideRows) {
     }
     await db.prepare(`
       INSERT OR IGNORE INTO guides (${GUIDE_COLUMNS.join(', ')})
-      SELECT
-        json_extract(value, '$.slug'), json_extract(value, '$.title'),
-        json_extract(value, '$.description'), json_extract(value, '$.category_slug'),
-        json_extract(value, '$.body_markdown'), json_extract(value, '$.status'),
-        json_extract(value, '$.featured'), json_extract(value, '$.sort_order'),
-        json_extract(value, '$.source_key'), json_extract(value, '$.source_group'),
-        json_extract(value, '$.source_experience_id'), json_extract(value, '$.source_post_id'),
-        json_extract(value, '$.source_fingerprint'), json_extract(value, '$.attachment_json'),
-        json_extract(value, '$.integrity_json'), json_extract(value, '$.author_json'),
-        json_extract(value, '$.source_created_at'), json_extract(value, '$.source_updated_at'),
-        json_extract(value, '$.imported_at'), json_extract(value, '$.updated_at'),
-        json_extract(value, '$.published_at')
+      SELECT ?, json_extract(value, '$.upstream_source_key'),
+        json_extract(value, '$.slug'), json_extract(value, '$.title'), json_extract(value, '$.description'),
+        json_extract(value, '$.category_slug'), json_extract(value, '$.body_markdown'), json_extract(value, '$.status'),
+        json_extract(value, '$.featured'), json_extract(value, '$.sort_order'), json_extract(value, '$.source_key'),
+        json_extract(value, '$.source_group'), json_extract(value, '$.source_experience_id'), json_extract(value, '$.source_post_id'),
+        json_extract(value, '$.source_fingerprint'), json_extract(value, '$.attachment_json'), json_extract(value, '$.integrity_json'),
+        json_extract(value, '$.author_json'), json_extract(value, '$.source_created_at'), json_extract(value, '$.source_updated_at'),
+        json_extract(value, '$.imported_at'), json_extract(value, '$.updated_at'), json_extract(value, '$.published_at')
       FROM json_each(?)
-    `).bind(stableBackupJson(batch)).run();
-    const currentRows = await currentGuidesForBatch(db, batch);
+    `).bind(principalId, stableBackupJson(batch)).run();
+    const currentRows = await currentGuidesForBatch(db, principalId, batch);
     const currentByKey = new Map();
     for (const row of currentRows) {
       currentByKey.set(guideLookupKey(row), row);
@@ -821,9 +802,7 @@ async function restoreGuides(db, guideRows) {
     }
     for (const snapshot of batch) {
       const key = guideLookupKey(snapshot);
-      const postKey = snapshot.source_experience_id && snapshot.source_post_id
-        ? `post:${snapshot.source_experience_id}:${snapshot.source_post_id}`
-        : '';
+      const postKey = snapshot.source_experience_id && snapshot.source_post_id ? `post:${snapshot.source_experience_id}:${snapshot.source_post_id}` : '';
       const before = beforeByKey.get(key) || (postKey ? beforeByKey.get(postKey) : null) || null;
       const current = currentByKey.get(key) || (postKey ? currentByKey.get(postKey) : null) || null;
       if (before) {
@@ -833,9 +812,7 @@ async function restoreGuides(db, guideRows) {
         } else {
           conflicts.push({ backupGuideId: Number(snapshot.id), currentGuideId: Number(before.id), title: before.title, currentUpdatedAt: before.updated_at, backupUpdatedAt: snapshot.updated_at });
         }
-        continue;
-      }
-      if (current && guideEquivalent(current, snapshot)) {
+      } else if (current && guideEquivalent(current, snapshot)) {
         restored.push(Number(current.id));
         guideIdMap.set(Number(snapshot.id), Number(current.id));
       } else {
@@ -854,12 +831,10 @@ async function restoreCourseVideos(db, videos, guideIdMap) {
         video_key, guide_id, lesson_id, source_key, title, audio_only,
         duration_seconds, created_at, updated_at
       )
-      SELECT
-        json_extract(value, '$.video_key'), json_extract(value, '$.guide_id'),
-        json_extract(value, '$.lesson_id'), json_extract(value, '$.source_key'),
-        json_extract(value, '$.title'), json_extract(value, '$.audio_only'),
-        json_extract(value, '$.duration_seconds'), json_extract(value, '$.created_at'),
-        json_extract(value, '$.updated_at')
+      SELECT json_extract(value, '$.video_key'), json_extract(value, '$.guide_id'),
+        json_extract(value, '$.lesson_id'), json_extract(value, '$.source_key'), json_extract(value, '$.title'),
+        json_extract(value, '$.audio_only'), json_extract(value, '$.duration_seconds'),
+        json_extract(value, '$.created_at'), json_extract(value, '$.updated_at')
       FROM json_each(?)
     `);
   } catch (error) {
@@ -867,82 +842,82 @@ async function restoreCourseVideos(db, videos, guideIdMap) {
   }
 }
 
-export async function reattachPreservedWhopGuides(env, experienceId) {
+export async function reattachPreservedWhopGuides(env, experienceId, principalValue = OWNER_PRINCIPAL_ID) {
   const id = exactExperienceId(experienceId);
   if (!id) return { reattached: 0, conflicts: [] };
+  const principalId = principalIdFrom(principalValue);
   const db = await ensureWhopBackupSchema(env);
   const result = await db.prepare(`
     UPDATE guides
     SET source_key = (
       SELECT posts.source_key
       FROM whop_posts AS posts
-      WHERE posts.experience_id = guides.source_experience_id
+      WHERE posts.principal_id = guides.principal_id
+        AND posts.upstream_experience_id = guides.source_experience_id
         AND posts.post_id = guides.source_post_id
         AND posts.stale_at IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM guides AS owner
-          WHERE owner.source_key = posts.source_key AND owner.id != guides.id
+          WHERE owner.principal_id = guides.principal_id AND owner.source_key = posts.source_key AND owner.id != guides.id
         )
       ORDER BY posts.source_key LIMIT 1
-    )
-    WHERE source_experience_id = ?
-      AND status = 'published'
-      AND source_key IS NULL
+    ),
+    upstream_source_key = COALESCE(upstream_source_key, (
+      SELECT posts.upstream_source_key FROM whop_posts AS posts
+      WHERE posts.principal_id = guides.principal_id
+        AND posts.upstream_experience_id = guides.source_experience_id
+        AND posts.post_id = guides.source_post_id
+      ORDER BY posts.source_key LIMIT 1
+    ))
+    WHERE principal_id = ? AND source_experience_id = ?
+      AND status = 'published' AND source_key IS NULL
       AND EXISTS (
         SELECT 1 FROM whop_posts AS posts
-        WHERE posts.experience_id = guides.source_experience_id
+        WHERE posts.principal_id = guides.principal_id
+          AND posts.upstream_experience_id = guides.source_experience_id
           AND posts.post_id = guides.source_post_id
           AND posts.stale_at IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM guides AS owner
-            WHERE owner.source_key = posts.source_key AND owner.id != guides.id
-          )
       )
-  `).bind(id).run();
+  `).bind(principalId, id).run();
   return { reattached: changes(result), conflicts: [] };
 }
 
-export async function restoreWhopImportBackup(env, backupId, input = {}) {
-  const verified = await verifyBackup(env, backupId);
-  if (String(input.confirmation || '').trim() !== restoreConfirmationPhrase(backupId)) {
-    throw new HttpError(422, `Type “${restoreConfirmationPhrase(backupId)}” exactly to restore this backup.`);
-  }
+export async function restoreWhopImportBackup(env, principalValue, backupId, input = {}) {
+  const principalId = principalIdFrom(principalValue);
+  const verified = await verifyBackup(env, principalId, backupId);
+  if (String(input.confirmation || '').trim() !== restoreConfirmationPhrase(backupId)) throw new HttpError(422, `Type “${restoreConfirmationPhrase(backupId)}” exactly to restore this backup.`);
   const selectedIds = new Set((Array.isArray(input.guideIds) ? input.guideIds : []).map(Number).filter((id) => Number.isFinite(id) && id > 0));
   const guideRows = (verified.entities.guides || []).filter((row) => !selectedIds.size || selectedIds.has(Number(row.id)));
-  await restoreSourcesAndPosts(verified.db, verified.entities);
+  await restoreSourcesAndPosts(verified.db, principalId, verified.entities);
   await restoreMediaLedger(verified.db, verified.entities);
-  for (const sourceId of verified.manifest.sourceIds || []) await reattachPreservedWhopGuides(env, sourceId);
-  const guideResult = await restoreGuides(verified.db, guideRows);
+  for (const sourceId of verified.manifest.sourceIds || []) await reattachPreservedWhopGuides(env, sourceId, principalId);
+  const guideResult = await restoreGuides(verified.db, principalId, guideRows);
   await restoreCourseVideos(verified.db, verified.entities.courseVideos || [], guideResult.guideIdMap);
   await verified.db.prepare(`
     UPDATE whop_import_backups
     SET restored_at = ?, restore_count = restore_count + 1
-    WHERE backup_id = ? AND status = 'verified'
-  `).bind(nowIso(), backupId).run();
-  return {
-    backup: backupSummary(await verified.db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first()),
-    restored: guideResult.restored,
-    unchanged: guideResult.unchanged,
-    conflicts: guideResult.conflicts,
-    complete: guideResult.conflicts.length === 0,
-  };
+    WHERE backup_id = ? AND owner_session_id = ? AND status = 'verified'
+  `).bind(nowIso(), backupId, principalId).run();
+  const fresh = await backupRow(verified.db, principalId, backupId);
+  return { backup: backupSummary(fresh), restored: guideResult.restored, unchanged: guideResult.unchanged, conflicts: guideResult.conflicts, complete: guideResult.conflicts.length === 0 };
 }
 
-async function resetCounts(db, scope, deletePublished) {
-  const guideCondition = scope.scope === 'source' ? 'source_experience_id = ?' : 'source_experience_id IS NOT NULL';
-  const bindings = scope.scope === 'source' ? [scope.experienceId] : [];
-  const sourceCondition = scope.scope === 'source' ? 'experience_id = ?' : '1 = 1';
-  const sourceBindings = scope.scope === 'source' ? [scope.experienceId] : [];
+async function resetCounts(db, principalId, scope, deletePublished) {
+  const guideClause = scope.scope === 'source' ? 'AND source_experience_id = ?' : '';
+  const guideBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
+  const sourceClause = scope.scope === 'source' ? 'AND upstream_experience_id = ?' : '';
+  const sourceBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
   const [guides, posts, sources] = await Promise.all([
-    db.prepare(`SELECT COUNT(*) AS count FROM guides WHERE ${guideCondition} ${deletePublished ? '' : "AND status != 'published'"}`).bind(...bindings).first(),
-    db.prepare(`SELECT COUNT(*) AS count FROM whop_posts WHERE ${sourceCondition}`).bind(...sourceBindings).first(),
-    db.prepare(`SELECT COUNT(*) AS count FROM whop_sources WHERE ${sourceCondition}`).bind(...sourceBindings).first(),
+    db.prepare(`SELECT COUNT(*) AS count FROM guides WHERE principal_id = ? AND source_experience_id IS NOT NULL ${guideClause} ${deletePublished ? '' : "AND status != 'published'"}`).bind(...guideBindings).first(),
+    db.prepare(`SELECT COUNT(*) AS count FROM whop_posts WHERE principal_id = ? ${sourceClause}`).bind(...sourceBindings).first(),
+    db.prepare(`SELECT COUNT(*) AS count FROM whop_sources WHERE principal_id = ? ${sourceClause}`).bind(...sourceBindings).first(),
   ]);
   return { guides: Number(guides?.count || 0), posts: Number(posts?.count || 0), sources: Number(sources?.count || 0) };
 }
 
-export async function resetWhopImporter(env, backupId, input = {}) {
-  const verified = await verifyBackup(env, backupId);
+export async function resetWhopImporter(env, principalValue, backupId, input = {}) {
+  const principalId = principalIdFrom(principalValue);
+  const verified = await verifyBackup(env, principalId, backupId);
   const scope = normalizedScope({ scope: verified.row.scope, experienceId: verified.row.experience_id });
   const options = safeJson(verified.row.reset_options_json, {}) || {};
   const expectedPhrase = resetConfirmationPhrase(scope, options.deletePublished === true);
@@ -951,30 +926,25 @@ export async function resetWhopImporter(env, backupId, input = {}) {
   if (!token || await sha256(token) !== verified.row.reset_token_hash) throw new HttpError(403, 'This reset authorization is invalid. Create or re-authorize a verified backup.');
   if (verified.row.reset_used_at) throw new HttpError(409, 'This reset authorization was already used.');
   if (Date.parse(String(verified.row.reset_token_expires_at || '')) <= Date.now()) throw new HttpError(409, 'This reset authorization expired. Verify the backup again before resetting.');
-  const current = await snapshotScope(env, scope);
-  if (current.contentChecksum !== verified.manifest.contentChecksum) {
-    throw new HttpError(409, 'The importer changed after this backup was verified. Nothing was deleted; create a new backup first.', {
-      code: 'backup_scope_changed',
-      backupId,
-    });
-  }
-  const before = await resetCounts(verified.db, scope, options.deletePublished === true);
-  const guideCondition = scope.scope === 'source' ? 'source_experience_id = ?' : 'source_experience_id IS NOT NULL';
-  const guideBindings = scope.scope === 'source' ? [scope.experienceId] : [];
-  const sourceCondition = scope.scope === 'source' ? 'experience_id = ?' : '1 = 1';
-  const sourceBindings = scope.scope === 'source' ? [scope.experienceId] : [];
+  const current = await snapshotScope(env, principalId, scope);
+  if (current.contentChecksum !== verified.manifest.contentChecksum) throw new HttpError(409, 'The importer changed after this backup was verified. Nothing was deleted; create a new backup first.', { code: 'backup_scope_changed', backupId });
+  const before = await resetCounts(verified.db, principalId, scope, options.deletePublished === true);
+  const guideClause = scope.scope === 'source' ? 'AND source_experience_id = ?' : '';
+  const guideBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
+  const sourceClause = scope.scope === 'source' ? 'AND upstream_experience_id = ?' : '';
+  const sourceBindings = scope.scope === 'source' ? [principalId, scope.experienceId] : [principalId];
   const results = await verified.db.batch([
     verified.db.prepare(`
       UPDATE whop_import_backups SET reset_used_at = ?
-      WHERE backup_id = ? AND reset_token_hash = ? AND reset_used_at IS NULL AND status = 'verified'
-    `).bind(nowIso(), backupId, verified.row.reset_token_hash),
-    verified.db.prepare(`DELETE FROM guides WHERE ${guideCondition} ${options.deletePublished === true ? '' : "AND status != 'published'"}`).bind(...guideBindings),
-    verified.db.prepare(`DELETE FROM whop_posts WHERE ${sourceCondition}`).bind(...sourceBindings),
-    verified.db.prepare(`DELETE FROM whop_sources WHERE ${sourceCondition}`).bind(...sourceBindings),
+      WHERE backup_id = ? AND owner_session_id = ? AND reset_token_hash = ? AND reset_used_at IS NULL AND status = 'verified'
+    `).bind(nowIso(), backupId, principalId, verified.row.reset_token_hash),
+    verified.db.prepare(`DELETE FROM guides WHERE principal_id = ? AND source_experience_id IS NOT NULL ${guideClause} ${options.deletePublished === true ? '' : "AND status != 'published'"}`).bind(...guideBindings),
+    verified.db.prepare(`DELETE FROM whop_posts WHERE principal_id = ? ${sourceClause}`).bind(...sourceBindings),
+    verified.db.prepare(`DELETE FROM whop_sources WHERE principal_id = ? ${sourceClause}`).bind(...sourceBindings),
   ]);
   if (changes(results[0]) !== 1) throw new HttpError(409, 'The reset authorization changed before deletion began. Nothing was deleted.');
   return {
-    backup: backupSummary(await verified.db.prepare('SELECT * FROM whop_import_backups WHERE backup_id = ?').bind(backupId).first()),
+    backup: backupSummary(await backupRow(verified.db, principalId, backupId)),
     scope: scope.scope,
     experienceId: scope.experienceId,
     options,
@@ -984,21 +954,17 @@ export async function resetWhopImporter(env, backupId, input = {}) {
   };
 }
 
-export async function deleteWhopImportBackup(env, backupId, confirmation) {
+export async function deleteWhopImportBackup(env, principalValue, backupId, confirmation) {
+  const principalId = principalIdFrom(principalValue);
   const db = await ensureWhopBackupSchema(env);
-  const row = await backupRow(db, backupId);
+  const row = await backupRow(db, principalId, backupId);
   const expected = deleteBackupConfirmationPhrase(backupId);
   if (String(confirmation || '').trim() !== expected) throw new HttpError(422, `Type “${expected}” exactly to delete this backup.`);
   const result = await db.prepare(`
     UPDATE whop_import_backups
     SET deleted_at = ?, reset_token_hash = NULL, reset_token_expires_at = NULL
-    WHERE backup_id = ? AND deleted_at IS NULL
-  `).bind(nowIso(), backupId).run();
+    WHERE backup_id = ? AND owner_session_id = ? AND deleted_at IS NULL
+  `).bind(nowIso(), backupId, principalId).run();
   if (changes(result) !== 1) throw new HttpError(409, 'SniperPlug could not delete this backup safely.');
-  return {
-    deleted: true,
-    backupId,
-    previousStatus: row.status,
-    archiveCleanup: row.archive_key ? 'grace-period' : 'none',
-  };
+  return { deleted: true, backupId, previousStatus: row.status, archiveCleanup: row.archive_key ? 'grace-period' : 'none' };
 }

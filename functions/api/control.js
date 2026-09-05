@@ -1,4 +1,5 @@
 import {
+  OWNER_PRINCIPAL_ID,
   checkLoginThrottle,
   clearAdminSession,
   clearLoginFailures,
@@ -92,6 +93,14 @@ function accountSummary(session) {
     principalId: String(session?.principalId || session?.sid || ''),
     kind: String(session?.kind || 'owner'),
   };
+}
+
+function requireOwnerPrincipal(session, actionLabel = 'change global SniperPlug settings') {
+  const principalId = String(session?.principalId || session?.sid || '');
+  if (principalId !== OWNER_PRINCIPAL_ID) {
+    throw new HttpError(403, `Only the SniperPlug owner account can ${actionLabel}.`);
+  }
+  return principalId;
 }
 
 async function login(request, env) {
@@ -204,12 +213,12 @@ async function safeMediaStorageStatus(env) {
 
 async function dashboard(request, env, admin, context) {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
-  const cleanup = await reconcileRecentBulkImports(env);
+  const cleanup = await reconcileRecentBulkImports(env, admin);
   const [whop, sources, categories, guides, mediaStorageUsage] = await Promise.all([
     verifiedWhopSummary(request, env, admin),
-    listSourceOptions(env),
+    listSourceOptions(env, admin),
     listCategories(env, { includeInactive: true }),
-    listAdminGuideSummaries(env),
+    listAdminGuideSummaries(env, admin),
     safeMediaStorageStatus(env),
   ]);
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
@@ -221,6 +230,8 @@ async function dashboard(request, env, admin, context) {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
       mediaStorageUsage,
       cleanup,
+      publicPublishing: String(admin?.principalId || admin?.sid || '') === OWNER_PRINCIPAL_ID,
+      categoryManagement: String(admin?.principalId || admin?.sid || '') === OWNER_PRINCIPAL_ID,
     },
     sources,
     categories,
@@ -234,7 +245,11 @@ async function sourceCheck(request, env, admin) {
   const body = await readJson(request);
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, body.source);
-  return json({ experience, source: await sourceDecision(env, experience, experience.id), sources: await listSourceOptions(env) });
+  return json({
+    experience,
+    source: await sourceDecision(env, admin, experience, experience.id),
+    sources: await listSourceOptions(env, admin),
+  });
 }
 
 async function sourceSave(request, env, admin) {
@@ -246,9 +261,9 @@ async function sourceSave(request, env, admin) {
   const whop = await requireWhopSession(request, env, admin);
   const experiences = await mapConcurrent(values, (value) => retrieveExperience(whop, value));
   const saved = values.length === 1
-    ? [await saveSourceDecision(env, experiences[0], experiences[0].id, decision)]
-    : await saveSourceDecisions(env, experiences.map((experience) => ({ experience, requestedId: experience.id })), decision);
-  return json({ source: saved[0], saved, sources: await listSourceOptions(env) });
+    ? [await saveSourceDecision(env, admin, experiences[0], experiences[0].id, decision)]
+    : await saveSourceDecisions(env, admin, experiences.map((experience) => ({ experience, requestedId: experience.id })), decision);
+  return json({ source: saved[0], saved, sources: await listSourceOptions(env, admin) });
 }
 
 async function scan(request, env, admin) {
@@ -257,7 +272,7 @@ async function scan(request, env, admin) {
   const body = await readJson(request);
   const whop = await requireWhopSession(request, env, admin);
   const experience = await retrieveExperience(whop, body.source || body.experienceId);
-  const posts = await scanApprovedSource(env, whop, experience);
+  const posts = await scanApprovedSource(env, admin, whop, experience);
   const sourceType = await resolveWhopExperienceType(whop, experience);
   const suggestedCategory = suggestedCategoryForText([
     experience?.company?.title,
@@ -269,7 +284,7 @@ async function scan(request, env, admin) {
     experience,
     sourceType,
     suggestedCategory,
-    source: await sourceDecision(env, experience, experience.id),
+    source: await sourceDecision(env, admin, experience, experience.id),
     posts: posts.map(summarizePostForClient),
     counts: {
       total: posts.length,
@@ -281,50 +296,52 @@ async function scan(request, env, admin) {
   });
 }
 
-async function postDecision(request, env) {
+async function postDecision(request, env, admin) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request);
-  return json({ changed: await savePostDecision(env, body.sourceKeys || body.sourceKey, String(body.decision || '')) });
+  return json({ changed: await savePostDecision(env, admin, body.sourceKeys || body.sourceKey, String(body.decision || '')) });
 }
 
 async function importPosts(request, env, admin) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 200_000 });
-  return json(await importApprovedPosts(env, await requireWhopSession(request, env, admin), body));
+  const whop = await requireWhopSession(request, env, admin);
+  return json(await importApprovedPosts(env, admin, whop, body));
 }
 
-async function categorySave(request, env) {
+async function categorySave(request, env, admin) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
+  requireOwnerPrincipal(admin, 'change the shared guide category catalog');
   const saved = await saveCategory(env, await readJson(request));
   return json({ category: saved, categories: await listCategories(env, { includeInactive: true }) });
 }
 
-async function guideDetail(request, env) {
+async function guideDetail(request, env, admin) {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
   const id = Number.parseInt(new URL(request.url).searchParams.get('id') || '', 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
-  const guide = await adminGuide(env, id);
+  const guide = await adminGuide(env, admin, id);
   if (!guide || guide.status === 'rejected' || guide.integrity?.quarantined === true) {
-    throw new HttpError(404, 'Guide not found in the active review queue.');
+    throw new HttpError(404, 'Guide not found in this account’s active review queue.');
   }
   return json({ guide });
 }
 
-async function guideSave(request, env, context) {
+async function guideSave(request, env, admin, context) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 1_200_000 });
   const id = Number.parseInt(body.id, 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide draft.');
-  const guide = await saveGuideDraft(env, id, body);
+  const guide = await saveGuideDraft(env, admin, id, body);
   scheduleMediaMaintenance(context, env);
   return json({ guide });
 }
 
-async function guideStatus(request, env, context) {
+async function guideStatus(request, env, admin, context) {
   if (request.method !== 'POST') return methodNotAllowed(['POST']);
   requireSameOrigin(request);
   const body = await readJson(request);
@@ -332,10 +349,10 @@ async function guideStatus(request, env, context) {
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
   const status = String(body.status || '');
   const operation = status === 'published' ? 'publish' : status === 'rejected' ? 'reject' : 'return-to-draft';
-  const reservation = await reserveGuideVersion(env, id, body.expectedUpdatedAt, operation);
+  const reservation = await reserveGuideVersion(env, admin, id, body.expectedUpdatedAt, operation);
   try {
-    if (status === 'published') await assertGuidePublishable(env, id);
-    const guide = await setGuideStatus(env, id, status);
+    if (status === 'published') await assertGuidePublishable(env, admin, id);
+    const guide = await setGuideStatus(env, admin, id, status);
     scheduleMediaMaintenance(context, env);
     return json({ guide });
   } catch (error) {
@@ -353,19 +370,19 @@ export async function onRequest(context) {
     if (currentAction === 'source-check') return await sourceCheck(context.request, context.env, admin);
     if (currentAction === 'source-decision') return await sourceSave(context.request, context.env, admin);
     if (currentAction === 'scan') return await scan(context.request, context.env, admin);
-    if (currentAction === 'post-decision') return await postDecision(context.request, context.env);
+    if (currentAction === 'post-decision') return await postDecision(context.request, context.env, admin);
     if (currentAction === 'import') return await importPosts(context.request, context.env, admin);
-    if (currentAction === 'category-save') return await categorySave(context.request, context.env);
-    if (currentAction === 'guide-detail') return await guideDetail(context.request, context.env);
-    if (currentAction === 'guide-save') return await guideSave(context.request, context.env, context);
-    if (currentAction === 'guide-status') return await guideStatus(context.request, context.env, context);
+    if (currentAction === 'category-save') return await categorySave(context.request, context.env, admin);
+    if (currentAction === 'guide-detail') return await guideDetail(context.request, context.env, admin);
+    if (currentAction === 'guide-save') return await guideSave(context.request, context.env, admin, context);
+    if (currentAction === 'guide-status') return await guideStatus(context.request, context.env, admin, context);
     if (currentAction === 'post-detail') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-      return json({ post: await savedPostDetail(context.env, new URL(context.request.url).searchParams.get('sourceKey') || '') });
+      return json({ post: await savedPostDetail(context.env, admin, new URL(context.request.url).searchParams.get('sourceKey') || '') });
     }
     if (currentAction === 'posts') {
       if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-      const posts = await listSavedPosts(context.env, new URL(context.request.url).searchParams.get('experienceId') || '');
+      const posts = await listSavedPosts(context.env, admin, new URL(context.request.url).searchParams.get('experienceId') || '');
       return json({ posts: posts.map(summarizePostForClient) });
     }
     throw new HttpError(404, 'Unknown Control Center action.');

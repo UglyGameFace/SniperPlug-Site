@@ -8,6 +8,7 @@ import {
   requireDatabase,
   requireSameOrigin,
 } from '../_lib/http.js';
+import { principalIdFrom } from '../_lib/importer-workspace.js';
 import { scanApprovedSource } from '../_lib/posts.js';
 import { DEFAULT_WHOP_GROUPS, listSourceOptions, saveSourceDecision } from '../_lib/source-policy.js';
 import {
@@ -60,26 +61,22 @@ function groupLabel(groupKey) {
   return DEFAULT_WHOP_GROUPS.find((group) => group.key === key)?.label || null;
 }
 
-async function enrichBackupIdentity(env, backups, sources) {
+async function enrichBackupIdentity(env, principalValue, backups, sources) {
+  const principalId = principalIdFrom(principalValue);
   const byExperience = new Map((sources || []).map((source) => [String(source.experienceId || ''), source]));
   const db = requireDatabase(env);
   const updates = [];
   const enriched = (backups || []).map((backup) => {
     if (backup.scope !== 'source' || !backup.experienceId) {
-      return {
-        ...backup,
-        displayLabel: backup.label || 'Entire Whop importer',
-        groupKey: null,
-        groupLabel: null,
-      };
+      return { ...backup, displayLabel: backup.label || 'Entire Whop importer', groupKey: null, groupLabel: null };
     }
     const source = byExperience.get(String(backup.experienceId)) || null;
     const effectiveLabel = String(source?.label || backup.label || `Whop source · …${String(backup.experienceId).slice(-6)}`).trim();
     if (source?.label && source.label !== backup.label && backup.backupId) {
       updates.push(db.prepare(`
         UPDATE whop_import_backups SET label = ?
-        WHERE backup_id = ? AND deleted_at IS NULL
-      `).bind(source.label, backup.backupId));
+        WHERE backup_id = ? AND owner_session_id = ? AND deleted_at IS NULL
+      `).bind(source.label, backup.backupId, principalId));
     }
     return {
       ...backup,
@@ -93,20 +90,16 @@ async function enrichBackupIdentity(env, backups, sources) {
   return enriched;
 }
 
-async function overview(env) {
+async function overview(env, admin) {
   const [backupRows, sourceOptions] = await Promise.all([
-    listWhopImportBackups(env),
-    listSourceOptions(env),
+    listWhopImportBackups(env, admin),
+    listSourceOptions(env, admin),
   ]);
   const sources = sourceOverview(sourceOptions);
-  const backups = await enrichBackupIdentity(env, backupRows, sources);
+  const backups = await enrichBackupIdentity(env, admin, backupRows, sources);
   const groups = DEFAULT_WHOP_GROUPS.map((group) => {
     const sourceCount = sources.filter((source) => source.groupKey === group.key).length;
-    return sourceCount > 0 ? {
-      groupKey: group.key,
-      label: group.label,
-      sourceCount,
-    } : null;
+    return sourceCount > 0 ? { groupKey: group.key, label: group.label, sourceCount } : null;
   }).filter(Boolean);
   return json({ backups, sources, groups });
 }
@@ -114,20 +107,20 @@ async function overview(env) {
 async function postAction(request, env, admin, currentAction) {
   requireSameOrigin(request);
   const body = await readJson(request, { maxBytes: 250_000 });
-  if (currentAction === 'preview') return json(await previewWhopReset(env, admin.sid, body));
+  if (currentAction === 'preview') return json(await previewWhopReset(env, admin, body));
   if (currentAction === 'create') {
-    const result = await createWhopImportBackup(env, admin.sid, body);
-    const sources = sourceOverview(await listSourceOptions(env));
-    const [backup] = await enrichBackupIdentity(env, [result.backup], sources);
+    const result = await createWhopImportBackup(env, admin, body);
+    const sources = sourceOverview(await listSourceOptions(env, admin));
+    const [backup] = await enrichBackupIdentity(env, admin, [result.backup], sources);
     return json({ ...result, backup });
   }
   if (currentAction === 'authorize-reset') {
-    return json({ authorization: await authorizeWhopReset(env, backupId(request, body), body) });
+    return json({ authorization: await authorizeWhopReset(env, admin, backupId(request, body), body) });
   }
   if (currentAction === 'restore') {
     const id = backupId(request, body);
     try {
-      return json(await restoreWhopImportBackup(env, id, body));
+      return json(await restoreWhopImportBackup(env, admin, id, body));
     } catch (error) {
       if (error instanceof HttpError && [400, 401, 403, 404, 422].includes(error.status)) throw error;
       throw new HttpError(409, 'The restore did not finish. Any rows already restored are preserved, the verified backup is unchanged, and retrying the same restore is safe.', {
@@ -138,11 +131,11 @@ async function postAction(request, env, admin, currentAction) {
     }
   }
   if (currentAction === 'delete') {
-    return json(await deleteWhopImportBackup(env, backupId(request, body), body.confirmation));
+    return json(await deleteWhopImportBackup(env, admin, backupId(request, body), body.confirmation));
   }
   if (currentAction === 'reset') {
     const id = backupId(request, body);
-    const resetContext = await verifiedWhopResetContext(env, id);
+    const resetContext = await verifiedWhopResetContext(env, admin, id);
     let whop = null;
     let experience = null;
     if (resetContext.options.resync === true) {
@@ -152,13 +145,13 @@ async function postAction(request, env, admin, currentAction) {
       whop = await requireWhopSession(request, env, admin);
       experience = await retrieveExperience(whop, resetContext.experienceId);
     }
-    const result = await resetWhopImporter(env, id, body);
+    const result = await resetWhopImporter(env, admin, id, body);
     const warnings = [];
     let resync = null;
     if (result.options.resync === true) {
       try {
-        await saveSourceDecision(env, experience, result.experienceId, 'approved');
-        const posts = await scanApprovedSource(env, whop, experience);
+        await saveSourceDecision(env, admin, experience, result.experienceId, 'approved');
+        const posts = await scanApprovedSource(env, admin, whop, experience);
         resync = {
           complete: true,
           experienceId: result.experienceId,
@@ -191,10 +184,10 @@ export async function onRequest(context) {
     const currentAction = action(context.request);
     const admin = await requireAdmin(context.request, context.env);
     if (context.request.method === 'GET') {
-      if (currentAction === 'overview') return overview(context.env);
+      if (currentAction === 'overview') return overview(context.env, admin);
       if (currentAction === 'download') {
         const id = backupId(context.request);
-        const exported = await exportWhopImportBackup(context.env, id);
+        const exported = await exportWhopImportBackup(context.env, admin, id);
         return downloadResponse(id, exported.archiveJson);
       }
       return methodNotAllowed(['POST']);

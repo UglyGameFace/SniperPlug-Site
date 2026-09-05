@@ -25,7 +25,7 @@ assert.ok(discovery.includes("output.experiences = await allPages(session, 'expe
 assert.ok(discovery.includes('if (!output.experiences.length)') && discovery.includes("output.forums = await allPages(session, 'forums', queries.forums"), 'Forum enumeration is not constrained to compatibility fallback when experience inventory is empty.');
 assert.ok(discovery.includes('discovered.set(experience.id, experience)'), 'Product-scoped and fallback results are not deduplicated by exact experience ID.');
 assert.ok(endpoint.includes('const memberships = await loadWhopMemberships(session)'), 'The discovery endpoint does not load one authoritative membership snapshot.');
-assert.ok(endpoint.includes('discoverWhopSources(session, context.env, memberships)'), 'Discovery does not reuse the endpoint membership snapshot.');
+assert.ok(endpoint.includes('discoverWhopSources(session, context.env, admin, memberships)'), 'Discovery does not reuse the endpoint membership snapshot with the authenticated principal.');
 assert.ok(endpoint.includes('enforceLiveWhopAccess(session, discovered, memberships)'), 'Live access verification does not reuse the same endpoint membership snapshot.');
 assert.ok(!accessTruth.includes("whopApi(session, 'memberships'"), 'Access verification still performs a second membership pagination pass.');
 assert.ok(discovery.includes("SUPPORTED_TYPES = new Set(['forum', 'course', 'chat'])"), 'Forum, Course, and Chat sources are not classified together.');
@@ -46,7 +46,7 @@ assert.ok(discovery.includes('current.memberships += 1'), 'Merged company cards 
 assert.ok(discovery.includes('member:basic:read') && discovery.includes('member:email:read'), 'Missing membership-scope recovery message is incomplete.');
 assert.ok(discovery.includes('DEFAULT_GROUPS') && discovery.includes('black box') && discovery.includes('black box clips') && discovery.includes('hidden files'), 'Priority groups are not recognized completely.');
 assert.ok(!discovery.includes('membership?.user?.email'), 'Membership email must not be exposed to the browser.');
-assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession'), 'Discovery endpoint is not owner and OAuth protected.');
+assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession'), 'Discovery endpoint is not account and OAuth protected.');
 assert.ok(page.includes('data-discovered-groups'), 'Active source browser is missing.');
 assert.ok(page.includes('data-approve-selected') && page.includes('data-disapprove-selected'), 'Source bulk controls are missing.');
 assert.ok(page.includes('Advanced fallback'), 'Manual experience-ID input is not contained as an advanced fallback.');
