@@ -16,7 +16,10 @@ import {
 } from './http.js';
 
 const ADMIN_COOKIE = 'sniperplug_admin';
-export const OWNER_SESSION_ID = 'sniperplug-owner';
+export const OWNER_PRINCIPAL_ID = 'sniperplug-owner';
+// Backward-compatible alias for owner-only recovery code. New auth/Whop code must
+// use session.sid for the browser session and session.principalId for account data.
+export const OWNER_SESSION_ID = OWNER_PRINCIPAL_ID;
 const ADMIN_TTL_SECONDS = 12 * 60 * 60;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
 const LOGIN_BLOCK_MS = 15 * 60 * 1000;
@@ -86,8 +89,9 @@ export async function verifyAdminPassword(env, submitted) {
 
 export async function createAdminSession(env) {
   const session = {
-    v: 3,
-    sid: OWNER_SESSION_ID,
+    v: 4,
+    sid: `admin_${randomToken(24)}`,
+    principalId: OWNER_PRINCIPAL_ID,
     kind: 'owner',
     nonce: randomToken(24),
     issuedAt: Date.now(),
@@ -106,13 +110,20 @@ export async function readAdminSession(request, env) {
     const [payload, signature] = cookieValue(request, ADMIN_COOKIE).split('.', 2);
     if (!payload || !signature || !(await verifyValue(payload, signature, sessionSecret(env)))) return null;
     const session = JSON.parse(textDecoder.decode(base64urlDecode(payload)));
-    if (![1, 2, 3].includes(session?.v) || Number(session.expiresAt) <= Date.now()) return null;
+    if (![1, 2, 3, 4].includes(session?.v) || Number(session.expiresAt) <= Date.now()) return null;
 
-    // Version 1 predates customer-style Whop sessions and is safe to normalize to
-    // the one owner identity. Versions 2+ must already be the explicit owner.
-    if (session.v === 1) return { ...session, sid: OWNER_SESSION_ID, kind: 'owner' };
-    if (session.sid !== OWNER_SESSION_ID || session.kind !== 'owner') return null;
-    return { ...session, sid: OWNER_SESSION_ID, kind: 'owner' };
+    // Legacy owner cookies collapsed account identity and browser-session identity
+    // into one value. Preserve them until their normal expiry, but normalize them
+    // onto the explicit principal field so all new storage is account-scoped.
+    if (session.v <= 3) {
+      if (session.v > 1 && (session.sid !== OWNER_PRINCIPAL_ID || session.kind !== 'owner')) return null;
+      return { ...session, sid: OWNER_PRINCIPAL_ID, principalId: OWNER_PRINCIPAL_ID, kind: 'owner' };
+    }
+
+    if (session.kind !== 'owner') return null;
+    if (session.principalId !== OWNER_PRINCIPAL_ID) return null;
+    if (!/^admin_[A-Za-z0-9_-]{16,}$/.test(String(session.sid || ''))) return null;
+    return session;
   } catch {
     return null;
   }
