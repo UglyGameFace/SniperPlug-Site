@@ -1,4 +1,3 @@
-import { requireAdmin } from '../_lib/auth.js';
 import {
   cancelBulkJob,
   latestBulkJob,
@@ -13,6 +12,7 @@ import {
   readJson,
   requireSameOrigin,
 } from '../_lib/http.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import { requireWhopSession } from '../_lib/whop.js';
 
 function ownerFacingJob(job) {
@@ -30,27 +30,27 @@ function ownerFacingJob(job) {
 
 export async function onRequest(context) {
   try {
-    const admin = await requireAdmin(context.request, context.env);
+    const account = await requireControlAccount(context.request, context.env);
     if (context.request.method === 'GET') {
-      return json({ job: ownerFacingJob(await latestBulkJob(context.env, admin)) });
+      return json({ job: ownerFacingJob(await latestBulkJob(context.env, account)) });
     }
     if (context.request.method !== 'POST') return methodNotAllowed(['GET', 'POST']);
     requireSameOrigin(context.request);
     const body = await readJson(context.request, { maxBytes: 100_000 });
     const action = String(body?.action || '').trim();
     if (action === 'start') {
-      return json({ job: ownerFacingJob(await startBulkJob(context.env, admin, body)) }, 201);
+      return json({ job: ownerFacingJob(await startBulkJob(context.env, account, body)) }, 201);
     }
     if (action === 'step') {
       const id = String(body?.jobId || '').trim();
       if (!id) throw new HttpError(422, 'Choose a bulk job to resume.');
-      const whop = await requireWhopSession(context.request, context.env, admin);
-      return json({ job: ownerFacingJob(await stepBulkJob(context.env, admin, whop, id)) });
+      const whop = await requireWhopSession(context.request, context.env, account);
+      return json({ job: ownerFacingJob(await stepBulkJob(context.env, account, whop, id)) });
     }
     if (action === 'cancel') {
       const id = String(body?.jobId || '').trim();
       if (!id) throw new HttpError(422, 'Choose a bulk job to cancel.');
-      return json({ job: ownerFacingJob(await cancelBulkJob(context.env, admin, id)) });
+      return json({ job: ownerFacingJob(await cancelBulkJob(context.env, account, id)) });
     }
     throw new HttpError(404, 'Unknown bulk job action.');
   } catch (error) {
