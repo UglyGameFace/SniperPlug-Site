@@ -1,4 +1,5 @@
 import {
+  requireAccount,
   subscriberPrincipalIdForUser,
   whopUserIdFromProfile,
 } from './auth.js';
@@ -9,6 +10,8 @@ import { disconnectPrincipalWhop } from './whop-connection.js';
 import { beginWhopOAuth, finishWhopOAuth, requireWhopSession } from './whop.js';
 
 const PENDING_SUBSCRIBER_PREFIX = 'subscriber-pending:';
+const ENTITLEMENT_CACHE_MS = 60_000;
+const entitlementCache = new Map();
 
 function exactProductId(value) {
   const productId = String(value || '').trim();
@@ -29,8 +32,7 @@ function membershipProductId(membership) {
   return exactProductId(membership?.product?.id) || exactProductId(membership?.product_id);
 }
 
-export async function verifySubscriberEntitlement(whopSession, env) {
-  const productId = subscriberProductId(env);
+async function readSubscriberEntitlement(whopSession, productId) {
   let memberships;
   try {
     memberships = await loadWhopMemberships(whopSession);
@@ -64,6 +66,47 @@ export async function verifySubscriberEntitlement(whopSession, env) {
     cancelationStatus: String(membership?.cancelation_status || membership?.cancellation_status || '').trim().toLowerCase() || null,
     verifiedAt: new Date().toISOString(),
   };
+}
+
+export async function verifySubscriberEntitlement(whopSession, env) {
+  const productId = subscriberProductId(env);
+  const whopUserId = whopUserIdFromProfile(whopSession?.profile || {});
+  if (!whopUserId) {
+    throw new HttpError(403, 'Whop did not return the stable user identity required for subscriber entitlement verification.', {
+      code: 'subscriber_identity_missing',
+    });
+  }
+  const cacheKey = `${whopUserId}:${productId}:${Number(whopSession?.tokenVersion || 1)}`;
+  const cached = entitlementCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = readSubscriberEntitlement(whopSession, productId);
+  entitlementCache.set(cacheKey, { promise, expiresAt: Date.now() + ENTITLEMENT_CACHE_MS });
+  try {
+    return await promise;
+  } catch (error) {
+    entitlementCache.delete(cacheKey);
+    throw error;
+  }
+}
+
+export async function requireImporterAccount(request, env) {
+  const account = await requireAccount(request, env);
+  if (account.kind === 'owner') return account;
+  if (account.kind !== 'subscriber') throw new HttpError(403, 'This SniperPlug account type cannot use the importer.');
+
+  const whopSession = await requireWhopSession(request, env, account);
+  const whopUserId = whopUserIdFromProfile(whopSession.profile || {});
+  if (!whopUserId || whopUserId !== String(account.whopUserId || '')) {
+    throw new HttpError(403, 'The connected Whop account no longer matches this paid subscriber workspace. Sign out and authenticate again.', {
+      code: 'subscriber_identity_mismatch',
+    });
+  }
+  if (subscriberPrincipalIdForUser(whopUserId) !== account.principalId) {
+    throw new HttpError(403, 'The paid subscriber principal no longer matches the connected Whop identity. Sign in again.', {
+      code: 'subscriber_principal_mismatch',
+    });
+  }
+  return { ...account, entitlement: await verifySubscriberEntitlement(whopSession, env) };
 }
 
 function pendingSubscriberKey() {
@@ -178,4 +221,8 @@ export async function finishSubscriberWhopOAuth(request, env) {
     }
     throw error;
   }
+}
+
+export function clearSubscriberEntitlementCacheForTests() {
+  entitlementCache.clear();
 }
