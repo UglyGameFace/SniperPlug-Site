@@ -1,5 +1,7 @@
+import { OWNER_PRINCIPAL_ID } from './auth.js';
 import { HttpError, requireDatabase } from './http.js';
 import { prepareGuideBody } from './integrity.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom, upstreamSourceKey } from './importer-workspace.js';
 import { renderMarkdown } from './markdown.js';
 
 const CATEGORY_CATALOG = Object.freeze([
@@ -144,7 +146,7 @@ function normalizeGuideRow(row) {
     status: row.status,
     featured: Boolean(row.featured),
     sortOrder: row.sort_order,
-    sourceKey: row.source_key,
+    sourceKey: upstreamSourceKey(row),
     sourceGroup: row.source_group,
     sourceExperienceId: row.source_experience_id,
     sourcePostId: row.source_post_id,
@@ -170,7 +172,7 @@ function normalizeGuideSummaryRow(row) {
     status: row.status,
     featured: Boolean(row.featured),
     sortOrder: row.sort_order,
-    sourceKey: row.source_key,
+    sourceKey: upstreamSourceKey(row),
     attachments: { reviewCount: Number(attachments.reviewCount || 0) },
     integrity: {
       quarantined: integrity.quarantined === true,
@@ -183,49 +185,55 @@ function normalizeGuideSummaryRow(row) {
   };
 }
 
-export async function listAdminGuideSummaries(env) {
+export async function listAdminGuideSummaries(env, principalValue) {
   await ensureCategoryCatalog(env);
-  const db = requireDatabase(env);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const rows = await db.prepare(`
     SELECT guides.id, guides.slug, guides.title, guides.description,
            guides.category_slug, guide_categories.label AS category_label,
-           guides.status, guides.featured, guides.sort_order, guides.source_key,
+           guides.status, guides.featured, guides.sort_order, guides.source_key, guides.upstream_source_key,
            guides.attachment_json, guides.integrity_json,
            guides.imported_at, guides.updated_at, guides.published_at
     FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
+    WHERE guides.principal_id = ?
     ORDER BY CASE guides.status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END,
              guides.updated_at DESC
-  `).all();
+  `).bind(principalId).all();
   return (rows.results || []).map(normalizeGuideSummaryRow);
 }
 
-export async function adminGuide(env, id) {
+export async function adminGuide(env, principalValue, id) {
   await ensureCategoryCatalog(env);
-  const db = requireDatabase(env);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const row = await db.prepare(`
     SELECT guides.*, guide_categories.label AS category_label
     FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
-    WHERE guides.id = ?
-  `).bind(id).first();
+    WHERE guides.principal_id = ? AND guides.id = ?
+  `).bind(principalId, id).first();
   return row ? normalizeGuideRow(row) : null;
 }
 
-export async function listAdminGuides(env) {
+export async function listAdminGuides(env, principalValue) {
   await ensureCategoryCatalog(env);
-  const db = requireDatabase(env);
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
   const rows = await db.prepare(`
     SELECT guides.*, guide_categories.label AS category_label
     FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
+    WHERE guides.principal_id = ?
     ORDER BY CASE guides.status WHEN 'draft' THEN 0 WHEN 'published' THEN 1 ELSE 2 END,
              guides.updated_at DESC
-  `).all();
+  `).bind(principalId).all();
   return (rows.results || []).map(normalizeGuideRow);
 }
 
-export async function saveGuideDraft(env, id, input) {
-  const db = requireDatabase(env);
-  const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
-  if (!current) throw new HttpError(404, 'Guide draft not found.');
+export async function saveGuideDraft(env, principalValue, id, input) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const current = await db.prepare('SELECT * FROM guides WHERE principal_id = ? AND id = ?').bind(principalId, id).first();
+  if (!current) throw new HttpError(404, 'Guide draft not found in this account workspace.');
   const title = String(input?.title || '').trim().slice(0, 140);
   const description = String(input?.description || '').trim().slice(0, 260);
   if (title.length < 3 || description.length < 8) throw new HttpError(422, 'Add a complete title and card description.');
@@ -233,10 +241,10 @@ export async function saveGuideDraft(env, id, input) {
   const prepared = await prepareGuideBody(String(input?.body || ''), { source: 'Guide draft' });
   const attachments = safeJson(current.attachment_json || '{}', {});
   if (input?.attachmentsResolved === true) attachments.reviewCount = 0;
-  await db.prepare(`
+  const result = await db.prepare(`
     UPDATE guides SET title = ?, description = ?, category_slug = ?, body_markdown = ?,
       attachment_json = ?, integrity_json = ?, status = 'draft', featured = ?, updated_at = ?, published_at = NULL
-    WHERE id = ?
+    WHERE principal_id = ? AND id = ?
   `).bind(
     title,
     description,
@@ -244,49 +252,59 @@ export async function saveGuideDraft(env, id, input) {
     prepared.body,
     JSON.stringify(attachments),
     JSON.stringify({ ...prepared, sourceType: attachments.sourceType || safeJson(current.integrity_json || '{}', {}).sourceType || null }),
-    input?.featured === true ? 1 : 0,
+    principalId === OWNER_PRINCIPAL_ID && input?.featured === true ? 1 : 0,
     new Date().toISOString(),
+    principalId,
     id,
   ).run();
-  return normalizeGuideRow(await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first());
+  if (Number(result.meta?.changes || 0) !== 1) throw new HttpError(409, 'The guide changed before this account-scoped save completed. Refresh before retrying.');
+  return normalizeGuideRow(await db.prepare('SELECT * FROM guides WHERE principal_id = ? AND id = ?').bind(principalId, id).first());
 }
 
-export async function setGuideStatus(env, id, status) {
+export async function setGuideStatus(env, principalValue, id, status) {
   if (!['draft', 'published', 'rejected'].includes(status)) throw new HttpError(422, 'Choose Draft, Publish, or Reject.');
-  const db = requireDatabase(env);
-  const current = await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first();
-  if (!current) throw new HttpError(404, 'Guide not found.');
+  const principalId = principalIdFrom(principalValue);
+  if (status === 'published' && principalId !== OWNER_PRINCIPAL_ID) {
+    throw new HttpError(403, 'Subscription workspaces cannot publish onto SniperPlug’s public guide site. Keep the guide private or export it through the subscriber product flow.');
+  }
+  const db = await ensureImporterWorkspaceSchema(env);
+  const current = await db.prepare('SELECT * FROM guides WHERE principal_id = ? AND id = ?').bind(principalId, id).first();
+  if (!current) throw new HttpError(404, 'Guide not found in this account workspace.');
   const attachments = safeJson(current.attachment_json || '{}', {});
   if (status === 'published' && Number(attachments.reviewCount || 0) > 0) {
     throw new HttpError(422, 'Resolve or replace every flagged private or expiring Whop file before publishing.');
   }
   const now = new Date().toISOString();
-  await db.prepare(`
-    UPDATE guides SET status = ?, updated_at = ?, published_at = ? WHERE id = ?
-  `).bind(status, now, status === 'published' ? now : null, id).run();
-  return normalizeGuideRow(await db.prepare('SELECT * FROM guides WHERE id = ?').bind(id).first());
+  const result = await db.prepare(`
+    UPDATE guides SET status = ?, updated_at = ?, published_at = ?
+    WHERE principal_id = ? AND id = ?
+  `).bind(status, now, status === 'published' ? now : null, principalId, id).run();
+  if (Number(result.meta?.changes || 0) !== 1) throw new HttpError(409, 'The guide changed before this account-scoped status update completed.');
+  return normalizeGuideRow(await db.prepare('SELECT * FROM guides WHERE principal_id = ? AND id = ?').bind(principalId, id).first());
 }
 
 export async function publicGuides(env, { category: categorySlug = null } = {}) {
   await ensureCategoryCatalog(env);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   const query = `
     SELECT guides.*, guide_categories.label AS category_label
     FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
-    WHERE guides.status = 'published' ${categorySlug ? 'AND guides.category_slug = ?' : ''}
+    WHERE guides.principal_id = ? AND guides.status = 'published' ${categorySlug ? 'AND guides.category_slug = ?' : ''}
     ORDER BY guides.featured DESC, guides.sort_order ASC, guides.published_at DESC
   `;
-  const rows = categorySlug ? await db.prepare(query).bind(categorySlug).all() : await db.prepare(query).all();
+  const rows = categorySlug
+    ? await db.prepare(query).bind(OWNER_PRINCIPAL_ID, categorySlug).all()
+    : await db.prepare(query).bind(OWNER_PRINCIPAL_ID).all();
   return (rows.results || []).map(normalizeGuideRow);
 }
 
 export async function publicGuide(env, slug) {
   await ensureCategoryCatalog(env);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   const row = await db.prepare(`
     SELECT guides.*, guide_categories.label AS category_label
     FROM guides JOIN guide_categories ON guide_categories.slug = guides.category_slug
-    WHERE guides.slug = ? AND guides.status = 'published'
-  `).bind(slug).first();
+    WHERE guides.principal_id = ? AND guides.slug = ? AND guides.status = 'published'
+  `).bind(OWNER_PRINCIPAL_ID, slug).first();
   return row ? { ...normalizeGuideRow(row), html: renderMarkdown(row.body_markdown) } : null;
 }
