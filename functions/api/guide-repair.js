@@ -172,7 +172,7 @@ async function rollbackRecovery(env, lease, id, lockedRow, videoSnapshot, origin
     const db = await ensureImporterWorkspaceSchema(env);
     const current = await db.prepare('SELECT * FROM guides WHERE principal_id = ? AND id = ?').bind(lease.principalId, id).first();
     if (!current || String(current.source_key || '') !== String(lockedRow.source_key || '')) throw new HttpError(409, 'The guide changed identity while recovery was running. Newer work was preserved.');
-    await restoreGuideSnapshot(env, lockedRow, { expectedUpdatedAt: current.updated_at });
+    await restoreGuideSnapshot(env, lease.principalId, lockedRow, { expectedUpdatedAt: current.updated_at });
     await restoreCourseVideos(env, id, videoSnapshot);
   } catch (rollbackError) {
     throw new HttpError(500, 'Recovery failed and SniperPlug could not safely restore the original rejected guide and video state.', {
