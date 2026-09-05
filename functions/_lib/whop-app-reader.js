@@ -4,9 +4,17 @@ const APP_SEARCH_LIMIT = 25;
 const APP_METADATA_CACHE_MS = 15 * 60_000;
 const appMetadataCache = new Map();
 
+export const BETTER_CONTENT_APP_ID = 'app_zv9yxan92U9fNy';
+const BETTER_CONTENT_CANONICAL_ORIGIN = 'https://better-content.apps.whop.com/';
+const RENDERED_CONTENT_APP_NAMES = new Set(['better content', 'content']);
+
 function exactAppId(value) {
   const id = String(value || '').trim();
   return /^app_[A-Za-z0-9_-]+$/.test(id) ? id : '';
+}
+
+function normalizeName(value) {
+  return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
 }
 
 function safeHttpsUrl(value) {
@@ -41,10 +49,122 @@ function safeAppUrl(origin, path, experienceId) {
   }
 }
 
+export function whopAppFrameHost(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    const host = url.protocol === 'https:' ? url.hostname.toLowerCase() : '';
+    return host.endsWith('.apps.whop.com') ? host : '';
+  } catch {
+    return '';
+  }
+}
+
+export function resolveWhopAppReader(app, experience = null) {
+  const appId = exactAppId(app?.id || experience?.app?.id);
+  const appName = String(app?.name || experience?.app?.name || 'Whop app').trim() || 'Whop app';
+  const normalizedName = normalizeName(appName);
+  const metadataResolved = app?.metadataStatus === 'resolved';
+  const resolvedOrigin = safeHttpsUrl(app?.origin);
+  const resolvedHost = whopAppFrameHost(resolvedOrigin);
+
+  if (appId === BETTER_CONTENT_APP_ID) {
+    const origin = resolvedHost ? resolvedOrigin : BETTER_CONTENT_CANONICAL_ORIGIN;
+    return {
+      status: 'available',
+      mode: 'browser-capture',
+      appId,
+      appName,
+      origin,
+      frameHost: whopAppFrameHost(origin),
+      verifiedBy: metadataResolved && app?.verified ? 'whop-app-metadata+stable-app-id' : 'stable-app-id',
+      requiresRenderedMemberPage: true,
+      autoPublishEligible: false,
+    };
+  }
+
+  if (
+    appId
+    && metadataResolved
+    && app?.verified === true
+    && RENDERED_CONTENT_APP_NAMES.has(normalizedName)
+    && resolvedHost
+  ) {
+    return {
+      status: 'available',
+      mode: 'browser-capture',
+      appId,
+      appName,
+      origin: resolvedOrigin,
+      frameHost: resolvedHost,
+      verifiedBy: 'whop-app-metadata+stable-app-id',
+      requiresRenderedMemberPage: true,
+      autoPublishEligible: false,
+    };
+  }
+
+  if (app?.hasOpenapiView && safeHttpsUrl(app?.openapiUrl)) {
+    return {
+      status: 'contract-advertised',
+      mode: null,
+      appId,
+      appName,
+      documentedInterface: 'openapi',
+      contractUrl: safeHttpsUrl(app.openapiUrl),
+      verifiedBy: 'published-app-metadata',
+      requiresRenderedMemberPage: false,
+      autoPublishEligible: false,
+    };
+  }
+
+  if (app?.hasSkillsView && safeHttpsUrl(app?.skillsUrl)) {
+    return {
+      status: 'contract-advertised',
+      mode: null,
+      appId,
+      appName,
+      documentedInterface: 'skills',
+      contractUrl: safeHttpsUrl(app.skillsUrl),
+      verifiedBy: 'published-app-metadata',
+      requiresRenderedMemberPage: false,
+      autoPublishEligible: false,
+    };
+  }
+
+  return {
+    status: 'unavailable',
+    mode: null,
+    appId,
+    appName,
+    documentedInterface: null,
+    contractUrl: null,
+    verifiedBy: metadataResolved ? 'published-app-metadata' : null,
+    requiresRenderedMemberPage: false,
+    autoPublishEligible: false,
+  };
+}
+
+export function browserCaptureMatchesReader(reader, pageUrl) {
+  if (reader?.status !== 'available' || reader?.mode !== 'browser-capture') return false;
+  const expectedHost = String(reader?.frameHost || '').trim().toLowerCase();
+  const actualHost = whopAppFrameHost(pageUrl);
+  return Boolean(expectedHost && actualHost && expectedHost === actualHost);
+}
+
+export function appReaderReason(reader) {
+  if (reader?.status === 'available' && reader?.mode === 'browser-capture') {
+    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the verified rendered-app capture path. The captured frame must match the app origin Whop resolved, and every captured guide remains a private draft until account review.`;
+  }
+  if (reader?.status === 'contract-advertised') {
+    const interfaceName = reader.documentedInterface === 'skills' ? 'Skills interface' : 'OpenAPI contract';
+    return `Access confirmed · documented ${interfaceName} advertised, but no normalized SniperPlug adapter is enabled for it yet. SniperPlug will not guess private endpoints or treat membership access as API permission.`;
+  }
+  return 'Access confirmed · reader unavailable. The membership is valid, but this app does not currently expose a SniperPlug-supported native reader or an explicitly supported app-specific reader.';
+}
+
 function minimalMetadata(experience, metadataStatus) {
   const appId = exactAppId(experience?.app?.id);
   if (!appId) return null;
-  return {
+  const base = {
     id: appId,
     name: String(experience?.app?.name || 'Whop app').trim(),
     verified: false,
@@ -58,6 +178,7 @@ function minimalMetadata(experience, metadataStatus) {
     metadataSource: 'public-app-list',
     metadataStatus,
   };
+  return { ...base, reader: resolveWhopAppReader(base, experience) };
 }
 
 function normalizePublicApp(app, experience) {
@@ -65,7 +186,7 @@ function normalizePublicApp(app, experience) {
   if (!appId) return null;
   const origin = publicOrigin(app);
   const experienceId = String(experience?.id || '').trim();
-  return {
+  const base = {
     id: appId,
     name: String(app?.name || experience?.app?.name || 'Whop app').trim(),
     verified: Boolean(app?.verified),
@@ -79,6 +200,7 @@ function normalizePublicApp(app, experience) {
     metadataSource: 'public-app-list',
     metadataStatus: 'resolved',
   };
+  return { ...base, reader: resolveWhopAppReader(base, experience) };
 }
 
 export async function inspectWhopApp(session, experience) {
@@ -96,7 +218,7 @@ export async function inspectWhopApp(session, experience) {
       first: APP_SEARCH_LIMIT,
     });
     const apps = Array.isArray(payload?.data) ? payload.data : [];
-    const exact = apps.find((app) => exactAppId(app?.id) === appId) || null;
+    const exact = apps.find((candidate) => exactAppId(candidate?.id) === appId) || null;
     const status = exact ? 'resolved' : 'not-listed';
     appMetadataCache.set(appId, { app: exact, status, checkedAt: Date.now() });
     return exact ? normalizePublicApp(exact, experience) : minimalMetadata(experience, status);
@@ -104,6 +226,41 @@ export async function inspectWhopApp(session, experience) {
     appMetadataCache.set(appId, { app: null, status: 'unavailable', checkedAt: Date.now() });
     return minimalMetadata(experience, 'unavailable');
   }
+}
+
+function annotateExternalEntry(entry) {
+  if (!entry || typeof entry !== 'object') return entry;
+  const experience = entry.experience || null;
+  const capability = entry.capability || {};
+  const app = capability.app || minimalMetadata(experience, 'unavailable');
+  const reader = resolveWhopAppReader(app, experience);
+  return {
+    ...entry,
+    capability: {
+      ...capability,
+      readerStatus: reader.status,
+      readerMode: reader.mode,
+      reader,
+      app: app ? { ...app, reader } : app,
+      reason: capability.probeDeferred ? capability.reason : appReaderReason(reader),
+    },
+  };
+}
+
+export function annotateWhopAppReaders(discovery) {
+  if (!discovery || !Array.isArray(discovery.groups)) return discovery;
+  const groups = discovery.groups.map((group) => {
+    const original = Array.isArray(group?.externalApps)
+      ? group.externalApps
+      : Array.isArray(group?.unsupported) ? group.unsupported : [];
+    const externalApps = original.map(annotateExternalEntry);
+    return {
+      ...group,
+      externalApps,
+      unsupported: externalApps,
+    };
+  });
+  return { ...discovery, groups };
 }
 
 export function clearWhopAppMetadataCacheForTests() {
