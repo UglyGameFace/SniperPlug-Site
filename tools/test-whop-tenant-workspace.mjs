@@ -73,7 +73,7 @@ for (const text of [workspace, migration]) {
 
 assert.ok(sourcePolicy.includes('WHERE principal_id = ? AND upstream_experience_id = ?'), 'Source decisions are not scoped to account + upstream experience.');
 assert.ok(posts.includes('WHERE principal_id = ? AND upstream_source_key IN'), 'Post decisions are not scoped to the account workspace.');
-assert.ok(posts.includes('postStorageKey(principalId, post.sourceKey)'), 'Scanned posts do not receive tenant-specific physical keys.');
+assert.ok(posts.includes('postStorageKey(principalId, logicalSourceKey)') && posts.includes('storageSourceKey'), 'Scanned posts do not receive tenant-specific physical keys.');
 assert.ok(discovery.includes('sourceDecision(env, principalValue, experience, experience.id)'), 'Discovery can still read another principal’s saved source decision.');
 assert.ok(discoverApi.includes('discoverWhopSources(session, context.env, admin, memberships)'), 'Discovery API does not carry the authenticated principal into discovery.');
 
