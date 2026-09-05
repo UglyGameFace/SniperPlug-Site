@@ -58,8 +58,8 @@ assert.ok(jobs.includes('const JOB_VERSION = 5'), 'Bulk jobs are not using the t
 assert.ok(jobs.includes('const sourceKey = current.readyKeys[current.cursor]') && jobs.includes('sourceKeys: [sourceKey]'), 'Bulk Worker steps are not bounded to one exact item.');
 assert.ok(jobs.includes('leaseToken') && jobs.includes('lease_until = ?'), 'Bulk Worker persistence does not verify lease ownership.');
 assert.ok(jobs.includes('jobOwnerKey(admin)') && jobs.includes('principalIdFrom(admin)') && !jobs.includes("const OWNER_KEY = 'sniperplug-owner'"), 'Bulk jobs are not scoped to the authenticated account principal.');
-assert.ok(recent.includes('actionOwnerKey(admin)') && !recent.includes("const OWNER_KEY = 'sniperplug-owner'"), 'Bulk/recovery history is still shared across authenticated importer accounts.');
-assert.ok(recent.includes("admin?.kind === 'owner'"), 'Customer history can expose owner-only manual rejects.');
+assert.ok(recent.includes('actionOwnerKey(admin)') && recent.includes('principalIdFrom(admin)') && !recent.includes("const OWNER_KEY = 'sniperplug-owner'"), 'Bulk/recovery history is still shared across authenticated importer accounts.');
+assert.ok(recent.includes('WHERE principal_id = ?') && recent.includes("status = 'rejected'"), 'Manual reject history is not restricted to the current account workspace.');
 assert.ok(jobResetEndpoint.includes('principalIdFrom(admin)') && !jobResetEndpoint.includes('String(admin.sid)') && !jobResetEndpoint.includes("OWNER_KEY = 'sniperplug-owner'"), 'Bulk reset is not scoped to the same account principal as the durable worker.');
 assert.ok(jobs.includes('shouldPauseWorkflow(error)') && jobs.includes('releaseStepLease'), 'Transient Whop/concurrency failures can still advance and permanently skip a bulk source or item.');
 assert.ok(!jobs.includes('IMPORT_CHUNK = 50'), 'The unsafe source-wide 50-item import batch returned.');
