@@ -78,6 +78,7 @@ try {
   assert.equal(metadata.experienceUrl, 'https://better-content.apps.whop.com/experiences/exp_make_money_here');
   assert.equal(metadata.reader.status, 'available');
   assert.equal(metadata.reader.mode, 'browser-capture');
+  assert.equal(metadata.reader.experienceId, 'exp_make_money_here');
   assert.equal(metadata.reader.framePolicy, 'whop-app-frame');
   assert.equal(metadata.reader.metadataFrameHost, 'better-content.apps.whop.com');
   assert.equal(
@@ -86,6 +87,12 @@ try {
     'Whop may render an authorized app under an instance-specific *.apps.whop.com host instead of the metadata origin.',
   );
   assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://another.apps.whop.com/experiences/exp_make_money_here'), true);
+  assert.equal(
+    browserCaptureMatchesReader(metadata.reader, 'https://another.apps.whop.com/experiences/exp_different_experience'),
+    false,
+    'A Whop app frame that declares a different exp_ identity must not be accepted for the selected Experience.',
+  );
+  assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://opaque-instance.apps.whop.com/page/guide_without_exp_id'), true, 'Opaque Whop app routes without a declared exp_ ID remain compatible with server-side Experience re-verification.');
   assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://example.com/experiences/exp_make_money_here'), false);
   assert.equal(browserCaptureMatchesReader(metadata.reader, 'http://better-content.apps.whop.com/experiences/exp_make_money_here'), false);
 
@@ -135,10 +142,12 @@ try {
   const contentReader = resolveWhopAppReader(verifiedContent, { id: 'exp_content', app: { id: verifiedContent.id, name: 'Content' } });
   assert.equal(contentReader.status, 'available');
   assert.equal(contentReader.mode, 'browser-capture');
+  assert.equal(contentReader.experienceId, 'exp_content');
   assert.equal(contentReader.verifiedBy, 'whop-app-metadata+stable-app-id');
   assert.equal(contentReader.metadataFrameHost, 'content-library.apps.whop.com');
   assert.equal(contentReader.framePolicy, 'whop-app-frame');
   assert.equal(browserCaptureMatchesReader(contentReader, 'https://render-instance-42.apps.whop.com/experiences/exp_content'), true);
+  assert.equal(browserCaptureMatchesReader(contentReader, 'https://render-instance-42.apps.whop.com/experiences/exp_other'), false);
 
   const unverifiedContent = resolveWhopAppReader({
     ...verifiedContent,
@@ -181,14 +190,15 @@ try {
   assert.equal(annotatedEntry.capability.readerStatus, 'available');
   assert.equal(annotatedEntry.capability.readerMode, 'browser-capture');
   assert.match(annotatedEntry.capability.reason, /Access confirmed · reader available/);
-  assert.match(annotatedEntry.capability.reason, /exact Experience, membership, and app identity/);
+  assert.match(annotatedEntry.capability.reason, /exact Experience/);
+  assert.match(annotatedEntry.capability.reason, /membership and app identity/);
   assert.strictEqual(annotated.groups[0].unsupported[0], annotatedEntry, 'Legacy unsupported alias must point to the same annotated external-app entry used by the Control Center.');
 
   console.log('\nWHOP CUSTOM APP READER METADATA TEST PASSED\n');
   console.log('✓ Customer OAuth resolves public app metadata through GET /apps, never developer-only GET /apps/{id}.');
   console.log('✓ Exact Better Content remains an enrolled rendered reader while real instance-specific Whop app-frame hosts stay valid.');
   console.log('✓ Other Content-family apps require exact ID resolution, Whop verification, and a safe *.apps.whop.com metadata origin before enrollment.');
-  console.log('✓ Runtime captures stay inside HTTPS *.apps.whop.com while exact Experience/app identity is reverified separately on the server.');
+  console.log('✓ Runtime captures stay inside HTTPS *.apps.whop.com and reject a different exp_ identity when the rendered URL declares one.');
   console.log('✓ Published OpenAPI/Skills metadata is capability evidence only and never becomes guessed endpoint execution.');
   console.log('✓ Discovery differentiates access-confirmed reader availability from reader-unavailable state.');
 } finally {
