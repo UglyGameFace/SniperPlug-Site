@@ -53,14 +53,23 @@ function publishHoldReason(integrity) {
   return null;
 }
 
-async function auditRow(db, principalId, row) {
+async function auditRow(db, principalId, row, { manualReviewConfirmed = false } = {}) {
   const attachments = safeJson(row.attachment_json, {});
-  const integrity = safeJson(row.integrity_json, {});
+  const previousIntegrity = safeJson(row.integrity_json, {});
+  const now = new Date().toISOString();
+  const integrity = manualReviewConfirmed
+    ? {
+        ...previousIntegrity,
+        manualReviewCompleted: true,
+        manualReviewConfirmedAt: now,
+        manualReviewConfirmedByPrincipalId: principalId,
+      }
+    : previousIntegrity;
   const linkAudit = auditGuideLinks(row.body_markdown || '', {
     allowedWhopUrls: allowedAttachmentUrls(attachments),
   });
   const holdReason = publishHoldReason(integrity);
-  const nextIntegrity = { ...integrity, linkAudit, publishHoldReason: holdReason, linkAuditedAt: new Date().toISOString() };
+  const nextIntegrity = { ...integrity, linkAudit, publishHoldReason: holdReason, linkAuditedAt: now };
   await db.prepare('UPDATE guides SET integrity_json = ? WHERE principal_id = ? AND id = ?')
     .bind(JSON.stringify(nextIntegrity), principalId, row.id).run();
   return { attachments, integrity: nextIntegrity, linkAudit, holdReason };
@@ -74,7 +83,12 @@ export async function assertGuidePublishable(env, principalValue, id) {
     FROM guides WHERE principal_id = ? AND id = ?
   `).bind(principalId, id).first();
   if (!row) throw new HttpError(404, 'Guide not found in this account workspace.');
-  const { attachments, integrity, holdReason } = await auditRow(db, principalId, row);
+
+  // This function has one production caller: the version-reserved manual guide-status
+  // publish path. Clicking Publish is therefore the explicit account review action for
+  // an unchanged imported draft. Bulk/automatic publishing calls auditRow directly
+  // without this flag and still cannot bypass manual-review-only policy.
+  const { attachments, integrity, holdReason } = await auditRow(db, principalId, row, { manualReviewConfirmed: true });
   if (Number(attachments.reviewCount || 0) > 0) {
     throw new HttpError(422, 'Resolve or replace every flagged private or expiring Whop file before publishing.', { code: 'attachment_review' });
   }
