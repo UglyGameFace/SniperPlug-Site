@@ -65,11 +65,13 @@ assert.ok(
 );
 
 assert.ok(
-  lifecycle.includes('function mirrorPendingFailure()')
-    && lifecycle.includes("globalStatus.dataset.type !== 'error'")
+  !lifecycle.includes('MutationObserver')
+    && lifecycle.includes('function watchPendingFailure()')
+    && lifecycle.includes("globalStatus.dataset.type === 'error'")
     && lifecycle.includes("/^(Publishing|Saving)\\b/.test(actionStatus.textContent.trim())")
+    && lifecycle.includes("actionWatchTimer = setTimeout(poll, 250)")
     && lifecycle.includes("setActionStatus(text, 'error')"),
-  'A failed Save or Publish can still leave the mobile editor stuck on a false in-progress message.',
+  'Save/publish failure feedback is not using the bounded low-overhead action watcher.',
 );
 
 assert.ok(
@@ -99,5 +101,6 @@ assert.ok(
 console.log('\nGUIDE PUBLISH FEEDBACK REGRESSION PASSED\n');
 console.log('✓ Dirty drafts cannot publish a stale saved version; Save is required first.');
 console.log('✓ Save, publish, failure, published-lock, view, and edit/unpublish states have local mobile-visible feedback.');
+console.log('✓ Failed writes use a bounded action-only status watcher instead of broad DOM observation.');
 console.log('✓ Successful publish switches the review queue to Published instead of making the selected guide appear unchanged.');
 console.log('✓ Existing versioned server publication remains authoritative.');
