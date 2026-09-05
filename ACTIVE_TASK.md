@@ -1,106 +1,86 @@
 # Active Task
 
 ## Active task / outcome
-Finish the Whop importer and Better Content guide review/publish lifecycle on Firefox Android so Publish, Unpublish & edit, Save, and republish all use one authoritative path and behave correctly on the real tablet. The concrete live source remains **Hidden Files → Make Money Here → Better Content**.
+Perform the complete SniperPlug production integrity audit requested in issue #20, eliminate confirmed duplicate/conflicting UI, route, script, request, handler, and persistence paths, then add the highest-value structural improvements that reduce recurrence without weakening existing safety or compatibility.
 
 ## Scope lock
-- Active scope: Firefox Android Better Content capture, imported-guide review/publish lifecycle, tenant-safe persistence, and directly required mobile editor UX.
-- The requested whole-site head-to-toe redesign remains backlog until this lifecycle passes real-device acceptance.
-- Issue #20 and unrelated cleanup remain backlog.
-- Do not weaken auth, membership, tenant, origin, link, media, recovery, or private-guide isolation.
+- Active scope: issue #20 whole-site integrity audit and directly justified repairs/improvements across public routes, private guides, Control Center, middleware/API routes, Cloudflare Pages routing, client scripts/styles, persistence, and CI coverage.
+- This task may remove or consolidate redundant implementations only after their callers and compatibility role are verified.
+- Issue #25 and paid-subscriber onboarding remain backlog unless a finding is required for issue #20 correctness.
+- Do not weaken auth, membership, tenant, origin, link, media, recovery, backup, publication, or private-guide isolation.
 
-## Status
-- PR #51 merged: Firefox v0.1.6 app-frame recovery + browser-capture roundtrip + core schema ownership.
-- PR #52 merged: local publish feedback, dirty-save gate, published locking, Published-filter retention.
-- PR #53 merged: D1/SQLite capture → save → publish → view → unpublish → republish regression.
-- PR #54 merged as `ff2e6d43ec15af71d5ec9f60e12e908c4f03064c`: manual Publish is explicit review for unchanged imported guides and the tablet editor was simplified.
-- Real tablet acceptance after PR #54 found **Unpublish & edit broken**. Existing server roundtrip tests did not exercise the competing browser event handlers.
-- PR #55 merged to `main` as `c9c26fcfb65755ff5543e4971fabfb1eedc6e98b` after exact-head full validation passed.
-- PR #55 post-merge full Node 22 build/regression, production private-guide privacy, and production affiliate/visual-route checks all passed.
-- The remaining Definition-of-Done gate is the real Android interaction sequence on the deployed code.
+## Prior task closure
+- PR #55 merged the Unpublish & edit lifecycle repair as `c9c26fcfb65755ff5543e4971fabfb1eedc6e98b`.
+- Exact-head and post-merge full Node 22 validation passed, along with production private-guide privacy and affiliate/visual-route checks.
+- The owner confirmed on the real tablet that **Unpublish & edit now works**, satisfying the remaining real-device acceptance gate for the previous task.
 
-## Findings / root cause
-The server implementation was not the failing part. `guide-status` already supports `draft`, reserves the exact guide version, persists `published_at = NULL`, reads back the authoritative guide, and is covered by the publish/unpublish/republish server roundtrip.
+## Current status
+- Audit branch: `audit/site-wide-integrity`, based on `main` at `54ca4f0901874fd8fa14f62ff2b16864a3ae6807`.
+- PR #56: **Audit and eliminate duplicate site runtime paths**.
+- The repository surface, routing layers, static pages, Control Center runtime loaders, compatibility modules, API aliases, persistence regressions, and production/preview workflows have been traced against the existing test contracts.
+- Exact-head PR validation at `6337db48dbe1f307671eea58ee2072610e74eca4` passed the full Node 22 suite, affiliate-ready Cloudflare preview, and retired public route smoke.
+- No inline PR review threads are open.
 
-The browser had **two competing implementations of the same Unpublish action**:
+## Findings
+### Confirmed redundant/conflicting behavior repaired
+1. Four root meta-refresh pages duplicated Cloudflare `_redirects` ownership for `/contact.html`, `/privacy.html`, `/affiliate-disclosure.html`, and `/legal-disclaimer.html`. No runtime callers require those files; the authoritative 301 rules remain in `_redirects`. The duplicate static shims were removed.
+2. `control-center-bulk-status.js` independently polled `/api/bulk-jobs` and rewrote the same bulk-job title, summary, progress, and hold surfaces already owned by `control-center-v2.js`. The canonical runtime already has durable `jobApi`, `loadBulkJob`, `progressSummary`, `renderJob`, resume/cancel, and lazy workflow loading. The duplicate poller and lifecycle loader were removed.
+3. Root middleware gave ordinary public pages the same permissive style/frame CSP needed by private/control surfaces. Public static pages use shared external CSS and no frames, so middleware now has separate strict public, private/control compatibility, and course-video policies.
 
-1. `control-center-v2.js` is the canonical guide mutation/render runtime. Its `returnDraft` path posts `guide-status: draft`, then updates the guide cache and calls `renderGuideEditor(output.guide, 'status')` so the editor unlocks in place.
-2. `control-center-integrity-fix.js` contained an older capture-phase `[data-return-draft]` listener. It called `preventDefault()` + `stopImmediatePropagation()`, manually fetched `guide-detail`, manually posted `guide-status: draft`, then forced `window.location.replace(...?guide=<id>&fresh=<timestamp>)`.
+### Compatibility inspected and intentionally retained
+- Retired `/deal/*` and `/go/*` protection remains intentionally layered across `_redirects`, middleware, and nested fail-closed Functions because mixed deployments must never expose stale public deals.
+- The legacy `/api/recovery` alias remains a tested compatibility adapter to the canonical guide-repair implementation.
+- Legacy owner cookies, source-policy/category migration inputs, old bulk-job rows, and session cleanup remain because current migrations/tests still consume them.
+- `control-center-network-guard.js` remains the authoritative fetch/version/timeout layer; lifecycle only loads that same guard for a stale cached page when it is genuinely absent.
+- `control-center-decision-lock.js` remains because it serializes opposite logical decision writes across different buttons, which the canonical per-button busy guard does not replace.
+- `control-center-browser-compat.js` remains because it was introduced to prevent blank Control Center cards on Samsung Internet by neutralizing unstable content-visibility behavior on the affected cards.
+- `control-center-post-history-fix.js`, `control-center-recovery.js`, `control-center-bulk-reset.js`, and the preview/media section of `control-center-integrity-fix.js` each retain distinct responsibilities after caller/path inspection. No second guide-status mutation remains in the integrity layer.
 
-Because the legacy listener ran during capture, it prevented the canonical root click handler from receiving the event. The forced reload was internally inconsistent because Control Center startup does not consume that `guide` query parameter to restore the selection. The result could therefore be a server-side unpublish with a browser that still looked broken or lost the selected guide.
-
-The duplicate was also unnecessary because `control-center-network-guard.js` already records the last server-confirmed `updatedAt` and injects `expectedUpdatedAt` into canonical `guide-status` writes.
-
-## Related redundancy found in the affected area
-- `control-center-editor-clarity.js` duplicated lifecycle ownership of button labels, state copy, editor sizing, and sticky mobile actions.
-- That script removed `.editor-lock-message` after `control-center-lifecycle.js` created it, while lifecycle continued manipulating the detached node. This was conflicting/dead logic rather than harmless extra styling.
-- The lifecycle network-guard loader initially looked redundant because `index.html` also loads the guard. Existing network regression coverage proved it is an intentional stale-cached-page fallback. It now skips the fallback request when `window.__sniperplugApiFetchGuardInstalled` proves the explicit guard already ran, while still recovering a genuinely stale page that lacks it.
-- Preview-close and media-repair behavior in `control-center-integrity-fix.js` remains separate. It was inspected but not folded into this status lifecycle because no shared root cause or failure evidence justified changing it.
-
-## Authoritative execution path now on `main`
-`Better Content iframe → verified capture → tenant private draft → review → unchanged Publish OR Save edited revision → control-center-v2 guide-status mutation → network guard injects expectedUpdatedAt → server reserves exact version → status persisted/read back → canonical renderGuideEditor → lifecycle updates local state/filter/locking`.
-
-For Unpublish specifically:
-`Unpublish & edit → control-center-v2 guide-status {status:draft} → expectedUpdatedAt injected by network guard → server return-to-draft reservation → D1 status=draft + published_at=NULL → returned guide rendered in place → lifecycle switches to Needs review, unlocks fields, shows Save/Publish/Remove`.
-
-## Changes merged in PR #55
-- Removed the legacy capture-phase Unpublish handler from `control-center-integrity-fix.js`.
-- Removed its duplicate `guide-detail` read, duplicate `guide-status` write, and forced `window.location.replace` path.
-- Kept media repair and preview compatibility code intact.
-- Consolidated editor state/copy, button labels, dirty state, locking, textarea sizing, and sticky mobile actions into `control-center-lifecycle.js`.
-- Deleted redundant `control-center-editor-clarity.js`.
-- Preserved stale-page network-guard recovery while skipping the request when the explicit guard is already installed.
-- Cache-busted lifecycle and integrity-fix assets to `20260905.3`.
-- Expanded the guide lifecycle regression so a second return-draft handler, forced reload, duplicate clarity layer, unsafe guard loading, lost exact-version protection, or lost status render path fails CI.
+## Structural improvements added
+- Added `tools/audit-site-integrity.mjs` to every build. It walks all site HTML and shared browser assets and fails on duplicate DOM IDs, repeated local scripts/styles, multiple canonicals, inline event handlers, missing local assets, duplicate redirect sources, duplicate legacy route ownership, conflicting Control Center runtime loaders, return-to-draft lifecycle regressions, exact duplicate browser scripts, or loss of public/private CSP separation.
+- Public pages now use a tighter CSP with no `unsafe-inline` styles and `frame-src 'none'`; private/control surfaces keep only the compatibility they actually require.
+- The existing full regression suite remains authoritative for D1 tenant uniqueness, source/post ownership, capture idempotency, scan persistence, import concurrency, guide versioning, publish/unpublish duplicate prevention, recovery ownership, and durable bulk jobs. Those checks all passed on this branch.
 
 ## Validation / results
-### Server / persistence coverage
-- [x] Capture membership + exact-app + tenant roundtrip.
-- [x] Manual Publish review vs bulk manual-review policy separation.
-- [x] Save exact edited revision before Publish.
-- [x] Server publish → guide route → unpublish → republish lifecycle.
-- [x] No duplicate guide row across publish/unpublish/republish.
-- [x] Subscriber isolation and attachment/integrity gates fail closed.
-- [x] Exact guide-version reservation and rollback audits.
-
-### PR #55 investigation and cleanup
-- [x] Traced every `[data-return-draft]` owner before changing code.
-- [x] Confirmed canonical v2 already supports return-to-draft and authoritative in-place rendering.
-- [x] Confirmed network guard already supplies `expectedUpdatedAt` for canonical `guide-status` writes.
-- [x] Removed the competing mutation/reload implementation instead of stacking another handler.
-- [x] Removed the directly conflicting/redundant editor-clarity layer.
-- [x] Preserved intentional stale-page network protection while removing unnecessary repeat loading on current pages.
-- [x] Kept unrelated preview/media repair logic unchanged after inspecting its role.
-- [x] Final PR diff contained only `ACTIVE_TASK.md`, lifecycle/integrity/index/test changes, and deletion of the redundant clarity script.
-- [x] No inline review threads remained before merge.
-
-### CI / production evidence
-- [x] PR #55 run #1023 exposed an incorrect new assertion; corrected the test to the real network-guard implementation.
-- [x] PR #55 run #1024 passed the new publish/unpublish regression and then correctly exposed loss of the stale-page guard fallback; restored the intentional fallback without weakening the audit.
-- [x] PR #55 exact-head run #1027 passed the full Node 22 build/regression suite.
-- [x] PR #55 merged as `c9c26fcfb65755ff5543e4971fabfb1eedc6e98b`.
-- [x] Post-merge run #1028 passed the full Node 22 build/regression suite.
-- [x] Post-merge production guide-privacy run #80 passed.
-- [x] Post-merge production affiliate/visual-route run #76 passed.
-- [ ] Real Android acceptance: Published guide → Unpublish & edit stays on selected guide → Draft/Needs review → fields unlock → edit → Publish blocked while dirty → Save changes → republish → no duplicate/stale state.
+- [x] Inventory static/public/private/control routes and loaded/dynamically loaded client modules.
+- [x] Check duplicate IDs, scripts/styles, canonicals, static redirect ownership, shared browser-script byte duplicates, and local asset references.
+- [x] Trace high-risk Control Center capture handlers, observers, timers, dynamic loaders, and mutation/render ownership.
+- [x] Check API/middleware aliases, repeated requests, retry/version guards, stale response handling, and intended fail-closed compatibility layers.
+- [x] Check D1/source/post/guide duplicate protections through existing tenant, persistence, concurrency, capture, versioning, and publish-roundtrip regressions.
+- [x] Verify removed files and runtime layers against direct callers, history, existing tests, and Cloudflare routing behavior.
+- [x] Remove confirmed duplicate route shims and duplicate bulk-status polling/render ownership.
+- [x] Add a repository-wide recurrence audit and include it in `npm run build`/`npm run audit`.
+- [x] Tighten the public CSP without changing the private/control/course-video compatibility contracts.
+- [x] Exact-head full Node 22 build/regression suite passed in PR run #1030.
+- [x] Cloudflare affiliate-ready preview run #108 passed on the same PR head.
+- [x] Retired public route preview run #109 passed on the same PR head.
+- [x] Final PR diff inspected for scope and accidental changes.
+- [x] PR review-thread inspection found no inline review threads.
+- [ ] Fresh exact-head validation after this final task-record update.
+- [ ] Merge PR #56 only after that exact head is green.
+- [ ] Post-merge full Node 22, production guide-privacy, affiliate/visual-route, and retired-route checks.
 
 ## Cleanup / conflicts
-- `control-center-v2.js` is the sole normal guide-status mutation/render runtime.
-- `control-center-network-guard.js` is the sole expected-version injection and API timeout layer; lifecycle only loads that same guard for stale pages if absent.
-- `control-center-lifecycle.js` owns editor dirty protection, state copy, locking, action visibility/labels, mobile editor layout, and local action feedback only.
-- `control-center-integrity-fix.js` no longer mutates guide status; it retains preview compatibility and media repair only.
-- Bulk publishing remains distinct and cannot inherit manual Publish review confirmation.
-- No auth, tenant, source-access, media, link, backup, recovery, or publication safety gate was bypassed.
+- `control-center-v2.js` remains the canonical bulk workflow and normal Control Center mutation/render runtime.
+- The removed bulk-status file did not own persistence or mutation logic; it was a second read/render layer on top of the canonical durable workflow.
+- No auth, Whop access, tenant, publication, backup, media, recovery, or private-guide gate was weakened.
+- No unrelated redesign, importer feature, generated artifact, secret, or dependency change is in PR #56.
+
+## Improvements identified but intentionally not mixed into this integrity PR
+- `assets/js/site.js` still embeds an exact base64 copy of the logo even though `site-shell.css` already uses the same static PNG. Removing that duplicate payload would reduce public JS bytes, but the current preview/production logo-integrity workflows explicitly validate both copies; it should be a focused public-asset optimization with those contracts updated together rather than casually folded into this audit.
+- The canonical bulk-job renderer can eventually absorb the richer completed-with-issues wording that the removed status adjunct used. Current canonical rendering still preserves durable state, counts, held totals, timelines, resume/cancel behavior, and warning state, so this is a UX refinement rather than a correctness blocker.
+- Main branch protection/required-check policy is a repository-governance improvement worth enabling if repository administration access is available; it is outside the application-code integrity fix.
 
 ## Blockers / risks
-- Automated tests cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device acceptance remains required before this active task is called complete.
-- Search indexing can briefly return older commit matches after a merge, so final source verification used direct `main` file reads rather than trusting stale code-search results.
-- Duplicate Vercel build-rate-limit statuses are unrelated to the active Cloudflare Pages deployment.
+- Static/CI inspection cannot perfectly reproduce every authenticated owner interaction, but PR #56 removes a passive duplicate poll/render layer rather than changing guide publish/edit controls. The prior real-device guide lifecycle remains unchanged.
+- GitHub code search can briefly lag branch updates; direct branch reads and exact-head CI were used as the authority.
 
 ## Backlog
-- Full SniperPlug head-to-toe information architecture, navigation, mobile layout, action hierarchy, terminology, status/notification, accessibility, loading/empty/error-state, and efficiency overhaul.
-- Issue #20 and unrelated UI work.
-- Paid subscriber authentication/billing onboarding until a real subscriber identity binds to the tenant-scoped `principalId` model.
+- Issue #25 custom Whop app readers beyond what is required to validate duplicate/unsupported paths.
+- Paid subscriber authentication/billing onboarding.
+- Public-logo payload consolidation and related smoke-contract simplification.
+- Bulk completed-with-issues copy consolidation into the canonical v2 renderer.
+- Larger product/brand redesign changes that are preference-driven rather than integrity/usability findings from this audit.
 
 ## Next step
-Run the real-tablet production sequence on the merged PR #55 code: open a Published guide, tap **Unpublish & edit**, verify it stays selected and unlocks as Draft/Needs review, make one small edit, verify Publish is blocked until **Save changes**, save, republish, and confirm there is still only one guide with no stale state. If that passes, this active task can finally close and the queued whole-site UX overhaul can become active.
+Require a fresh exact-head PR #56 build after this record update, merge only if it remains green, run the post-merge production checks on `main`, then close issue #20 if those checks stay green.
