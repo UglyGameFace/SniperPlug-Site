@@ -21,7 +21,8 @@ import {
   restoreWhopImportBackup,
   verifiedWhopResetContext,
 } from '../_lib/whop-backups.js';
-import { disconnectWhop, requireWhopSession, retrieveExperience } from '../_lib/whop.js';
+import { disconnectPrincipalWhop } from '../_lib/whop-connection.js';
+import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 function action(request) {
   return String(new URL(request.url).searchParams.get('action') || 'overview').trim();
@@ -175,7 +176,7 @@ async function postAction(request, env, admin, currentAction) {
     }
     if (result.options.disconnectWhop === true) {
       try {
-        await disconnectWhop(request, env, admin);
+        await disconnectPrincipalWhop(request, env, admin);
       } catch (error) {
         warnings.push(`The reset completed, but Whop disconnect did not finish: ${String(error?.message || 'retry disconnect from the Control Center.').slice(0, 240)}`);
       }
