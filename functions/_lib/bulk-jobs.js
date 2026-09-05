@@ -1,6 +1,8 @@
+import { OWNER_PRINCIPAL_ID } from './auth.js';
 import { randomToken } from './crypto.js';
 import { importApprovedPosts } from './guides-media.js';
 import { HttpError, requireDatabase } from './http.js';
+import { principalIdFrom } from './importer-workspace.js';
 import { savePostDecision, scanApprovedSource } from './posts.js';
 import { publishReadyGuides } from './publish.js';
 import { saveSourceDecision } from './source-policy.js';
@@ -8,12 +10,10 @@ import { requiredScopeForType, resolveWhopExperienceType, retrieveExperience } f
 
 const MAX_SOURCES = 100;
 const LEASE_MS = 90_000;
-const JOB_VERSION = 4;
+const JOB_VERSION = 5;
 
 function jobOwnerKey(admin) {
-  const sid = String(admin?.sid || '').trim();
-  if (!sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
-  return sid;
+  return principalIdFrom(admin);
 }
 
 function safeJson(value, fallback) {
@@ -115,7 +115,7 @@ async function cancelLegacyRow(db, row, ownerKey) {
   `).bind(now, now, JSON.stringify({
     ...summary,
     legacyCanceled: true,
-    legacyCancelReason: 'Canceled automatically because the previous worker did not guarantee exclusive lease ownership through its final save.',
+    legacyCancelReason: 'Canceled automatically because the previous worker did not guarantee tenant-scoped source, post, guide, and lease ownership.',
     canceledAt: now,
   }), row.id, ownerKey).run();
   return rowForOwner(db, row.id, ownerKey);
@@ -153,7 +153,11 @@ export async function startBulkJob(env, admin, input) {
       results_json, failures_json, summary_json, lease_until,
       created_at, updated_at, completed_at
     ) VALUES (?, ?, 'active', ?, 0, '[]', '[]', ?, NULL, ?, ?, NULL)
-  `).bind(id, ownerKey, JSON.stringify(ids), JSON.stringify({ jobVersion: JOB_VERSION }), now, now).run();
+  `).bind(id, ownerKey, JSON.stringify(ids), JSON.stringify({
+    jobVersion: JOB_VERSION,
+    principalId: ownerKey,
+    publicPublishing: ownerKey === OWNER_PRINCIPAL_ID,
+  }), now, now).run();
   return normalize(await rowForOwner(db, id, ownerKey));
 }
 
@@ -203,7 +207,8 @@ function permissionMessage(error) {
   return null;
 }
 
-async function prepareSource(env, whopSession, experienceId) {
+async function prepareSource(env, principalValue, whopSession, experienceId) {
+  const principalId = principalIdFrom(principalValue);
   let experience;
   try {
     experience = await retrieveExperience(whopSession, experienceId);
@@ -217,10 +222,10 @@ async function prepareSource(env, whopSession, experienceId) {
   if (required && !scopeSet(whopSession).has(required)) {
     return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], itemFailures: [], permissionRequired: required, published: emptyPublished() } };
   }
-  await saveSourceDecision(env, experience, experience.id, 'approved');
+  await saveSourceDecision(env, principalId, experience, experience.id, 'approved');
   let posts;
   try {
-    posts = await scanApprovedSource(env, whopSession, experience);
+    posts = await scanApprovedSource(env, principalId, whopSession, experience);
   } catch (error) {
     const missing = permissionMessage(error);
     if (missing) return { held: true, result: { experienceId, title: experience?.name || experienceId, sourceType, category: 'per-item', scanned: 0, approved: 0, blocked: 0, manualReview: 0, expired: 0, imported: 0, unchanged: 0, heldPolicy: 0, attachmentReviews: 0, mediaMirrored: 0, guideIds: [], itemFailures: [], permissionRequired: missing, published: emptyPublished() } };
@@ -228,7 +233,7 @@ async function prepareSource(env, whopSession, experienceId) {
   }
   const guideReady = posts.filter((item) => item.decision !== 'blocked' && item.integrity?.autoPublishEligible === true);
   const readyKeys = guideReady.map((item) => item.sourceKey).filter(Boolean);
-  if (readyKeys.length) await savePostDecision(env, readyKeys, 'approved');
+  if (readyKeys.length) await savePostDecision(env, principalId, readyKeys, 'approved');
   return {
     held: false,
     current: {
@@ -250,6 +255,7 @@ async function prepareSource(env, whopSession, experienceId) {
       guideIds: [],
       itemFailures: [],
       published: emptyPublished(),
+      publicPublishing: principalId === OWNER_PRINCIPAL_ID,
     },
   };
 }
@@ -261,11 +267,12 @@ function mergePublished(target, value) {
   }
 }
 
-async function processCurrentItem(env, whopSession, current) {
+async function processCurrentItem(env, principalValue, whopSession, current) {
+  const principalId = principalIdFrom(principalValue);
   const sourceKey = current.readyKeys[current.cursor];
   if (!sourceKey) throw new HttpError(409, 'Bulk job item cursor no longer matches its saved source list.');
   try {
-    const output = await importApprovedPosts(env, whopSession, {
+    const output = await importApprovedPosts(env, principalId, whopSession, {
       experienceId: current.experienceId,
       sourceKeys: [sourceKey],
       autoCategorize: true,
@@ -282,7 +289,11 @@ async function processCurrentItem(env, whopSession, current) {
       .map((item) => Number(item.guideId))
       .filter((id) => Number.isFinite(id));
     current.guideIds.push(...guideIds);
-    if (guideIds.length) mergePublished(current.published, await publishReadyGuides(env, { guideIds }));
+    if (guideIds.length && principalId === OWNER_PRINCIPAL_ID) {
+      mergePublished(current.published, await publishReadyGuides(env, principalId, { guideIds }));
+    } else if (guideIds.length) {
+      current.publicPublishing = false;
+    }
   } catch (error) {
     if (shouldPauseWorkflow(error)) throw error;
     current.itemFailures.push({ sourceKey, message: String(error?.message || 'Item import failed.').slice(0, 400) });
@@ -334,7 +345,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
   const db = requireDatabase(env);
   await ensureTable(db);
   let row = await rowForOwner(db, id, ownerKey);
-  if (!row) throw new HttpError(404, 'Bulk job not found.');
+  if (!row) throw new HttpError(404, 'Bulk job not found in this account workspace.');
   row = await cancelLegacyRow(db, row, ownerKey);
   if (row.status !== 'active') return normalize(row);
   const now = new Date();
@@ -352,11 +363,11 @@ export async function stepBulkJob(env, admin, whopSession, id) {
   let index = Number(row.source_index || 0);
   const results = safeJson(row.results_json, []);
   const failures = safeJson(row.failures_json, []);
-  let summary = safeJson(row.summary_json, { jobVersion: JOB_VERSION });
+  let summary = safeJson(row.summary_json, { jobVersion: JOB_VERSION, principalId: ownerKey });
 
   try {
     if (summary.current) {
-      summary.current = await processCurrentItem(env, whopSession, summary.current);
+      summary.current = await processCurrentItem(env, ownerKey, whopSession, summary.current);
       if (summary.current.cursor >= summary.current.readyKeys.length) {
         const result = resultFromCurrent(summary.current);
         results.push(result);
@@ -364,7 +375,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
         index += 1;
       }
     } else if (index < ids.length) {
-      const prepared = await prepareSource(env, whopSession, ids[index]);
+      const prepared = await prepareSource(env, ownerKey, whopSession, ids[index]);
       if (prepared.held) {
         results.push(prepared.result);
         summary = addSummary(summary, prepared.result);
@@ -375,7 +386,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
         summary = addSummary(summary, result);
         index += 1;
       } else {
-        summary = { ...summary, jobVersion: JOB_VERSION, current: prepared.current };
+        summary = { ...summary, jobVersion: JOB_VERSION, principalId: ownerKey, current: prepared.current };
       }
     }
   } catch (error) {
@@ -389,7 +400,7 @@ export async function stepBulkJob(env, admin, whopSession, id) {
       code: String(error?.details?.code || error?.name || 'source_error').slice(0, 80),
       at: new Date().toISOString(),
     });
-    summary = { ...summary, current: null, jobVersion: JOB_VERSION };
+    summary = { ...summary, current: null, jobVersion: JOB_VERSION, principalId: ownerKey };
     index += 1;
   }
 
@@ -408,6 +419,6 @@ export async function cancelBulkJob(env, admin, id) {
     WHERE id = ? AND admin_session_id = ? AND status = 'active'
   `).bind(now, now, id, ownerKey).run();
   const row = await rowForOwner(db, id, ownerKey);
-  if (!row) throw new HttpError(404, 'Bulk job not found.');
+  if (!row) throw new HttpError(404, 'Bulk job not found in this account workspace.');
   return normalize(row);
 }
