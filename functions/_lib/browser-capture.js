@@ -1,9 +1,15 @@
 import { sha256 } from './crypto.js';
-import { listCategories, slugify, suggestedCategoryForText } from './guides.js';
-import { HttpError, requireDatabase } from './http.js';
-import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
 import { loadWhopMemberships, membershipCompanies } from './discovery.js';
-import { saveSourceDecision, sourceDecision } from './source-policy.js';
+import { listCategories, slugify, suggestedCategoryForText } from './guides.js';
+import { HttpError } from './http.js';
+import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
+import {
+  ensureImporterWorkspaceSchema,
+  postStorageKey,
+  principalIdFrom,
+  upstreamSourceKey,
+} from './importer-workspace.js';
+import { requireApprovedSource, saveSourceDecision, sourceDecision } from './source-policy.js';
 import { retrieveExperience } from './whop.js';
 
 export const BETTER_CONTENT_APP_ID = 'app_zv9yxan92U9fNy';
@@ -168,10 +174,10 @@ async function sourceFingerprintForCapture(sourceKey, capture, body) {
   }));
 }
 
-async function uniqueSlug(title, sourceKey, existingSlug = null) {
+async function uniqueSlug(title, storageSourceKey, existingSlug = null) {
   if (existingSlug) return existingSlug;
   const base = slugify(title) || 'captured-guide';
-  const suffix = (await sha256(sourceKey)).slice(0, 12);
+  const suffix = (await sha256(storageSourceKey)).slice(0, 12);
   return `${base.slice(0, 62)}-${suffix}`;
 }
 
@@ -190,11 +196,24 @@ function captureImportPolicy() {
     autoPublishEligible: false,
     blocked: false,
     code: 'browser_capture_manual_review',
-    reason: 'Browser-captured app content always requires explicit owner review before publication.',
+    reason: 'Browser-captured app content always requires explicit account review before publication or export.',
   };
 }
 
-async function upsertBrowserCaptureSourceRow(db, capture, sourceKey, sourceFingerprint, body, images, sourceMeta, policy, now) {
+async function upsertBrowserCaptureSourceRow(
+  db,
+  principalId,
+  storageExperienceId,
+  capture,
+  logicalSourceKey,
+  storageSourceKey,
+  sourceFingerprint,
+  body,
+  images,
+  sourceMeta,
+  policy,
+  now,
+) {
   const attachmentJson = JSON.stringify(images);
   const integrityJson = JSON.stringify({
     blocked: false,
@@ -207,12 +226,14 @@ async function upsertBrowserCaptureSourceRow(db, capture, sourceKey, sourceFinge
 
   await db.prepare(`
     INSERT INTO whop_posts (
-      source_key, experience_id, post_id, title, excerpt, body_markdown, author_json, attachment_json,
+      source_key, principal_id, upstream_source_key, experience_id, upstream_experience_id,
+      post_id, title, excerpt, body_markdown, author_json, attachment_json,
       source_created_at, source_updated_at, source_fingerprint, integrity_json,
-      decision, decision_updated_at, last_scanned_at
-    ) VALUES (?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, 'approved', ?, ?)
-    ON CONFLICT(source_key) DO UPDATE SET
+      decision, decision_updated_at, last_scanned_at, stale_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?, ?, ?, ?, 'approved', ?, ?, NULL)
+    ON CONFLICT(principal_id, upstream_source_key) DO UPDATE SET
       experience_id = excluded.experience_id,
+      upstream_experience_id = excluded.upstream_experience_id,
       post_id = excluded.post_id,
       title = excluded.title,
       excerpt = excluded.excerpt,
@@ -223,11 +244,15 @@ async function upsertBrowserCaptureSourceRow(db, capture, sourceKey, sourceFinge
       integrity_json = excluded.integrity_json,
       decision = 'approved',
       decision_updated_at = excluded.decision_updated_at,
-      last_scanned_at = excluded.last_scanned_at
+      last_scanned_at = excluded.last_scanned_at,
+      stale_at = NULL
   `).bind(
-    sourceKey,
+    storageSourceKey,
+    principalId,
+    logicalSourceKey,
+    storageExperienceId,
     capture.experienceId,
-    sourceKey,
+    logicalSourceKey,
     capture.title,
     excerpt(body),
     body,
@@ -241,28 +266,40 @@ async function upsertBrowserCaptureSourceRow(db, capture, sourceKey, sourceFinge
   ).run();
 
   const saved = await db.prepare(`
-    SELECT source_key, experience_id, source_fingerprint, decision
-    FROM whop_posts WHERE source_key = ?
-  `).bind(sourceKey).first();
+    SELECT source_key, upstream_source_key, experience_id, upstream_experience_id, source_fingerprint, decision
+    FROM whop_posts
+    WHERE principal_id = ? AND upstream_source_key = ?
+  `).bind(principalId, logicalSourceKey).first();
   if (!saved
-    || String(saved.experience_id || '') !== capture.experienceId
+    || String(saved.source_key || '') !== storageSourceKey
+    || upstreamSourceKey(saved) !== logicalSourceKey
+    || String(saved.experience_id || '') !== storageExperienceId
+    || String(saved.upstream_experience_id || '') !== capture.experienceId
     || String(saved.source_fingerprint || '') !== sourceFingerprint
     || saved.decision !== 'approved') {
-    throw new HttpError(409, 'SniperPlug could not confirm the browser-captured source row in D1. The queued page was preserved for retry.', {
+    throw new HttpError(409, 'SniperPlug could not confirm the browser-captured source row in this account workspace. The queued page was preserved for retry.', {
       code: 'browser_capture_source_unconfirmed',
-      sourceKey,
+      sourceKey: logicalSourceKey,
     });
   }
 }
 
-async function writeCaptureDraft(env, experience, capture) {
-  const db = requireDatabase(env);
+async function writeCaptureDraft(env, principalValue, experience, capture) {
+  const principalId = principalIdFrom(principalValue);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const approvedSource = await requireApprovedSource(env, principalId, capture.experienceId);
+  const storageExperienceId = String(approvedSource.experience_id || '').trim();
+  if (!storageExperienceId) throw new HttpError(409, 'The approved Better Content source is missing its account-scoped storage identity. Refresh the source before retrying.');
+
   const prepared = await prepareGuideBody(capture.bodyMarkdown, { source: `Better Content browser capture “${capture.title}”` });
   if (new TextEncoder().encode(prepared.body).byteLength > MAX_CAPTURE_BODY_BYTES) throw new HttpError(422, `“${capture.title}” is too large to import safely.`);
 
   const sourceKey = await sourceKeyForCapture(capture);
+  const storageSourceKey = await postStorageKey(principalId, sourceKey);
   const sourceFingerprint = await sourceFingerprintForCapture(sourceKey, capture, prepared.body);
-  const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
+  const existing = await db.prepare(`
+    SELECT * FROM guides WHERE principal_id = ? AND upstream_source_key = ?
+  `).bind(principalId, sourceKey).first();
   const existingIntegrity = safeJson(existing?.integrity_json, {});
 
   if (existing?.source_fingerprint === sourceFingerprint && existing.status !== 'rejected') {
@@ -272,24 +309,25 @@ async function writeCaptureDraft(env, experience, capture) {
     return { sourceKey, guideId: existing.id, slug: existing.slug, title: existing.title, status: existing.status, action: 'changed-published-held', holdReason: 'The published guide changed at the source. SniperPlug preserved the published copy instead of overwriting it.' };
   }
   if (existing?.status === 'rejected') {
-    return { sourceKey, guideId: existing.id, slug: existing.slug, title: existing.title, status: existing.status, action: 'removed-held', holdReason: 'This captured page was previously removed. SniperPlug preserved that decision instead of restoring it silently.' };
+    return { sourceKey, guideId: existing.id, slug: existing.slug, title: existing.title, status: existing.status, action: 'removed-held', holdReason: 'This captured page was previously removed in this account. SniperPlug preserved that decision instead of restoring it silently.' };
   }
   if (existingIntegrity.manualReviewCompleted === true) {
-    return { sourceKey, guideId: existing.id, slug: existing.slug, title: existing.title, status: existing.status, action: 'changed-reviewed-held', holdReason: 'This draft was already manually reviewed. SniperPlug preserved the reviewed version instead of overwriting it with a new browser capture.' };
+    return { sourceKey, guideId: existing.id, slug: existing.slug, title: existing.title, status: existing.status, action: 'changed-reviewed-held', holdReason: 'This draft was already manually reviewed in this account. SniperPlug preserved the reviewed version instead of overwriting it with a new browser capture.' };
   }
 
   const duplicate = await db.prepare(`
     SELECT id, slug, title, status FROM guides
-    WHERE source_key IS NOT ? AND lower(title) = lower(?) AND body_markdown = ? AND status != 'rejected'
+    WHERE principal_id = ? AND upstream_source_key IS NOT ?
+      AND lower(title) = lower(?) AND body_markdown = ? AND status != 'rejected'
     ORDER BY CASE status WHEN 'published' THEN 0 ELSE 1 END, updated_at DESC
     LIMIT 1
-  `).bind(sourceKey, capture.title, prepared.body).first();
+  `).bind(principalId, sourceKey, capture.title, prepared.body).first();
   if (duplicate) {
-    return { sourceKey, guideId: duplicate.id, slug: duplicate.slug, title: duplicate.title, status: duplicate.status, action: 'duplicate-held', holdReason: 'An identical SniperPlug guide already exists.' };
+    return { sourceKey, guideId: duplicate.id, slug: duplicate.slug, title: duplicate.title, status: duplicate.status, action: 'duplicate-held', holdReason: 'An identical guide already exists in this account workspace.' };
   }
 
   const category = await captureCategory(env, capture, prepared.body);
-  const slug = await uniqueSlug(capture.title, sourceKey, existing?.slug || null);
+  const slug = await uniqueSlug(capture.title, storageSourceKey, existing?.slug || null);
   const now = new Date().toISOString();
   const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
   const policy = captureImportPolicy();
@@ -300,7 +338,7 @@ async function writeCaptureDraft(env, experience, capture) {
     contentType: null,
     url: image.url,
     role: 'browser-captured-image',
-    reviewReason: 'This image URL came from the rendered Better Content page. Confirm it is durable or replace it with SniperPlug-owned media before publishing.',
+    reviewReason: 'This image URL came from the rendered Better Content page. Confirm it is durable or replace it with account-owned media before publishing or exporting.',
   }));
   const sourceMeta = {
     type: BROWSER_CAPTURE_SOURCE_TYPE,
@@ -317,8 +355,11 @@ async function writeCaptureDraft(env, experience, capture) {
 
   await upsertBrowserCaptureSourceRow(
     db,
+    principalId,
+    storageExperienceId,
     capture,
     sourceKey,
+    storageSourceKey,
     sourceFingerprint,
     prepared.body,
     images,
@@ -329,12 +370,15 @@ async function writeCaptureDraft(env, experience, capture) {
 
   const write = await db.prepare(`
     INSERT INTO guides (
+      principal_id, upstream_source_key,
       slug, title, description, category_slug, body_markdown, status, featured, sort_order,
       source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
       attachment_json, integrity_json, author_json, source_created_at, source_updated_at,
       imported_at, updated_at, published_at
-    ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 999, ?, ?, ?, ?, ?, ?, ?, '{}', NULL, ?, ?, ?, NULL)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 0, 999, ?, ?, ?, ?, ?, ?, ?, '{}', NULL, ?, ?, ?, NULL)
     ON CONFLICT(source_key) DO UPDATE SET
+      principal_id = excluded.principal_id,
+      upstream_source_key = excluded.upstream_source_key,
       title = excluded.title,
       description = excluded.description,
       category_slug = excluded.category_slug,
@@ -350,14 +394,16 @@ async function writeCaptureDraft(env, experience, capture) {
       source_updated_at = excluded.source_updated_at,
       updated_at = excluded.updated_at,
       published_at = NULL
-    WHERE guides.updated_at IS ?
+    WHERE guides.principal_id = excluded.principal_id AND guides.updated_at IS ?
   `).bind(
+    principalId,
+    sourceKey,
     slug,
     capture.title,
     excerpt(prepared.body) || `Captured from ${sourceGroup} for private review.`,
     category,
     prepared.body,
-    sourceKey,
+    storageSourceKey,
     sourceGroup,
     capture.experienceId,
     sourceKey,
@@ -386,9 +432,12 @@ async function writeCaptureDraft(env, experience, capture) {
     });
   }
 
-  const saved = await db.prepare('SELECT id, slug, title, status, source_fingerprint FROM guides WHERE source_key = ?').bind(sourceKey).first();
+  const saved = await db.prepare(`
+    SELECT id, slug, title, status, source_fingerprint
+    FROM guides WHERE principal_id = ? AND upstream_source_key = ?
+  `).bind(principalId, sourceKey).first();
   if (!saved || saved.status !== 'draft' || String(saved.source_fingerprint || '') !== sourceFingerprint) {
-    throw new HttpError(409, 'SniperPlug could not confirm the exact browser-captured draft in D1. Refresh before retrying.', {
+    throw new HttpError(409, 'SniperPlug could not confirm the exact browser-captured draft in this account workspace. Refresh before retrying.', {
       code: 'browser_capture_unconfirmed',
       sourceKey,
     });
@@ -405,7 +454,8 @@ async function writeCaptureDraft(env, experience, capture) {
   };
 }
 
-export async function importBrowserCaptures(env, whopSession, input) {
+export async function importBrowserCaptures(env, principalValue, whopSession, input) {
+  const principalId = principalIdFrom(principalValue);
   const captures = validateBrowserCaptureBatch(input);
   const memberships = await loadWhopMemberships(whopSession);
   const companies = membershipCompanies(memberships);
@@ -419,14 +469,14 @@ export async function importBrowserCaptures(env, whopSession, input) {
       if (!currentMembershipAllowsExperience(experience, companies)) {
         throw new HttpError(403, 'The connected Whop account no longer has a current membership that grants access to this Better Content experience.');
       }
-      const decision = await sourceDecision(env, experience, capture.experienceId);
+      const decision = await sourceDecision(env, principalId, experience, capture.experienceId);
       if (decision.decision === 'disapproved') {
-        throw new HttpError(409, 'This Better Content source is disapproved in SniperPlug. Approve it before capturing pages from it.');
+        throw new HttpError(409, 'This Better Content source is disapproved in this SniperPlug account. Approve it before capturing pages from it.');
       }
-      if (decision.decision !== 'approved') await saveSourceDecision(env, experience, capture.experienceId, 'approved');
+      if (decision.decision !== 'approved') await saveSourceDecision(env, principalId, experience, capture.experienceId, 'approved');
       experienceCache.set(capture.experienceId, experience);
     }
-    results.push(await writeCaptureDraft(env, experience, capture));
+    results.push(await writeCaptureDraft(env, principalId, experience, capture));
   }
 
   return {
