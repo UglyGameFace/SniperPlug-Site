@@ -1,5 +1,4 @@
 import {
-  requireAccount,
   subscriberPrincipalIdForUser,
   whopUserIdFromProfile,
 } from './auth.js';
@@ -89,11 +88,8 @@ export async function verifySubscriberEntitlement(whopSession, env) {
   }
 }
 
-export async function requireImporterAccount(request, env) {
-  const account = await requireAccount(request, env);
-  if (account.kind === 'owner') return account;
-  if (account.kind !== 'subscriber') throw new HttpError(403, 'This SniperPlug account type cannot use the importer.');
-
+export async function verifySubscriberAccountAccess(request, env, account) {
+  if (account?.kind !== 'subscriber') throw new HttpError(403, 'This SniperPlug account is not a paid subscriber workspace.');
   const whopSession = await requireWhopSession(request, env, account);
   const whopUserId = whopUserIdFromProfile(whopSession.profile || {});
   if (!whopUserId || whopUserId !== String(account.whopUserId || '')) {
