@@ -155,7 +155,7 @@ assert.ok(/Removed Whop imports/i.test(page) && /restore/i.test(page), 'The Cont
 
 assert.ok(reconcile.includes("status IN ('draft', 'published')"), 'Cleanup does not inspect the full active imported guide queue.');
 assert.ok(reconcile.includes('reconcileImportedGuides'), 'Unified imported-guide cleanup is missing.');
-assert.ok(reconcile.includes('cleanupVersion: 4'), 'Current cleanup version is not recorded.');
+assert.ok(reconcile.includes('cleanupVersion: 5'), 'Current tenant-aware cleanup version is not recorded.');
 assert.ok(reconcile.includes("status = 'rejected'"), 'Junk cleanup does not move items out of the normal review queue.');
 assert.ok(reconcile.includes('Duplicate of'), 'Imported duplicate cleanup is missing.');
 assert.ok(!reconcile.includes('LOOKBACK_HOURS'), 'Cleanup is still limited to a recent time window.');
