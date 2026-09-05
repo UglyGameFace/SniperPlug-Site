@@ -150,7 +150,7 @@ for (const slug of ['guides-tutorials', 'money-makers', 'money-savers', 'freebie
   assert.ok(guides.includes(`'${slug}'`), `Category catalog is missing ${slug}.`);
 }
 assert.ok(guides.includes("status === 'published'"), 'Explicit publishing is missing.');
-assert.ok(guides.includes("WHERE guides.status = 'published'"), 'Library queries can expose drafts.');
+assert.ok(guides.includes("WHERE guides.principal_id = ? AND guides.status = 'published'"), 'Public library queries are not restricted to the owner publishing workspace.');
 assert.ok(markdown.includes('noopener noreferrer nofollow') && markdown.includes("url.protocol !== 'https:'"), 'Published link safety is incomplete.');
 
 for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-approve-all', 'data-disapprove-all', 'data-reset-all', 'data-rights-confirm', 'data-publish-guide', 'data-reject-guide', 'data-inline-category-form', 'data-open-inline-category', 'publish-ready-visual']) {
