@@ -31,7 +31,7 @@ assert.ok(imports.includes("code: 'guide_import_stale'"), 'A stale base import d
 assert.ok(imports.includes("code: 'guide_import_unconfirmed'"), 'Imported guide fingerprints are not read back and confirmed.');
 assert.ok(imports.includes("saved.status !== 'draft'"), 'The importer can report success without confirming draft status.');
 assert.ok(imports.includes("String(saved.source_fingerprint || '') !== sourceFingerprint"), 'The importer can report success without confirming the exact fingerprint.');
-assert.ok(imports.includes('sourceSuffix') && imports.includes("sha256(String(sourceKey || base))"), 'New imported guide slugs are not deterministic per tenant physical source key.');
+assert.ok(imports.includes('sourceSuffix') && imports.includes("sha256(String(storageSourceKey || base))"), 'New imported guide slugs are not deterministic per tenant physical source key.');
 assert.ok(!imports.includes("SELECT 1 FROM guides WHERE slug = ?"), 'Imported slug allocation still uses a non-atomic check-then-insert race.');
 
 for (const file of [
