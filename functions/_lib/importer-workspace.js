@@ -31,6 +31,7 @@ async function repairWorkspaceSchema(db) {
   await addColumn(db, 'whop_posts', 'principal_id', `TEXT NOT NULL DEFAULT '${OWNER_PRINCIPAL_ID}'`);
   await addColumn(db, 'whop_posts', 'upstream_source_key', 'TEXT');
   await addColumn(db, 'whop_posts', 'upstream_experience_id', 'TEXT');
+  await addColumn(db, 'whop_posts', 'stale_at', 'TEXT');
   await addColumn(db, 'guides', 'principal_id', `TEXT NOT NULL DEFAULT '${OWNER_PRINCIPAL_ID}'`);
   await addColumn(db, 'guides', 'upstream_source_key', 'TEXT');
 
@@ -58,6 +59,7 @@ async function repairWorkspaceSchema(db) {
     db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_sources_principal_decision ON whop_sources (principal_id, decision, updated_at DESC)'),
     db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_whop_posts_principal_upstream ON whop_posts (principal_id, upstream_source_key)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_posts_principal_experience ON whop_posts (principal_id, upstream_experience_id, decision, source_updated_at DESC)'),
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_whop_posts_current ON whop_posts (principal_id, upstream_experience_id, stale_at, source_updated_at DESC)'),
     db.prepare('CREATE INDEX IF NOT EXISTS idx_guides_principal_status ON guides (principal_id, status, updated_at DESC)'),
     db.prepare('CREATE UNIQUE INDEX IF NOT EXISTS idx_guides_principal_upstream ON guides (principal_id, upstream_source_key) WHERE upstream_source_key IS NOT NULL'),
   ]);
