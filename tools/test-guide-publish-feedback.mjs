@@ -102,7 +102,7 @@ assert.ok(
 assert.ok(
   networkGuard.includes("['guide-save', 'guide-status'].includes(action)")
     && networkGuard.includes('const expectedUpdatedAt = guideVersions.get(id)')
-    && networkGuard.includes('expectedUpdatedAt }),'),
+    && networkGuard.includes('JSON.stringify({ ...body, expectedUpdatedAt })'),
   'Canonical unpublish is no longer protected by the last server-confirmed guide version.',
 );
 
