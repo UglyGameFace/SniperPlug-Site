@@ -54,7 +54,8 @@ assert.ok(background.includes("message?.type === 'sniperplug:open-whop'") && pop
 assert.ok(popupHtml.includes('id="openWhop"') && popup.includes('native Whop app is separate from Firefox'), 'The mobile popup does not clearly distinguish Firefox-rendered Whop from the native Whop app.');
 assert.ok(relay.includes("fetch('/api/browser-capture'") && relay.includes("credentials: 'same-origin'"), 'Captured content is not handed off through the signed-in SniperPlug page.');
 assert.ok(!relay.includes('api.whop.com') && !background.includes('api.whop.com'), 'The extension must not impersonate the SniperPlug OAuth client or call Whop APIs directly.');
-assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireWhopSession') && endpoint.includes('requireSameOrigin'), 'Browser capture endpoint is not protected by owner, Whop, and same-origin checks.');
+assert.ok(endpoint.includes('requireControlAccount') && endpoint.includes('requireWhopSession') && endpoint.includes('requireSameOrigin'), 'Browser capture endpoint is not protected by current account entitlement, Whop, and same-origin checks.');
+assert.ok(endpoint.includes('importBrowserCaptures(context.env, account, whop, body)'), 'Browser capture drops the authenticated tenant principal before persistence.');
 assert.ok(endpoint.includes('requireWhopAppFrameCaptures'), 'Server preflight no longer rejects captures outside HTTPS Whop app frames.');
 assert.ok(service.includes('inspectWhopApp') && service.includes('browserCaptureMatchesReader'), 'Server no longer binds rendered captures to the canonical app-reader decision and Whop app-frame boundary.');
 assert.ok(service.includes("captureMethod: 'extension-dom'") && service.includes("status = 'draft'"), 'Browser capture is not constrained to the private draft path.');
