@@ -5,101 +5,110 @@ Repair the Whop importer end to end so it can become a safe subscription product
 
 The task is not complete until both conditions hold:
 1. one real Make Money Here page reaches SniperPlug as a private draft through the existing v0.1.4 queue/retry path; and
-2. importer connection/workspace data is isolated by the authenticated SniperPlug account principal so future subscribers cannot read, overwrite, disconnect, or purge one another.
+2. importer connection/workspace data is isolated by the authenticated SniperPlug account principal so future subscribers cannot read, overwrite, disconnect, reset, restore, publish, or purge one another.
 
-## Scope
-1. Keep application auth → Whop OAuth → membership/discovery/access truth authoritative.
-2. Keep native Forum/Course/Chat readers authoritative.
-3. For Better Content only, read rendered DOM the authenticated user is already authorized to view.
-4. Never read/forward Whop cookies, iframe JWTs, OAuth tokens, local/session storage credentials, or guessed Better Content API responses.
-5. Keep browser login-session identity separate from stable SniperPlug account/principal identity.
-6. Whop connections must be account-scoped so one subscriber can use multiple devices without reconnecting, while different subscribers remain isolated.
-7. Tenant-scope importer workspace data before subscription accounts are enabled.
-8. Require republishing-rights confirmation and manual review before publication.
-9. Protect published, reviewed, removed, and unrelated user work from capture overwrites.
-10. Keep Issue #20 and unrelated UI work locked out until this importer/security task is complete.
+## Scope lock
+- Stay on Whop importer/subscription isolation only.
+- Issue #20, UI redesign, and unrelated work remain backlog.
+- No guessed Better Content endpoints, Whop credential forwarding, extra OAuth scopes, or weakened OAuth/cookie checks.
 
 ## Status
 - PR #34 merged: membership access false-denial fix.
-- PR #35 merged: Whop OAuth callback/login-loop fix.
+- PR #35 merged: OAuth callback/login-loop fix.
 - PR #36 merged: source-access truth/loading/fan-out fix.
-- PR #37 merged: current Experiences `account_id` contract fix.
-- PR #38 merged: user-OAuth-compatible custom-app metadata / reader-contract truth.
-- PR #39 merged: Better Content rendered-DOM capture bridge → private draft.
+- PR #37 merged: Experiences `account_id` contract fix.
+- PR #38 merged: user-OAuth-compatible custom-app reader metadata.
+- PR #39 merged: Better Content rendered-DOM capture bridge.
 - PR #41 merged: Firefox Android package support.
-- PR #44 merged: v0.1.3 Firefox app-frame URL compatibility attempt.
-- PR #45 merged: v0.1.4 live all-frame recovery for already-open Whop tabs.
-- Live v0.1.4 evidence: Better Content capture reached SniperPlug and was preserved for retry after the server draft write failed.
-- PR #46 merged at `68e9f42e008ac03982368da6be1f97f840fad95e`: browser capture now materializes/verifies its `whop_posts` source row before the foreign-keyed guide draft write. Post-merge Node 22 verification passed.
-- Subscription requirement exposed a separate architectural risk: every account currently collapses onto the one principal/storage key `sniperplug-owner`, and legacy purge paths can delete any Whop session not matching that key.
-- PR #47 (`fix/whop-session-isolation`) is the current implementation stage: explicit account principal vs browser login session, plus principal-scoped Whop connection lifecycle.
+- PR #45 merged: v0.1.4 all-frame recovery for already-open Whop tabs.
+- PR #46 merged: browser capture materializes/verifies its `whop_posts` FK row before the guide draft write.
+- PR #47 merged at `2da4e0d3667f45cbafd69975967e76fdad66b199`: browser-session identity is separate from stable account principal and Whop connection lifecycle is principal-scoped. Post-merge verification passed.
+- Current branch: `fix/whop-tenant-workspace`.
+- Current stage: complete tenant-workspace implementation is in code; mandatory regression/legacy-audit/CI pass is next. Branch is intentionally not merged yet.
 
-## Findings / root cause
-### Better Content capture
-- Firefox v0.1.4 is no longer blocked at candidate discovery or handoff.
-- The live generic importer error was caused by `guides.source_key → whop_posts.source_key` foreign-key enforcement; PR #46 repaired that structural mismatch.
-- No extension reinstall is required for the PR #46 server-side fix. The preserved queue remains the live validation path.
+## Confirmed subscription root causes
+1. Existing owner data uses upstream Whop `experience_id` and content `source_key` directly as global D1 primary/unique keys.
+2. Two subscribers can legitimately import the same Whop experience/item, so upstream IDs cannot remain the physical tenant storage key.
+3. `guides.slug` is globally unique, so identical subscriber imports also need tenant-specific slug entropy.
+4. Numerous old source/post/guide/recovery/backup queries selected by upstream ID or numeric guide ID without an explicit principal predicate.
+5. Backup rows stored an owner field, but old snapshot/reset/restore SQL operated on the importer globally.
+6. Public guide publishing/search must remain an owner workspace, not become implicitly available to subscription tenants.
 
-### Subscription / identity isolation
-- Existing owner auth uses `sniperplug-owner` simultaneously as application identity and Whop connection key.
-- Existing `purgeLegacyWhopSessions()` deletes every `whop_sessions`, `whop_oauth_states`, and `whop_refresh_leases` row whose key is not the one owner constant.
-- Login, OAuth start/callback, disconnect, and reset paths historically invoked that global cleanup. In a subscription launch, one account could therefore destroy another subscriber's Whop connection.
-- Correct SaaS model is **browser session ≠ SniperPlug account principal ≠ external Whop credential**, with the Whop credential attached to the account principal.
-- Same subscriber on phone/tablet should see the same account-level Whop connection. Different subscribers must never share it.
-- `whop_sources`, `whop_posts`, and the current import/publishing workspace remain globally keyed today. Connection isolation alone is therefore necessary but not sufficient for subscriptions.
+## Tenant storage model
+`browser login → stable SniperPlug principal → principal-scoped Whop OAuth connection → principal-scoped importer workspace`
 
-## Current execution paths
-### OAuth / connection
-`browser login cookie → account principal → OAuth pending state principal → Whop token stored under that principal → requireWhopSession(current principal)`
+Logical upstream identity and physical D1 identity are now separate:
+- `whop_sources.principal_id` + `upstream_experience_id`
+- `whop_posts.principal_id` + `upstream_source_key` + `upstream_experience_id`
+- `guides.principal_id` + `upstream_source_key`
 
-### Better Content capture
-`Firefox Whop tab → Better Content rendered frame → content-capture.js → extension queue → SniperPlug Control Center relay → POST /api/browser-capture → application principal + Whop session + exact exp_ + exact Better Content app → whop_posts source row → private draft → manual review/publish`
+Existing owner rows retain their original physical keys for backward compatibility. Non-owner principals receive deterministic hashed physical source/post keys. Therefore Subscriber A and Subscriber B can import the same upstream Whop source/item without sharing a row, FK, lease, draft, or slug.
 
-## Changes in PR #47
-- Auth session v4 introduces explicit `principalId` and independent random `browserSid`.
-- Existing owner principal remains `sniperplug-owner` for backward-compatible owner data; browser logins no longer masquerade as the account identity conceptually.
-- Legacy v1-v3 owner cookies remain valid until normal expiry and normalize onto the owner principal.
-- Application login no longer purges other Whop principals.
-- OAuth start/callback no longer hard-code or purge the canonical owner connection.
-- New `whop-connection.js` resolves the authenticated principal and revokes/deletes only that principal's Whop token, pending OAuth states, and refresh lease.
-- Disconnect, Switch Whop, invalid-session cleanup, and backup-reset disconnect use the principal-scoped service.
-- Session/dashboard responses expose the current principal identity as groundwork for real subscriber authentication.
-- Runtime regression creates multiple browser logins for one principal, then simulates principal A and B and proves disconnecting A leaves every B Whop artifact untouched.
+## Implemented changes on `fix/whop-tenant-workspace`
+### Schema / identity
+- Added runtime idempotent tenant schema repair in `functions/_lib/importer-workspace.js`.
+- Added `migrations/0007_importer_tenant_workspace.sql`.
+- Losslessly backfills existing rows to `sniperplug-owner` and preserves owner physical keys.
+- Adds unique principal/upstream indexes for sources, posts, and guides.
+
+### Discovery / sources / scans
+- Source decisions are read/written by principal + logical Whop experience ID.
+- Whop discovery now receives the authenticated principal directly; redundant post-discovery hydration was removed.
+- Scan leases use tenant-specific physical source IDs.
+- Scanned posts, stale marking, post decisions, and saved-post reads are principal-scoped.
+
+### Native imports / Better Content
+- Native import reads approved posts by principal + upstream logical key.
+- Imported guide lookup/duplicate detection/update is restricted to the current principal.
+- Physical post key is used for FK integrity and slug entropy; logical upstream key remains visible to the importer/client.
+- Better Content capture applies the same principal/logical/physical split and protects reviewed/published/removed work only inside that tenant.
+
+### Private guides / media / rollback
+- Admin guide lists/details/saves/status updates require principal ownership.
+- Safe-save snapshots, optimistic version reservations, recovery leases, recovery rollback, and media repair verify principal ownership.
+- Media mirroring uses the tenant physical source key so two tenants cannot accidentally share mutable importer media identity.
+
+### Bulk / history / publishing
+- Bulk job version raised to v5; unsafe active pre-tenant jobs are canceled rather than resumed under new semantics.
+- Bulk jobs are account-principal scoped.
+- Subscriber bulk jobs stop at private drafts; only owner principal can call the public publisher.
+- Recent history/undo is principal-scoped.
+- Public guide publishing and public guide search explicitly require/filter `sniperplug-owner`.
+- Global guide category mutation remains owner-only.
+
+### Backup / reset / restore
+- Backup snapshot/list/download/authorization/reset/restore/delete all require the matching principal.
+- Signed backup manifest includes principal identity.
+- Cross-principal archive restore fails closed.
+- Legacy owner-only archives can still restore to the owner, but cannot be transplanted into a subscriber workspace.
+- Source-scoped reset uses logical upstream experience ID while deleting only that principal’s physical rows.
 
 ## Validation
-- [x] Live v0.1.4 screenshot proves Better Content capture reached SniperPlug and queue preservation works.
-- [x] PR #46 browser-capture source-row fix merged; post-merge Node 22 build passed.
-- [x] PR #47 regression proves multiple browser sessions can share one stable account principal.
-- [x] PR #47 regression proves principal A disconnect cannot delete principal B's Whop session, OAuth state, or refresh lease.
-- [x] OAuth callback regression now requires the authenticated principal to survive through the D1 pending-state row instead of being replaced by one global owner constant.
-- [x] Global purge calls removed from application login and OAuth start/callback in PR #47.
-- [x] Destructive Whop routes are same-origin POST and use principal-scoped disconnect.
-- [ ] Full Node 22 build green on current PR #47 head after updating legacy single-owner assertions.
-- [ ] PR #47 branch/review state clean and current with main.
-- [ ] PR #47 merged and post-merge main workflows green.
-- [ ] Tenant-scope saved importer source/post/private-workspace data behind `principalId` with lossless owner backfill and cross-tenant regression coverage.
-- [ ] Owner presses existing **Retry capture** and one queued Make Money Here page becomes a private SniperPlug draft.
-- [ ] Multi-page auto-capture validated only after the one-page draft succeeds.
+- [x] PR #47 connection isolation regression and post-merge build passed.
+- [x] Same-principal multi-device Whop connection model preserved.
+- [x] `test-whop-tenant-workspace.mjs` added to mandatory audit chain.
+- [x] Runtime key regression checks owner compatibility, deterministic same-tenant keys, and distinct keys for two tenants importing identical upstream data.
+- [x] Static tenant regression covers source/post/guide/discovery/capture/bulk/history/publish/backup/recovery/safe-save boundaries.
+- [ ] Open tenant workspace PR and run complete Node 22 audit/build.
+- [ ] Repair legacy audits only where they encode superseded single-owner assumptions; do not weaken behavioral coverage.
+- [ ] Exact final-head CI green.
+- [ ] Branch compare clean/current with main and review threads clean.
+- [ ] Merge tenant workspace PR and verify post-merge main workflows.
+- [ ] Use preserved Firefox v0.1.4 queue and press **Retry capture**; one Make Money Here page must become a private draft.
+- [ ] Validate multi-page auto-capture only after one-page live success.
 
 ## Cleanup / conflicts
-- No extra Whop OAuth scopes.
-- No weakening of Strict application-cookie security or OAuth callback state verification.
-- No guessed Better Content endpoints or Whop iframe credential theft/forwarding.
-- No automatic publishing.
-- No global delete is allowed in the new principal-scoped disconnect service.
-- Existing global legacy helper remains temporarily for compatibility/recovery code but is no longer permitted on normal account login/connect/disconnect/switch paths.
-- UI redesign remains backlog until tenant safety and the live capture gate are complete.
+- No destructive table rebuild.
+- No global account cleanup added.
+- No subscriber public publishing.
+- No cross-tenant backup restore.
+- Redundant discovery hydration compatibility layer removed after principal was threaded into discovery itself.
+- Existing owner data and physical keys remain intact.
 
-## Blockers / risks
-- CI cannot exercise the owner's private production Better Content page; final content proof remains the preserved live capture retry.
-- Current owner-only workspace tables are not subscription-safe yet. Do not enable paid subscriber accounts before tenant scoping is complete.
-- Public guide publishing and subscriber-private import workspace currently share parts of one data model. Tenant scoping must preserve public owner guides while preventing subscriber drafts/sources from colliding with them.
-
-## Backlog after importer/security is complete
-- Consolidate/restructure the Control Center UI. Current cards/status explanations are too verbose and repetitive on mobile.
-- Make connection wording explicit: **Whop connected to this SniperPlug account**, not "this device is signed into Whop."
-- Issue #25 remains broader custom-app reader work after Better Content.
-- Other third-party Whop apps remain out of scope until Better Content works end to end.
+## Remaining blockers / risks
+- CI cannot execute against the owner’s private production Better Content page, so the final browser-capture proof remains the preserved live queue retry after deployment.
+- This branch establishes the tenant data boundary. Actual paid subscriber authentication/billing identity must bind a real subscriber account to `principalId` before subscription accounts are enabled; the current owner-password login is not itself a customer identity system.
+- Subscription accounts must remain disabled until this branch is merged green and real subscriber auth is attached to the principal contract.
 
 ## Next step
-Get PR #47 fully green and merge it. Then stay on this same active task and inspect every `whop_sources`, `whop_posts`, private draft/import, backup/recovery, and browser-capture read/write path before introducing the tenant workspace key and lossless owner backfill. Do not enable subscription accounts until cross-principal workspace isolation is executable-tested. The existing v0.1.4 queued Make Money Here capture remains the live end-to-end validation gate after server-side isolation changes deploy.
+Open the tenant workspace PR, run the full Node 22 suite, fix every concrete failure at its source, inspect exact final diff/review/branch state, merge only when green, then verify post-merge main. After deployment, retry the preserved Make Money Here capture for the live end-to-end gate.
