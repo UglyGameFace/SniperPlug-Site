@@ -1,8 +1,9 @@
 import { classifyWhopItem, whopContentToMarkdown } from './content-policy.js';
 import { sha256 } from './crypto.js';
 import { listCategories, slugify, suggestedCategoryForText } from './guides.js';
-import { HttpError, requireDatabase } from './http.js';
+import { HttpError } from './http.js';
 import { assertGuideRoundTrip, prepareGuideBody } from './integrity.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom, upstreamSourceKey } from './importer-workspace.js';
 import { retrieveExperienceItem } from './whop-items.js';
 import { resolveWhopExperienceType, retrieveExperience, retrieveWhopFile } from './whop.js';
 import { requireApprovedSource } from './source-policy.js';
@@ -46,10 +47,10 @@ async function verifyAttachments(session, attachments) {
   return { verified, reviewCount, markdown: lines.length ? `\n\n## Files and attachments\n\n${lines.join('\n\n')}` : '' };
 }
 
-async function uniqueSlug(_db, title, sourceKey, existingSlug = null) {
+async function uniqueSlug(title, storageSourceKey, existingSlug = null) {
   if (existingSlug) return existingSlug;
   const base = slugify(title) || 'imported-guide';
-  const sourceSuffix = (await sha256(String(sourceKey || base))).slice(0, 12);
+  const sourceSuffix = (await sha256(String(storageSourceKey || base))).slice(0, 12);
   return `${base.slice(0, 62)}-${sourceSuffix}`;
 }
 
@@ -81,44 +82,53 @@ function safeJson(value, fallback = {}) {
   try { return JSON.parse(value || '{}'); } catch { return fallback; }
 }
 
-async function exactRecoveryContext(db, input, experienceId, sourceKeys) {
+async function exactRecoveryContext(db, principalId, input, experienceId, sourceKeys) {
   const guideId = Number.parseInt(input?.recoveryGuideId, 10);
   if (!Number.isFinite(guideId) || guideId <= 0) return null;
   if (sourceKeys.length !== 1) throw new HttpError(422, 'Recovery can rebuild only one exact removed guide at a time.');
   const row = await db.prepare(`
-    SELECT id, status, source_key, source_group, source_experience_id
-    FROM guides WHERE id = ?
-  `).bind(guideId).first();
-  if (!row || row.status !== 'rejected') throw new HttpError(409, 'The requested recovery guide is no longer removed.');
-  if (String(row.source_key || '') !== sourceKeys[0] || String(row.source_experience_id || '') !== experienceId) {
-    throw new HttpError(403, 'Recovery context does not match the exact removed Whop guide.');
+    SELECT id, status, source_key, upstream_source_key, source_group, source_experience_id
+    FROM guides WHERE principal_id = ? AND id = ?
+  `).bind(principalId, guideId).first();
+  if (!row || row.status !== 'rejected') throw new HttpError(409, 'The requested recovery guide is no longer removed in this account workspace.');
+  if (upstreamSourceKey(row) !== sourceKeys[0] || String(row.source_experience_id || '') !== experienceId) {
+    throw new HttpError(403, 'Recovery context does not match the exact removed Whop guide in this account workspace.');
   }
   return {
     guideId: Number(row.id),
-    sourceKey: String(row.source_key),
+    sourceKey: upstreamSourceKey(row),
     source: { label: String(row.source_group || 'Whop source') },
   };
 }
 
-export async function importApprovedPosts(env, whopSession, input) {
+export async function importApprovedPosts(env, principalValue, whopSession, input) {
   if (input?.rightsConfirmed !== true) throw new HttpError(422, 'Confirm that you own this content or have explicit permission to republish it.');
+  const principalId = principalIdFrom(principalValue);
   const experienceId = String(input?.experienceId || '').trim();
   const sourceKeys = [...new Set((Array.isArray(input?.sourceKeys) ? input.sourceKeys : []).map((value) => String(value || '').trim()).filter(Boolean))];
   if (!sourceKeys.length) throw new HttpError(422, 'Approve at least one content item before importing.');
   if (sourceKeys.length > MAX_IMPORT) throw new HttpError(422, `Import at most ${MAX_IMPORT} content items at once.`);
   const resolveCategory = await categoryResolver(env, input);
-  const db = requireDatabase(env);
-  const recovery = await exactRecoveryContext(db, input, experienceId, sourceKeys);
-  const source = recovery?.source || await requireApprovedSource(env, experienceId);
+  const db = await ensureImporterWorkspaceSchema(env);
+  const recovery = await exactRecoveryContext(db, principalId, input, experienceId, sourceKeys);
+  const source = recovery?.source || await requireApprovedSource(env, principalId, experienceId);
 
   const placeholders = sourceKeys.map(() => '?').join(',');
   const rows = await db.prepare(`
     SELECT * FROM whop_posts
-    WHERE experience_id = ? AND source_key IN (${placeholders})
-  `).bind(experienceId, ...sourceKeys).all();
-  const decisions = new Map((rows.results || []).map((row) => [row.source_key, row]));
+    WHERE principal_id = ? AND upstream_experience_id = ?
+      AND upstream_source_key IN (${placeholders})
+  `).bind(principalId, experienceId, ...sourceKeys).all();
+  const decisions = new Map((rows.results || []).map((row) => [upstreamSourceKey(row), row]));
+  const missingRows = sourceKeys.filter((key) => !decisions.has(key));
+  if (missingRows.length) {
+    throw new HttpError(409, 'One or more content items are missing from this account’s current scan. Scan the source again.', {
+      code: 'tenant_post_missing',
+      sourceKeys: missingRows,
+    });
+  }
   if (!recovery && sourceKeys.some((key) => decisions.get(key)?.decision !== 'approved')) {
-    throw new HttpError(409, 'One or more content items are no longer approved. Scan the source again.');
+    throw new HttpError(409, 'One or more content items are no longer approved in this account. Scan the source again.');
   }
 
   const experience = await retrieveExperience(whopSession, experienceId);
@@ -126,6 +136,10 @@ export async function importApprovedPosts(env, whopSession, input) {
   const results = [];
 
   for (const sourceKey of sourceKeys) {
+    const savedDecision = decisions.get(sourceKey);
+    const storageSourceKey = String(savedDecision?.source_key || '').trim();
+    if (!storageSourceKey) throw new HttpError(409, 'The account-scoped source record is incomplete. Scan this source again before importing.');
+
     const item = await retrieveExperienceItem(whopSession, experience, sourceKey);
     if (!item) throw new HttpError(409, 'The Whop content item is no longer available. Scan the source again.');
     const renderedOriginal = whopContentToMarkdown(item.content || '');
@@ -156,9 +170,11 @@ export async function importApprovedPosts(env, whopSession, input) {
       contentFingerprint,
     }));
 
-    const existing = await db.prepare('SELECT * FROM guides WHERE source_key = ?').bind(sourceKey).first();
+    const existing = await db.prepare(`
+      SELECT * FROM guides WHERE principal_id = ? AND upstream_source_key = ?
+    `).bind(principalId, sourceKey).first();
     if (recovery && Number(existing?.id || 0) !== recovery.guideId) {
-      throw new HttpError(409, 'The removed guide no longer matches its original Whop source record.');
+      throw new HttpError(409, 'The removed guide no longer matches its original Whop source record in this account workspace.');
     }
     if (existing?.source_fingerprint === sourceFingerprint && existing.status !== 'rejected') {
       results.push({ sourceKey, guideId: existing.id, slug: existing.slug, action: 'unchanged', title: existing.title, category: existing.category_slug, _mediaContext: item._mediaContext || null });
@@ -167,19 +183,19 @@ export async function importApprovedPosts(env, whopSession, input) {
 
     const duplicate = await db.prepare(`
       SELECT id, slug, title, category_slug FROM guides
-      WHERE source_key IS NOT ? AND lower(title) = lower(?) AND body_markdown = ? AND status != 'rejected'
+      WHERE principal_id = ? AND upstream_source_key IS NOT ?
+        AND lower(title) = lower(?) AND body_markdown = ? AND status != 'rejected'
       ORDER BY CASE status WHEN 'published' THEN 0 ELSE 1 END, updated_at DESC
       LIMIT 1
-    `).bind(sourceKey, String(item.title || ''), prepared.body).first();
+    `).bind(principalId, sourceKey, String(item.title || ''), prepared.body).first();
     if (duplicate) {
-      results.push({ sourceKey, guideId: duplicate.id, slug: duplicate.slug, action: 'duplicate-held', title: duplicate.title, category: duplicate.category_slug, holdReason: 'An identical guide already exists.' });
+      results.push({ sourceKey, guideId: duplicate.id, slug: duplicate.slug, action: 'duplicate-held', title: duplicate.title, category: duplicate.category_slug, holdReason: 'An identical guide already exists in this account workspace.' });
       continue;
     }
 
-    const savedDecision = decisions.get(sourceKey);
     const title = String(item.title || savedDecision?.title || 'Imported Whop content').trim().slice(0, 140);
     const description = excerpt(preparedOriginal.body) || `Imported from ${source.label} for review.`;
-    const slug = await uniqueSlug(db, title, sourceKey, existing?.slug || null);
+    const slug = await uniqueSlug(title, storageSourceKey, existing?.slug || null);
     const now = new Date().toISOString();
     const integrity = await assertGuideRoundTrip(prepared.body, prepared.body);
     const postIntegrity = safeJson(savedDecision?.integrity_json, {});
@@ -188,12 +204,15 @@ export async function importApprovedPosts(env, whopSession, input) {
 
     const write = await db.prepare(`
       INSERT INTO guides (
+        principal_id, upstream_source_key,
         slug, title, description, category_slug, body_markdown, status, featured, sort_order,
         source_key, source_group, source_experience_id, source_post_id, source_fingerprint,
         attachment_json, integrity_json, author_json, source_created_at, source_updated_at,
         imported_at, updated_at, published_at
-      ) VALUES (?, ?, ?, ?, ?, 'draft', 0, 999, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', 0, 999, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
       ON CONFLICT(source_key) DO UPDATE SET
+        principal_id = excluded.principal_id,
+        upstream_source_key = excluded.upstream_source_key,
         title = excluded.title,
         description = excluded.description,
         category_slug = excluded.category_slug,
@@ -211,14 +230,16 @@ export async function importApprovedPosts(env, whopSession, input) {
         source_updated_at = excluded.source_updated_at,
         updated_at = excluded.updated_at,
         published_at = NULL
-      WHERE guides.updated_at IS ?
+      WHERE guides.principal_id = excluded.principal_id AND guides.updated_at IS ?
     `).bind(
+      principalId,
+      sourceKey,
       slug,
       title,
       description,
       selectedCategory,
       prepared.body,
-      sourceKey,
+      storageSourceKey,
       source.label,
       experienceId,
       String(item.id || ''),
@@ -233,15 +254,18 @@ export async function importApprovedPosts(env, whopSession, input) {
       expectedUpdatedAt,
     ).run();
     if (Number(write.meta?.changes || 0) !== 1) {
-      throw new HttpError(409, 'This guide changed while SniperPlug was preparing the Whop import. The newer saved version was preserved; refresh before retrying.', {
+      throw new HttpError(409, 'This guide changed while SniperPlug was preparing the account-scoped Whop import. The newer saved version was preserved; refresh before retrying.', {
         code: 'guide_import_stale',
         guideId: Number(existing?.id || 0) || null,
         sourceKey,
       });
     }
-    const saved = await db.prepare('SELECT id, slug, title, category_slug, status, source_fingerprint FROM guides WHERE source_key = ?').bind(sourceKey).first();
+    const saved = await db.prepare(`
+      SELECT id, slug, title, category_slug, status, source_fingerprint
+      FROM guides WHERE principal_id = ? AND upstream_source_key = ?
+    `).bind(principalId, sourceKey).first();
     if (!saved || saved.status !== 'draft' || String(saved.source_fingerprint || '') !== sourceFingerprint) {
-      throw new HttpError(409, 'SniperPlug could not confirm the exact imported guide in D1. Refresh before retrying.', {
+      throw new HttpError(409, 'SniperPlug could not confirm the exact imported guide in this account workspace. Refresh before retrying.', {
         code: 'guide_import_unconfirmed',
         sourceKey,
       });
