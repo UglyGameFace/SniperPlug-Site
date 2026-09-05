@@ -1,4 +1,3 @@
-import { requireAdmin } from '../_lib/auth.js';
 import {
   handleError,
   HttpError,
@@ -11,6 +10,7 @@ import {
 import { principalIdFrom } from '../_lib/importer-workspace.js';
 import { scanApprovedSource } from '../_lib/posts.js';
 import { DEFAULT_WHOP_GROUPS, listSourceOptions, saveSourceDecision } from '../_lib/source-policy.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import {
   authorizeWhopReset,
   createWhopImportBackup,
@@ -182,17 +182,17 @@ async function postAction(request, env, admin, currentAction) {
 export async function onRequest(context) {
   try {
     const currentAction = action(context.request);
-    const admin = await requireAdmin(context.request, context.env);
+    const account = await requireControlAccount(context.request, context.env);
     if (context.request.method === 'GET') {
-      if (currentAction === 'overview') return overview(context.env, admin);
+      if (currentAction === 'overview') return overview(context.env, account);
       if (currentAction === 'download') {
         const id = backupId(context.request);
-        const exported = await exportWhopImportBackup(context.env, admin, id);
+        const exported = await exportWhopImportBackup(context.env, account, id);
         return downloadResponse(id, exported.archiveJson);
       }
       return methodNotAllowed(['POST']);
     }
-    if (context.request.method === 'POST') return postAction(context.request, context.env, admin, currentAction);
+    if (context.request.method === 'POST') return postAction(context.request, context.env, account, currentAction);
     return methodNotAllowed(['GET', 'POST']);
   } catch (error) {
     return handleError(error);
