@@ -14,83 +14,60 @@ Finish the Whop importer and Better Content guide-review/publish lifecycle on Fi
 - Real Firefox Android Better Content capture reached SniperPlug and created an editable private draft.
 - PR #52 merged: local publish feedback, dirty-save gate, published locking, Published-filter retention.
 - PR #53 merged: complete D1/SQLite publish lifecycle regression from Better Content capture through save/publish/view/unpublish/republish.
-- Real tablet acceptance then exposed a remaining product defect: the editor showed stacked warnings, an oversized raw-Markdown field, and a red manual-review error when Publish was pressed on an unchanged browser-captured guide.
-- PR #54 is active on `fix/control-review-ux` to repair that exact acceptance failure.
+- Real tablet acceptance then exposed a remaining product defect: stacked warnings, an oversized raw-Markdown field, and a red manual-review error when Publish was pressed on an unchanged browser-captured guide.
+- PR #54 fixed that exact acceptance failure and merged to `main` as `ff2e6d43ec15af71d5ec9f60e12e908c4f03064c`.
+- Post-merge Node 22 validation, production guide-privacy smoke, and production affiliate-readiness smoke passed on that merge commit. Duplicate Vercel build-rate-limit statuses remain unrelated to the active Cloudflare Pages deployment.
 
 ## Findings / root cause
-### Capture/persistence defects already resolved
-- Firefox v0.1.5 could erase its own valid Better Content iframe candidate when the popup opened. v0.1.6 preserves/probes the exact `*.apps.whop.com` frame and targets the exact frame ID.
-- Browser capture used to depend on backup initialization to create `whop_posts.stale_at`. Core importer schema setup now owns that column/index.
+Browser-captured guides intentionally enter D1 with `autoPublishEligible=false` and `manualReviewCompleted=false`. Before PR #54, only **Save draft** marked manual review complete. Therefore an unchanged guide could be visibly reviewed by the owner yet pressing **Publish** failed with the browser-capture manual-review policy until a meaningless Save occurred.
 
-### Publish acceptance defect found on the real tablet
-Browser-captured guides intentionally enter D1 with a manual-review-only policy:
-`autoPublishEligible=false` + `manualReviewCompleted=false`.
+The correct authority boundary is now:
+- unchanged guide + manual version-reserved Publish → the Publish action itself records explicit review;
+- edited guide + Publish → blocked in the browser until Save stores the exact visible revision;
+- bulk/automatic publish → never receives manual-review confirmation and remains blocked for manual-review-only imports.
 
-Before PR #54, only **Save draft** changed `manualReviewCompleted` to true. Therefore an unchanged imported guide could be fully reviewed by the owner, but pressing **Publish** still failed with the policy text “Browser-captured app content always requires explicit account review…” until the owner performed a meaningless Save first.
+The same real-tablet screenshots exposed avoidable UX clutter: two persistent warning boxes, a raw Markdown textarea consuming most of the viewport, and primary actions pushed below the fold.
 
-That is backwards. The authoritative manual Publish request is itself the explicit review action. The safe distinction is:
-- unchanged guide + manual version-reserved Publish → counts as explicit review;
-- edited guide + Publish → still blocked client-side until Save stores the exact visible revision;
-- bulk/automatic publish → does **not** gain manual-review confirmation and stays blocked for manual-review-only imports.
+## Current execution path
+`Better Content iframe → verified capture → tenant private draft → owner opens guide → unchanged: Publish guide directly OR edited: Save changes first → version-reserved guide-status request → explicit manual-review record → attachment/integrity/quarantine/expiration/link gates → D1 status + published_at → canonical guide read-back → Published queue + locked editor → View published guide → Unpublish & edit → Draft`.
 
-The screenshots also showed two persistent warning boxes competing for attention, a raw Markdown textarea consuming most of the tablet viewport, and primary actions pushed to the bottom.
-
-## Execution path after PR #54
-`Better Content iframe → verified capture → tenant private draft → owner opens guide → unchanged: Publish guide directly OR edited: Save changes first → version-reserved guide-status request → manual Publish records explicit review → attachment/integrity/time-sensitive/link gates still run → D1 status + published_at → canonical guide read-back → Published queue + locked editor → View published guide → Unpublish & edit → Draft`.
-
-## PR #54 changes
-### Correct review semantics
-- `assertGuidePublishable()` now records explicit manual review only on its existing version-reserved manual Publish path.
-- `publishReadyGuides()` continues to use the normal audit path and cannot bypass manual-review-only policy.
-- Attachment, blocked-integrity, quarantine, expiration, and link checks remain authoritative after manual review confirmation.
-- Dirty edits remain blocked by the existing lifecycle before a publish mutation can leave the browser.
-
-### Tablet/mobile editor clarity
-- One concise persistent state surface instead of stacked warning boxes.
-- Labels reduced to **Save changes**, **Publish guide**, **Remove draft**, and **Unpublish & edit**.
-- Clean draft copy says it is ready to review; dirty copy says save before publishing.
-- Raw guide textarea is viewport-bounded on tablet/mobile.
-- Primary actions stay reachable in a sticky action bar on coarse-pointer/mobile layouts.
-- Raw Markdown preview is hidden from the normal review path.
-- Featured is moved under **More options**.
-- No new fetch layer, retry mutation, MutationObserver, or alternate publish implementation was added.
+## Implemented PR #54 behavior
+- Manual Publish records explicit review only on the existing version-reserved manual publish path.
+- Bulk publishing still cannot bypass manual-review-only policy.
+- Attachment, integrity, quarantine, expiration, and link checks still fail closed.
+- Dirty edits still require Save before Publish.
+- Guide editor uses one concise state surface instead of stacked persistent warnings.
+- Buttons are **Save changes**, **Publish guide**, **Remove draft**, and **Unpublish & edit**.
+- Clean drafts say they are ready to review; dirty drafts say save before publishing.
+- Guide-content textarea is bounded on tablet/mobile.
+- Primary actions remain reachable in a sticky action bar on coarse-pointer/mobile layouts.
+- Raw Markdown preview is hidden from the normal review flow.
+- Featured is under **More options**.
+- No new network path, retry mutation, DOM observer, auth bypass, or duplicate publishing implementation was added.
 
 ## Validation / results
-- [x] Existing capture, membership, exact-app, tenant, auth, media, backup, recovery, network, concurrency, versioning, and privacy audits pass on PR #54.
-- [x] PR #54 Node 22 full build/regression run #1019 passed.
-- [x] `GUIDE PUBLISH SERVER ROUNDTRIP PASSED` proves:
-  - imported Better Content draft stays private;
-  - bulk publish cannot bypass manual review;
-  - manual Publish is explicit review for an unchanged imported guide;
-  - edited guide still saves exact content before publishing;
-  - publish/view/unpublish/republish works;
-  - no duplicate guide row;
-  - subscriber publishing and unresolved attachment publishing fail closed.
-- [x] `GUIDE PUBLISH FEEDBACK REGRESSION PASSED` proves:
-  - one concise editor state surface;
-  - bounded tablet/mobile guide field and reachable primary actions;
-  - dirty drafts cannot publish stale edits;
-  - manual Publish and bulk-policy behavior remain separated;
-  - versioned server publication remains authoritative.
+- [x] PR #54 exact-head Node 22 full build/regression run #1020 passed after the final task-record commit.
+- [x] PR #54 had no inline review threads and was mergeable before merge.
+- [x] `GUIDE PUBLISH SERVER ROUNDTRIP PASSED`: private draft, manual Publish review, edited-save path, publish/view/unpublish/republish, duplicate prevention, subscriber isolation, attachment blocking.
+- [x] `GUIDE PUBLISH FEEDBACK REGRESSION PASSED`: single state surface, bounded mobile editor, reachable actions, dirty-save gate, manual-vs-bulk review separation, authoritative versioned publish.
 - [x] Control Center mobile-flow and hardening audits passed.
-- [x] PR #54 currently has no inline review threads and is mergeable before this task-record update.
-- [ ] Fresh exact-head workflows after this task-record commit.
-- [ ] Merge PR #54 only after the new exact head is green.
-- [ ] Post-merge `main` production checks.
+- [x] PR #54 merged to `main` as `ff2e6d43ec15af71d5ec9f60e12e908c4f03064c`.
+- [x] Post-merge Node 22 full build/regression suite passed.
+- [x] Post-merge production private-guide privacy smoke passed.
+- [x] Post-merge production affiliate-readiness smoke passed.
 - [ ] Real Android acceptance on deployed code: open an unchanged imported guide and Publish directly with no manual-review error; verify Published/locked/view state; Unpublish & edit; then modify one field and verify Publish is blocked until Save changes.
 
 ## Cleanup / conflicts
 - `control-center-v2.js` remains the sole guide mutation/render runtime.
 - `control-center-network-guard.js` remains authoritative for `expectedUpdatedAt`, timeouts, and stale-write protection.
 - `control-center-lifecycle.js` remains authoritative for dirty-draft protection and confirmed action feedback.
-- `control-center-editor-clarity.js` is presentation/state-copy only. It issues no network requests and creates no alternate persistence path.
+- `control-center-editor-clarity.js` is presentation/state-copy only and issues no network requests.
 - Bulk publishing remains distinct from manual publishing and does not inherit manual-review confirmation.
-- PR #54 changes only the directly affected editor/publish files and regressions plus this task record.
+- PR #54 changed only the directly affected editor/publish files, regressions, and task record.
 
 ## Blockers / risks
-- CI cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device interaction remains the final acceptance gate after deployment.
-- Manual review confirmation is persisted when the owner explicitly presses Publish even if a later attachment/link/etc. gate blocks publication. Those independent gates still block the guide; a later bulk run still re-audits them. This is intentional because review completion and publishability are separate facts.
-- Duplicate Vercel build-rate-limit statuses are not the active deployment runtime; Cloudflare Pages remains authoritative.
+- CI cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device interaction remains the final acceptance gate.
+- Manual review completion and publishability are separate facts: pressing manual Publish records that review occurred, while attachment/link/integrity/expiration checks can still independently block publication.
 
 ## Backlog
 - Full SniperPlug head-to-toe information architecture, navigation, mobile layout, action hierarchy, terminology, status/notification, accessibility, loading/empty/error-state, and efficiency overhaul.
@@ -98,4 +75,4 @@ The screenshots also showed two persistent warning boxes competing for attention
 - Paid subscriber authentication/billing onboarding until a real subscriber identity binds to the tenant-scoped `principalId` model.
 
 ## Next step
-Require the fresh PR #54 exact head to pass all repository workflows, inspect the final diff/review state, merge to `main`, require post-merge production validation, then perform the short real-tablet acceptance sequence. Only after that passes can this task be closed and the whole-site overhaul become active.
+Run the short production tablet acceptance sequence on the deployed PR #54 behavior. If it passes without duplicate/stale state, close this active task and begin the queued whole-site UX overhaul.
