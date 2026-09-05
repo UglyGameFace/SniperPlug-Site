@@ -88,7 +88,6 @@ const shellCss = read('assets/css/site-shell.css');
 for (const requirement of [
   /\.brand-mark\{[^}]*sniperplug-logo-exact\.png/s,
   /center\/contain no-repeat!important/,
-  /object-fit:contain!important/,
   /aspect-ratio:1\/1/,
   /body\{min-height:100vh;display:flex;flex-direction:column\}/,
   /main\{flex:1;width:100%\}/,
@@ -99,6 +98,7 @@ for (const requirement of [
 ]) {
   assert.match(shellCss, requirement, `Global visual shell is missing ${requirement}.`);
 }
+assert.doesNotMatch(shellCss, /\.brand-mark img/, 'Global shell still contains dead styling for the removed runtime logo image.');
 
 const marketingCss = read('assets/css/homepage.css');
 for (const requirement of [
@@ -156,4 +156,4 @@ console.log(`✓ ${staticShellPages.length} static routes use the same header, f
 console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
 console.log('✓ Ordered base, global shell, and page-specific layers cannot override one another accidentally.');
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
-console.log('✓ Exact approved PNG bytes, proportional rendering, and revalidation headers are enforced.');
+console.log('✓ Exact approved PNG bytes, CSS-only proportional rendering, and revalidation headers are enforced.');
