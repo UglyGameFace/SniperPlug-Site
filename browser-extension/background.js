@@ -6,8 +6,7 @@ const AUTO_KEY = 'sniperplugAutoTabs';
 const PENDING_KEY = 'sniperplugPendingCaptures';
 const MAX_QUEUE = 25;
 const CANDIDATE_TTL_MS = 10 * 60_000;
-const EXPERIENCE_LINK_WINDOW_MS = 15_000;
-const APP_FRAME_SETTLE_MS = 1500;
+const APP_FRAME_SETTLE_MS = 4000;
 const APP_FRAME_POLL_MS = 100;
 const WHOP_TAB_PATTERNS = [
   'https://whop.com/*',
@@ -77,40 +76,41 @@ function pruneCandidates(candidates, now = Date.now()) {
   return candidates;
 }
 
-function recentExperienceForTab(candidates, tabId, now = Date.now()) {
-  return Object.values(candidates)
-    .filter((candidate) => candidate?.tabId === tabId
-      && candidate.experienceId
-      && now - Number(candidate.seenAt || 0) <= EXPERIENCE_LINK_WINDOW_MS)
-    .sort((left, right) => Number(right.seenAt || 0) - Number(left.seenAt || 0))[0]?.experienceId || '';
+async function removeCandidate(tabId, frameId) {
+  const candidates = await readState(CANDIDATE_KEY, {});
+  const key = candidateKey(tabId, frameId);
+  if (Object.prototype.hasOwnProperty.call(candidates, key)) {
+    delete candidates[key];
+    await writeState(CANDIDATE_KEY, candidates);
+  }
 }
 
-function linkExperienceAcrossFrames(candidates, tabId, experienceId, now = Date.now()) {
-  if (!experienceId) return;
-  for (const candidate of Object.values(candidates)) {
-    if (candidate?.tabId !== tabId || candidate.experienceId) continue;
-    if (now - Number(candidate.seenAt || 0) > EXPERIENCE_LINK_WINDOW_MS) continue;
-    candidate.experienceId = experienceId;
+async function clearCandidatesForTab(tabId) {
+  const candidates = await readState(CANDIDATE_KEY, {});
+  let changed = false;
+  for (const key of Object.keys(candidates)) {
+    if (key.startsWith(`${tabId}:`)) {
+      delete candidates[key];
+      changed = true;
+    }
   }
+  if (changed) await writeState(CANDIDATE_KEY, candidates);
 }
 
 async function saveCandidate(sender, candidate) {
   const tabId = Number(sender?.tab?.id);
   const frameId = Number(sender?.frameId ?? 0);
-  if (!Number.isInteger(tabId)) return;
+  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return;
   if (candidate?.likelyAppFrame !== true || !isWhopAppHost(candidate?.host)) return;
 
   const candidates = pruneCandidates(await readState(CANDIDATE_KEY, {}));
   const now = Date.now();
   const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);
-  const experienceId = tabExperienceId
-    || String(candidate?.experienceId || '')
-    || recentExperienceForTab(candidates, tabId, now);
   const normalized = {
     tabId,
     frameId,
     seenAt: now,
-    experienceId,
+    experienceId: tabExperienceId || String(candidate?.experienceId || ''),
     title: String(candidate?.title || ''),
     pageUrl: String(candidate?.pageUrl || ''),
     textLength: Math.max(0, Number(candidate?.textLength || 0)),
@@ -119,7 +119,6 @@ async function saveCandidate(sender, candidate) {
   };
 
   candidates[candidateKey(tabId, frameId)] = normalized;
-  if (normalized.experienceId) linkExperienceAcrossFrames(candidates, tabId, normalized.experienceId, now);
   await writeState(CANDIDATE_KEY, candidates);
 
   const autoTabs = await readState(AUTO_KEY, {});
@@ -153,23 +152,36 @@ async function bestCandidateAcrossTabs(preferredTabId = null) {
   return { candidate: best, usingRecentTab: Boolean(best && best.tabId !== preferredTabId) };
 }
 
-async function clearCandidatesForTab(tabId) {
-  const candidates = await readState(CANDIDATE_KEY, {});
-  let changed = false;
-  for (const key of Object.keys(candidates)) {
-    if (key.startsWith(`${tabId}:`)) {
-      delete candidates[key];
-      changed = true;
-    }
-  }
-  if (changed) await writeState(CANDIDATE_KEY, candidates);
-}
-
 async function whopTabs() {
   try {
     return await chrome.tabs.query({ url: WHOP_TAB_PATTERNS });
   } catch {
     return [];
+  }
+}
+
+async function appFrameIds(tabId) {
+  if (!Number.isInteger(tabId) || !chrome.webNavigation?.getAllFrames) return [];
+  try {
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    return (Array.isArray(frames) ? frames : [])
+      .filter((frame) => Number.isInteger(frame?.frameId) && safeAppFrameUrl(frame?.url))
+      .map((frame) => frame.frameId);
+  } catch {
+    return [];
+  }
+}
+
+async function injectCaptureIntoFrame(tabId, frameId) {
+  if (!Number.isInteger(tabId) || !Number.isInteger(frameId) || !chrome.scripting?.executeScript) return false;
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      files: ['content-capture.js'],
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -196,6 +208,45 @@ async function waitForAppCandidate(tabId, timeoutMs = APP_FRAME_SETTLE_MS) {
   return null;
 }
 
+async function verifyCandidate(candidate) {
+  if (!isCaptureCandidate(candidate)) return null;
+  try {
+    const response = await chrome.tabs.sendMessage(
+      candidate.tabId,
+      { type: 'sniperplug:probe-now' },
+      { frameId: candidate.frameId },
+    );
+    if (!response?.ok) throw new Error(response?.error || 'probe failed');
+    await wait(40);
+    const refreshed = await bestCandidate(candidate.tabId);
+    return refreshed && refreshed.frameId === candidate.frameId ? refreshed : refreshed || candidate;
+  } catch {
+    await removeCandidate(candidate.tabId, candidate.frameId);
+    return null;
+  }
+}
+
+async function recoverCandidateInTab(tab) {
+  if (!Number.isInteger(tab?.id)) return null;
+
+  const existing = await bestCandidate(tab.id);
+  if (existing) {
+    const verified = await verifyCandidate(existing);
+    if (verified) return verified;
+  }
+
+  const frameIds = await appFrameIds(tab.id);
+  if (frameIds.length) {
+    for (const frameId of frameIds) await injectCaptureIntoFrame(tab.id, frameId);
+    const targeted = await waitForAppCandidate(tab.id);
+    if (targeted) return targeted;
+  }
+
+  const injected = await injectCaptureIntoTab(tab.id);
+  if (!injected) return null;
+  return waitForAppCandidate(tab.id);
+}
+
 async function recoverCandidateAcrossWhopTabs(openTabs = null, preferredTabId = null) {
   const tabs = Array.isArray(openTabs) ? openTabs : await whopTabs();
   const ordered = [...tabs]
@@ -207,16 +258,24 @@ async function recoverCandidateAcrossWhopTabs(openTabs = null, preferredTabId = 
     });
 
   for (const tab of ordered.slice(0, 4)) {
-    await clearCandidatesForTab(tab.id);
-    const injected = await injectCaptureIntoTab(tab.id);
-    if (!injected) continue;
-    const candidate = await waitForAppCandidate(tab.id);
+    const candidate = await recoverCandidateInTab(tab);
     if (candidate) return candidate;
   }
   return null;
 }
 
 async function resolveCandidate(preferredTabId = null, openTabs = null) {
+  const cached = await bestCandidateAcrossTabs(preferredTabId);
+  if (cached.candidate) {
+    const verified = await verifyCandidate(cached.candidate);
+    if (verified) {
+      return {
+        candidate: verified,
+        usingRecentTab: Boolean(Number.isInteger(preferredTabId) && verified.tabId !== preferredTabId),
+      };
+    }
+  }
+
   const recovered = await recoverCandidateAcrossWhopTabs(openTabs, preferredTabId);
   if (recovered) {
     return {
@@ -224,7 +283,7 @@ async function resolveCandidate(preferredTabId = null, openTabs = null) {
       usingRecentTab: Boolean(Number.isInteger(preferredTabId) && recovered.tabId !== preferredTabId),
     };
   }
-  return bestCandidateAcrossTabs(preferredTabId);
+  return { candidate: null, usingRecentTab: false };
 }
 
 function captureIdentity(capture) {
@@ -440,13 +499,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   Promise.all([
-    readState(CANDIDATE_KEY, {}).then((candidates) => {
-      for (const key of Object.keys(candidates)) if (key.startsWith(`${tabId}:`)) delete candidates[key];
-      return writeState(CANDIDATE_KEY, candidates);
-    }),
+    clearCandidatesForTab(tabId),
     readState(AUTO_KEY, {}).then((autoTabs) => {
       delete autoTabs[String(tabId)];
       return writeState(AUTO_KEY, autoTabs);
     }),
   ]).catch(() => null);
 });
+
+if (chrome.webNavigation?.onCommitted?.addListener) {
+  chrome.webNavigation.onCommitted.addListener((details) => {
+    const tabId = Number(details?.tabId);
+    const frameId = Number(details?.frameId);
+    if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return;
+    if (frameId === 0) clearCandidatesForTab(tabId).catch(() => null);
+    else removeCandidate(tabId, frameId).catch(() => null);
+  });
+}
