@@ -22,10 +22,11 @@ The task is not complete until both conditions hold:
 - PR #41 merged: Firefox Android package support.
 - PR #45 merged: v0.1.4 all-frame recovery for already-open Whop tabs.
 - PR #46 merged: browser capture materializes/verifies its `whop_posts` FK row before the guide draft write.
-- PR #47 merged at `2da4e0d3667f45cbafd69975967e76fdad66b199`: browser-session identity is separate from stable account principal and Whop connection lifecycle is principal-scoped. Post-merge verification passed.
-- PR #48 is open from `fix/whop-tenant-workspace`: tenant-isolates the complete importer workspace.
-- Implementation head `67e663a315df5e1934a1d1646c87d6ea2242f5ef` passed **Verify SniperPlug #986**, affiliate preview #86, and retired-route #82.
-- Current stage: task record/final-head validation, then clean PR review/merge and post-merge production validation.
+- PR #47 merged at `2da4e0d3667f45cbafd69975967e76fdad66b199`: browser-session identity is separate from stable account principal and Whop connection lifecycle is principal-scoped.
+- PR #48 merged at `78171001834444181eabf90c23d11325d8f0447a`: complete importer workspace is tenant-isolated by stable SniperPlug principal.
+- PR #48 exact final head `29c08696e1f594c408c7ab602c4bc04c2007f1bd` passed **Verify SniperPlug #987**, affiliate preview #87, and retired-route #83 before merge.
+- Post-merge `main` passed **Verify SniperPlug #988**, production guide privacy #68, affiliate production #64, and retired-route #84.
+- Current stage: production live validation of the existing Firefox Android v0.1.4 Better Content capture. No extension reinstall is required for PR #48.
 
 ## Confirmed subscription root causes
 1. Existing owner data used upstream Whop `experience_id` and content `source_key` directly as global D1 primary/unique keys.
@@ -34,7 +35,7 @@ The task is not complete until both conditions hold:
 4. Numerous old source/post/guide/recovery/backup queries selected by upstream ID or numeric guide ID without an explicit principal predicate.
 5. Backup rows stored an owner field, but old snapshot/reset/restore SQL operated on the importer globally.
 6. Public guide publishing/search must remain an owner workspace, not become implicitly available to subscription tenants.
-7. Bulk-job reset still used the per-browser `sid` after the worker moved to stable principal ownership; this would have prevented the same subscriber on another device from stopping/clearing their own job. PR #48 now uses the same stable principal on both paths.
+7. Bulk-job reset still used the per-browser `sid` after the worker moved to stable principal ownership; PR #48 fixed Stop/Clear to use the same stable principal as the worker.
 
 ## Tenant storage model
 `browser login → stable SniperPlug principal → principal-scoped Whop OAuth connection → principal-scoped importer workspace`
@@ -46,7 +47,7 @@ Logical upstream identity and physical D1 identity are separate:
 
 Existing owner rows retain their original physical keys for backward compatibility. Non-owner principals receive deterministic hashed physical source/post keys. Subscriber A and Subscriber B can therefore import the same upstream Whop source/item without sharing a row, FK, lease, draft, backup, or slug.
 
-## Implemented changes on PR #48
+## Implemented changes
 ### Schema / identity
 - Added runtime idempotent tenant schema repair in `functions/_lib/importer-workspace.js`.
 - Added `migrations/0007_importer_tenant_workspace.sql`.
@@ -64,7 +65,7 @@ Existing owner rows retain their original physical keys for backward compatibili
 - Imported guide lookup/duplicate detection/update is restricted to the current principal.
 - Physical post key is used for FK integrity and slug entropy; logical upstream key remains visible to importer/client behavior.
 - Better Content capture applies the same principal/logical/physical split and protects reviewed/published/removed work only inside that tenant.
-- Existing Firefox Android v0.1.4 DOM capture regression remains green; PR #48 does not require a new extension package for the server-side tenant changes.
+- Existing Firefox Android v0.1.4 DOM capture regression remains green; server-side tenant changes do not require a new extension package.
 
 ### Private guides / media / rollback
 - Admin guide lists/details/saves/status updates require principal ownership.
@@ -90,20 +91,21 @@ Existing owner rows retain their original physical keys for backward compatibili
 ## Validation
 - [x] PR #47 connection isolation regression and post-merge build passed.
 - [x] Same-principal multi-device Whop connection model preserved.
-- [x] `test-whop-tenant-workspace.mjs` added to mandatory audit chain.
+- [x] `test-whop-tenant-workspace.mjs` is in the mandatory audit chain.
 - [x] Runtime key regression checks owner compatibility, deterministic same-tenant keys, and distinct keys for two tenants importing identical upstream data.
 - [x] Static tenant regression covers source/post/guide/discovery/capture/bulk/history/publish/backup/recovery/safe-save boundaries.
-- [x] Legacy audits were updated only where exact strings encoded superseded single-owner behavior; behavioral checks now enforce the stronger principal-scoped contracts.
+- [x] Legacy audits were updated only where exact strings encoded superseded single-owner behavior; behavioral checks enforce stronger principal-scoped contracts.
 - [x] CI exposed and PR #48 fixed the real bulk Stop/Clear browser-`sid` mismatch.
-- [x] Implementation head `67e663a315df5e1934a1d1646c87d6ea2242f5ef` passed the complete Node 22 build/regression suite including Firefox Android packaging.
-- [ ] Exact final-head CI green after this task-record commit.
-- [ ] Branch compare clean/current with main and PR review/comments clean.
-- [ ] Merge PR #48 and verify post-merge main workflows.
+- [x] Exact PR #48 final-head CI green.
+- [x] Branch was current with `main`, mergeable, and had no inline review threads.
+- [x] PR #48 merged to `main` at `78171001834444181eabf90c23d11325d8f0447a`.
+- [x] All four post-merge production workflows passed on the merge SHA.
 - [ ] Use preserved Firefox v0.1.4 queue and press **Retry capture**; one Make Money Here page must become a private draft.
+- [ ] If the queue no longer exists, capture one individual Make Money Here page again with v0.1.4 and send it to SniperPlug.
 - [ ] Validate multi-page auto-capture only after one-page live success.
 
 ## Cleanup / conflicts
-- Removed stray `SHOULD_NOT_EXIST.tmp` from the branch before PR validation.
+- Removed stray `SHOULD_NOT_EXIST.tmp` before PR #48 merge.
 - No destructive table rebuild.
 - No global account cleanup added.
 - No subscriber public publishing.
@@ -111,11 +113,11 @@ Existing owner rows retain their original physical keys for backward compatibili
 - Existing owner data and physical keys remain intact.
 
 ## Remaining blockers / risks
-- CI cannot execute against the owner’s private production Better Content page, so the final browser-capture proof remains the preserved live queue retry after deployment.
+- CI cannot execute against the owner’s private production Better Content page, so the final browser-capture proof is a real mobile production retry/capture.
 - PR #48 establishes the tenant data boundary. Actual paid subscriber authentication/billing onboarding is **not** implemented by this PR; a real subscriber account identity must bind to `principalId` before customer subscriptions are enabled.
 - The current owner-password login remains owner access, not the future subscriber identity system.
-- Subscription accounts must remain disabled until PR #48 is merged green and real subscriber authentication is attached to the principal contract.
-- The user’s broader Control Center/site UX redesign feedback remains backlog and is intentionally not mixed into this importer correctness/security PR.
+- Subscription accounts must remain disabled until real subscriber authentication is attached to the principal contract.
+- The user’s broader Control Center/site UX redesign feedback remains backlog and is intentionally not mixed into importer correctness/security work.
 
 ## Next step
-Run the full Node 22 suite on the exact final task-record SHA, inspect PR #48 diff/review/current-with-main state, merge only if all are clean, then verify post-merge main. After production deployment, retry the preserved Make Money Here capture for the live end-to-end gate.
+On Firefox Android v0.1.4, retry the preserved Make Money Here capture if it is still queued. If not, open one individual **Hidden Files → Make Money Here** Better Content page, capture it once, and send it to SniperPlug. The required success state is a private draft in the current account workspace; any production error continues this same task at the exact failing server step.
