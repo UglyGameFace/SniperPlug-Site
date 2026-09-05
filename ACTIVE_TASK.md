@@ -13,12 +13,17 @@ Implement issue #25: make authorized Whop app-specific experiences, especially C
 ## Starting state / root cause
 - Starting `main`: `23d1b6dbc9c21ac78b1a96a94f3b1efd02716475` after PR #58 passed post-merge Node 22, production visual/affiliate, guide-privacy, and retired-route checks.
 - Working branch: `feature/whop-authorized-app-readers`.
+- PR #59: **Add authorized Whop app-specific readers**.
 - Issue #25 is open: **Read authorized Whop Content / Better Content experiences**.
-- Discovery already confirms membership and preserves external app modules, but native reader resolution only returns `forum`, `course`, `chat`, or `unsupported`.
-- `whop-app-reader.js` already resolves exact public app metadata by stable app ID and safely exposes app origin, experience path, OpenAPI path, and Skills path when Whop publishes them.
-- Better Content already has a real, tested browser-capture reader restricted to exact app ID `app_zv9yxan92U9fNy`; the real Android path has successfully produced private SniperPlug drafts.
-- The current discovery UI can say a custom app advertises OpenAPI/Skills, but it has no canonical reader descriptor and cannot distinguish a working app-specific reader from a documented contract that still lacks a SniperPlug adapter.
-- The browser-capture server and messages are hard-coded to Better Content, preventing the same safe rendered-app reader from being selected for another verified Content-family app even when Whop metadata confirms the exact app and frame origin.
+- Discovery confirmed membership and preserved external app modules, but native reader resolution only classified Forum, Course, Chat, or unsupported.
+- Public Whop app metadata could expose origin, Experience path, OpenAPI path, and Skills path, but there was no canonical app-specific reader decision shared with discovery and capture authorization.
+- Better Content already had a real Android-proven rendered browser-capture path, but server authorization was hard-coded to its app ID and discovery still described all app-specific modules as reader-unavailable.
+
+## Important compatibility finding
+- Whop can render a valid Better Content Experience under an instance-specific hostname such as `mfk8y74zmein6tne8o5e.apps.whop.com` while public app metadata advertises an origin such as `better-content.apps.whop.com`.
+- Therefore metadata-host equality is not a valid identity check and would break the real Android path.
+- The safe boundary is now: capture must remain in HTTPS `*.apps.whop.com`; if the rendered URL exposes an `exp_...` identity it must equal the selected Experience; the server independently re-fetches the exact Experience, verifies the canonical supported reader/app identity, verifies current membership, and preserves tenant-scoped source approval before writing a private draft.
+- Opaque Whop app routes that do not expose an `exp_...` segment remain compatible because the server-side Experience/app/membership verification is still authoritative.
 
 ## Branch-governance backlog result
 - `GET /repos/UglyGameFace/SniperPlug-Site/branches/main/protection` returned 403 `Resource not accessible by integration` through the active GitHub App.
@@ -26,15 +31,25 @@ Implement issue #25: make authorized Whop app-specific experiences, especially C
 - The connector exposes no administration write for branch protection/rulesets, so required-check governance is blocked by connector administration capability rather than silently skipped or fabricated.
 
 ## Definition of Done
-- [ ] Add one canonical app-reader descriptor to `whop-app-reader.js` instead of a parallel reader registry elsewhere.
-- [ ] Keep exact Better Content app ID as an explicitly supported rendered-app reader.
-- [ ] Permit other Content-family rendered-app readers only when Whop resolves the exact stable app ID, marks the app verified, exposes a safe HTTPS `*.apps.whop.com` origin, and the app name matches the supported family.
-- [ ] Bind browser-capture authorization to the resolved app metadata and captured frame host, not merely any `*.apps.whop.com` frame.
-- [ ] Discovery must clearly distinguish `access confirmed · reader available`, `access confirmed · documented contract advertised but adapter unavailable`, and `access confirmed · reader unavailable` from actual access denial.
-- [ ] Preserve explicit unsupported behavior when no authorized readable interface exists.
-- [ ] Do not auto-execute arbitrary OpenAPI/Skills operations. Their presence is capability evidence only until a concrete adapter can normalize them safely.
-- [ ] Add targeted tests for exact Better Content selection, verified Content-family selection, spoof/unverified rejection, frame-origin binding, metadata failure, and unsupported fallback.
-- [ ] Run exact-head full Node 22 plus applicable Cloudflare checks, inspect final diff/reviews, merge, then require post-merge production validation.
+- [x] Added one canonical app-reader descriptor in `whop-app-reader.js` instead of a parallel reader registry elsewhere.
+- [x] Kept exact Better Content app ID `app_zv9yxan92U9fNy` as an explicitly supported rendered-app reader even when its public metadata lookup is temporarily unavailable.
+- [x] Other Content-family rendered readers require exact stable app ID resolution, Whop verification, a safe HTTPS `*.apps.whop.com` metadata origin, and a supported Content-family app name.
+- [x] Browser capture remains inside HTTPS Whop app frames; a different declared `exp_...` identity is rejected while real instance-specific Whop hosts remain valid.
+- [x] Server capture authorization independently re-fetches the exact Experience, resolves the canonical reader/app identity, checks current membership, and preserves tenant-scoped source approval.
+- [x] Discovery clearly distinguishes `Access confirmed · reader available`, documented OpenAPI/Skills contract advertised without an adapter, and `Access confirmed · reader unavailable` from access denial.
+- [x] Explicit unsupported behavior remains when no authorized readable interface exists.
+- [x] OpenAPI/Skills metadata is capability evidence only; arbitrary documented operations are not auto-executed or guessed.
+- [x] Targeted regressions cover exact Better Content selection, verified Content-family selection, lookalike/unverified rejection, randomized Whop frame hosts, cross-Experience rejection when the URL declares an Experience, metadata failure, documented-contract-only state, and unsupported fallback.
+- [x] Exact code head `fe68ea3854db0dda47373194f0e090cb98febad5` passed **Verify SniperPlug #1045**, including the full Node 22 audit/build suite and Firefox Android extension packaging/upload.
+- [x] PR #59 is mergeable and currently has no inline review threads.
+- [ ] Fresh exact-head validation after this task-record-only commit.
+- [ ] Merge PR #59 only if that final head remains green and review state stays clean.
+- [ ] Require post-merge Node 22 plus applicable Cloudflare production visual/affiliate, private-guide privacy, and retired-route checks before closing issue #25.
+
+## Validation notes
+- The first PR run exposed a stale legacy regression that expected Better-Content-only error wording. The implementation was kept generic and the compatibility-safe message now contains both the legacy Better Content phrase and the supported generic Whop app-frame meaning.
+- A later test-only assertion expected an outdated phrase after Experience-binding copy was strengthened. The production rule was not weakened; the wording and regression now agree on exact Experience matching.
+- No client-side custom API execution, guessed endpoint path, second importer state machine, or auto-publication path was added.
 
 ## Backlog after this task
 - Paid-subscriber authentication/billing onboarding with tenant-scoped real subscriber identity.
@@ -42,4 +57,4 @@ Implement issue #25: make authorized Whop app-specific experiences, especially C
 - Required branch-check governance remains blocked until repository administration writes are available through the connection or configured outside this integration.
 
 ## Next step
-Extend the existing app metadata helper into the canonical reader selector, wire that selector into discovery and browser-capture authorization, then add focused regressions before changing any other system.
+Require fresh CI on this exact task-record head. If it remains green and the PR diff/review state is clean, merge PR #59, verify the resulting Cloudflare production `main`, close issue #25, and move directly to paid-subscriber authentication/billing onboarding.
