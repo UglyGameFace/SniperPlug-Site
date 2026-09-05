@@ -127,7 +127,7 @@ for (const file of [
   'tools/audit-whop-backups.mjs',
 ]) {
   const syntax = spawnSync(process.execPath, ['--check', join(root, file)], { encoding: 'utf8' });
-  assert.equal(syntax.status, 0, `${file} has invalid JavaScript syntax:\n${result.stderr}`);
+  assert.equal(syntax.status, 0, `${file} has invalid JavaScript syntax:\n${syntax.stderr}`);
 }
 
 console.log('\nSNIPERPLUG WHOP BACKUP / RESET / RESTORE AUDIT PASSED\n');
