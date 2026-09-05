@@ -13,6 +13,11 @@ function exactAppId(value) {
   return /^app_[A-Za-z0-9_-]+$/.test(id) ? id : '';
 }
 
+function exactExperienceId(value) {
+  const id = String(value || '').trim();
+  return /^exp_[A-Za-z0-9_-]+$/.test(id) ? id : '';
+}
+
 function normalizeName(value) {
   return String(value || '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('en-US');
 }
@@ -59,8 +64,29 @@ export function whopAppFrameHost(value) {
   }
 }
 
+export function whopAppFrameExperienceId(value) {
+  if (!whopAppFrameHost(value)) return '';
+  try {
+    const url = new URL(String(value || '').trim());
+    for (const segment of url.pathname.split('/')) {
+      let decoded = segment;
+      try { decoded = decodeURIComponent(segment); } catch { decoded = segment; }
+      const exact = exactExperienceId(decoded);
+      if (exact) return exact;
+    }
+    for (const key of ['experience_id', 'experienceId', 'experience']) {
+      const exact = exactExperienceId(url.searchParams.get(key));
+      if (exact) return exact;
+    }
+  } catch {
+    return '';
+  }
+  return '';
+}
+
 export function resolveWhopAppReader(app, experience = null) {
   const appId = exactAppId(app?.id || experience?.app?.id);
+  const experienceId = exactExperienceId(experience?.id);
   const appName = String(app?.name || experience?.app?.name || 'Whop app').trim() || 'Whop app';
   const normalizedName = normalizeName(appName);
   const metadataResolved = app?.metadataStatus === 'resolved';
@@ -73,6 +99,7 @@ export function resolveWhopAppReader(app, experience = null) {
       status: 'available',
       mode: 'browser-capture',
       appId,
+      experienceId,
       appName,
       origin,
       metadataFrameHost: whopAppFrameHost(origin),
@@ -94,6 +121,7 @@ export function resolveWhopAppReader(app, experience = null) {
       status: 'available',
       mode: 'browser-capture',
       appId,
+      experienceId,
       appName,
       origin: resolvedOrigin,
       metadataFrameHost,
@@ -109,6 +137,7 @@ export function resolveWhopAppReader(app, experience = null) {
       status: 'contract-advertised',
       mode: null,
       appId,
+      experienceId,
       appName,
       documentedInterface: 'openapi',
       contractUrl: safeHttpsUrl(app.openapiUrl),
@@ -123,6 +152,7 @@ export function resolveWhopAppReader(app, experience = null) {
       status: 'contract-advertised',
       mode: null,
       appId,
+      experienceId,
       appName,
       documentedInterface: 'skills',
       contractUrl: safeHttpsUrl(app.skillsUrl),
@@ -136,6 +166,7 @@ export function resolveWhopAppReader(app, experience = null) {
     status: 'unavailable',
     mode: null,
     appId,
+    experienceId,
     appName,
     documentedInterface: null,
     contractUrl: null,
@@ -148,12 +179,16 @@ export function resolveWhopAppReader(app, experience = null) {
 export function browserCaptureMatchesReader(reader, pageUrl) {
   if (reader?.status !== 'available' || reader?.mode !== 'browser-capture') return false;
   if (reader?.framePolicy !== 'whop-app-frame') return false;
-  return Boolean(whopAppFrameHost(pageUrl));
+  if (!whopAppFrameHost(pageUrl)) return false;
+  const expectedExperienceId = exactExperienceId(reader?.experienceId);
+  const renderedExperienceId = whopAppFrameExperienceId(pageUrl);
+  if (expectedExperienceId && renderedExperienceId && renderedExperienceId !== expectedExperienceId) return false;
+  return true;
 }
 
 export function appReaderReason(reader) {
   if (reader?.status === 'available' && reader?.mode === 'browser-capture') {
-    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the rendered-app capture path. Captures must stay inside Whop’s HTTPS app-frame boundary; the server separately re-verifies the exact Experience, membership, and app identity before creating a private draft.`;
+    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the rendered-app capture path. Captures must stay inside Whop’s HTTPS app-frame boundary, and any exp_ identity exposed by the rendered URL must match the selected Experience; the server separately re-verifies membership and app identity before creating a private draft.`;
   }
   if (reader?.status === 'contract-advertised') {
     const interfaceName = reader.documentedInterface === 'skills' ? 'Skills interface' : 'OpenAPI contract';
