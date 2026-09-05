@@ -86,8 +86,9 @@ assert.ok(!switchRoute.includes('beginWhopOAuth') && !switchRoute.includes("prom
 assert.ok(switchRoute.includes("whopUrl: 'https://whop.com/'") && switchRoute.includes("'/api/subscriber/oauth/start'") && switchRoute.includes("'/api/whop/oauth/start'"), 'Account switching does not keep owner and subscriber reconnect paths separate.');
 assert.ok(control.includes('disconnectPrincipalWhop(request, env, admin)'));
 assert.ok(!control.includes('purgeLegacyWhopSessions'), 'Signing into one account can still purge other principals.');
-assert.ok(backupsRoute.includes('disconnectPrincipalWhop(request, env, admin)'));
-assert.ok(!backupsRoute.includes('disconnectWhop(request, env, admin)'), 'Backup reset can still invoke the global legacy disconnect path.');
+assert.ok(backupsRoute.includes('requireControlAccount(context.request, context.env)'));
+assert.ok(backupsRoute.includes('disconnectPrincipalWhop(request, env, account)'));
+assert.ok(!backupsRoute.includes('disconnectWhop(request, env, account)'), 'Backup reset can still invoke the global legacy disconnect path.');
 
 assert.ok(whopConnection.includes('principalIdForSession(accountSession)'));
 assert.ok(whopConnection.includes("DELETE FROM whop_sessions WHERE admin_session_id = ?") && whopConnection.includes('.bind(principalId)'));
