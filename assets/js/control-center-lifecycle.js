@@ -2,6 +2,7 @@
   const root = document.querySelector('[data-control-root]');
   const editor = document.querySelector('[data-draft-editor]');
   const status = document.querySelector('[data-editor-status]');
+  const globalStatus = document.querySelector('[data-global-status]');
   if (!(root instanceof HTMLElement) || !(editor instanceof HTMLFormElement) || !(status instanceof HTMLElement)) return;
 
   const editableNames = ['title', 'description', 'category', 'body', 'featured', 'attachmentsResolved'];
@@ -207,6 +208,23 @@
 
   function confirmDiscard() {
     return !dirty || window.confirm('This guide has unsaved changes. Continue without saving? A local recovery copy will remain available.');
+  }
+
+  function mirrorPendingFailure() {
+    if (!(globalStatus instanceof HTMLElement) || globalStatus.hidden || globalStatus.dataset.type !== 'error' || actionStatus.hidden) return;
+    if (!/^(Publishing|Saving)\b/.test(actionStatus.textContent.trim())) return;
+    const text = globalStatus.textContent.trim();
+    if (text) setActionStatus(text, 'error');
+  }
+
+  if (globalStatus instanceof HTMLElement) {
+    new MutationObserver(mirrorPendingFailure).observe(globalStatus, {
+      attributes: true,
+      attributeFilter: ['hidden', 'data-type'],
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
   }
 
   editor.addEventListener('input', updateDirty);
