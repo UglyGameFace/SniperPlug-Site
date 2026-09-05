@@ -17,8 +17,8 @@ import {
 
 const ADMIN_COOKIE = 'sniperplug_admin';
 export const OWNER_PRINCIPAL_ID = 'sniperplug-owner';
-// Backward-compatible alias for owner-only recovery code. New auth/Whop code must
-// use session.sid for the browser session and session.principalId for account data.
+// Backward-compatible alias. Existing importer code historically called the
+// account principal a "session id"; browserSid now carries the real per-login id.
 export const OWNER_SESSION_ID = OWNER_PRINCIPAL_ID;
 const ADMIN_TTL_SECONDS = 12 * 60 * 60;
 const LOGIN_WINDOW_MS = 10 * 60 * 1000;
@@ -90,8 +90,11 @@ export async function verifyAdminPassword(env, submitted) {
 export async function createAdminSession(env) {
   const session = {
     v: 4,
-    sid: `admin_${randomToken(24)}`,
+    // `sid` remains the stable account/principal storage key for compatibility
+    // with the existing importer. `browserSid` is the actual login-session id.
+    sid: OWNER_PRINCIPAL_ID,
     principalId: OWNER_PRINCIPAL_ID,
+    browserSid: `admin_${randomToken(24)}`,
     kind: 'owner',
     nonce: randomToken(24),
     issuedAt: Date.now(),
@@ -112,17 +115,22 @@ export async function readAdminSession(request, env) {
     const session = JSON.parse(textDecoder.decode(base64urlDecode(payload)));
     if (![1, 2, 3, 4].includes(session?.v) || Number(session.expiresAt) <= Date.now()) return null;
 
-    // Legacy owner cookies collapsed account identity and browser-session identity
-    // into one value. Preserve them until their normal expiry, but normalize them
-    // onto the explicit principal field so all new storage is account-scoped.
+    // Legacy owner cookies collapsed account identity and browser-session identity.
+    // Normalize them onto the explicit principal field until they expire naturally.
     if (session.v <= 3) {
       if (session.v > 1 && (session.sid !== OWNER_PRINCIPAL_ID || session.kind !== 'owner')) return null;
-      return { ...session, sid: OWNER_PRINCIPAL_ID, principalId: OWNER_PRINCIPAL_ID, kind: 'owner' };
+      return {
+        ...session,
+        sid: OWNER_PRINCIPAL_ID,
+        principalId: OWNER_PRINCIPAL_ID,
+        browserSid: `legacy_${String(session.nonce || 'owner')}`,
+        kind: 'owner',
+      };
     }
 
     if (session.kind !== 'owner') return null;
-    if (session.principalId !== OWNER_PRINCIPAL_ID) return null;
-    if (!/^admin_[A-Za-z0-9_-]{16,}$/.test(String(session.sid || ''))) return null;
+    if (session.principalId !== OWNER_PRINCIPAL_ID || session.sid !== session.principalId) return null;
+    if (!/^admin_[A-Za-z0-9_-]{16,}$/.test(String(session.browserSid || ''))) return null;
     return session;
   } catch {
     return null;
