@@ -61,6 +61,7 @@ const safeSaveApi = read('functions/api/guide-save-safe.js');
 const snapshots = read('functions/_lib/guide-snapshots.js');
 const versioning = read('functions/_lib/guide-versioning.js');
 const recoveryLeases = read('functions/_lib/recovery-leases.js');
+const subscriberAuth = read('functions/_lib/subscriber-auth.js');
 
 for (const text of [workspace, migration]) {
   for (const column of ['principal_id', 'upstream_experience_id', 'upstream_source_key']) {
@@ -75,7 +76,8 @@ assert.ok(sourcePolicy.includes('WHERE principal_id = ? AND upstream_experience_
 assert.ok(posts.includes('WHERE principal_id = ? AND upstream_source_key IN'), 'Post decisions are not scoped to the account workspace.');
 assert.ok(posts.includes('postStorageKey(principalId, logicalSourceKey)') && posts.includes('storageSourceKey'), 'Scanned posts do not receive tenant-specific physical keys.');
 assert.ok(discovery.includes('sourceDecision(env, principalValue, experience, experience.id)'), 'Discovery can still read another principal’s saved source decision.');
-assert.ok(discoverApi.includes('discoverWhopSources(session, context.env, admin, memberships)'), 'Discovery API does not carry the authenticated principal into discovery.');
+assert.ok(discoverApi.includes('discoverWhopSources(session, context.env, account, memberships)'), 'Discovery API does not carry the authenticated principal into discovery.');
+assert.ok(discoverApi.includes('requireControlAccount(context.request, context.env)'), 'Discovery does not reverify subscriber entitlement before tenant access.');
 
 assert.ok(guides.includes('WHERE guides.principal_id = ?'), 'Private guide listing/detail is not principal-scoped.');
 assert.ok(guides.includes('principalId !== OWNER_PRINCIPAL_ID'), 'Subscriber guide status changes can still publish to the public site.');
@@ -85,13 +87,15 @@ assert.ok(guideMedia.includes('WHERE principal_id = ? AND upstream_source_key = 
 
 assert.ok(browserCapture.includes('postStorageKey(principalId, sourceKey)'), 'Better Content capture does not tenantize its D1 source/guide foreign key.');
 assert.ok(browserCapture.includes('WHERE principal_id = ? AND upstream_source_key = ?'), 'Better Content capture can still read another tenant’s guide.');
-assert.ok(browserCaptureApi.includes('importBrowserCaptures(context.env, admin, whop, body)'), 'Browser-capture API drops the authenticated principal.');
+assert.ok(browserCaptureApi.includes('importBrowserCaptures(context.env, account, whop, body)'), 'Browser-capture API drops the authenticated principal.');
+assert.ok(browserCaptureApi.includes('requireControlAccount(context.request, context.env)'), 'Browser capture does not reverify subscriber access.');
 assert.ok(control.includes('listAdminGuideSummaries(env, admin)'), 'Control Center dashboard can still list a global guide workspace.');
 assert.ok(control.includes('scanApprovedSource(env, admin, whop, experience)'), 'Control Center scanning drops the account principal.');
 assert.ok(control.includes('importApprovedPosts(env, admin, whop, body)'), 'Control Center importing drops the account principal.');
+assert.ok(control.includes('requireControlAccount(context.request, context.env)'), 'Control Center protected actions do not reverify subscriber entitlement.');
 
 assert.ok(publish.includes('principalId !== OWNER_PRINCIPAL_ID'), 'Public publisher is not owner-only.');
-assert.ok(publicSearch.includes("guides.principal_id = ?"), 'Public guide search does not restrict results to the owner publishing workspace.');
+assert.ok(publicSearch.includes('guides.principal_id = ?'), 'Public guide search does not restrict results to the owner publishing workspace.');
 assert.ok(bulk.includes('const JOB_VERSION = 5'), 'Unsafe pre-tenant bulk jobs are not version-invalidated.');
 assert.ok(bulk.includes('principalId === OWNER_PRINCIPAL_ID'), 'Subscriber bulk jobs can still reach the public publisher.');
 assert.ok(recent.includes('WHERE principal_id = ?'), 'Recent actions or undo can address another tenant’s guide workspace.');
@@ -99,15 +103,18 @@ assert.ok(recent.includes('WHERE principal_id = ?'), 'Recent actions or undo can
 assert.ok(backups.includes('WHERE backup_id = ? AND owner_session_id = ?'), 'Backup lookup is not account-scoped.');
 assert.ok(backups.includes('This backup belongs to a different SniperPlug account'), 'Cross-account backup restore does not fail closed.');
 assert.ok(backups.includes('WHERE principal_id = ? AND source_experience_id IS NOT NULL'), 'Backup snapshot/reset can still sweep guides globally.');
-assert.ok(backupApi.includes('listWhopImportBackups(env, admin)'), 'Backup API does not list only the authenticated principal’s backups.');
-assert.ok(backupApi.includes('restoreWhopImportBackup(env, admin, id, body)'), 'Backup restore API drops the principal.');
+assert.ok(backupApi.includes('listWhopImportBackups(env, account)'), 'Backup API does not list only the authenticated principal’s backups.');
+assert.ok(backupApi.includes('restoreWhopImportBackup(env, account, id, body)'), 'Backup restore API drops the principal.');
+assert.ok(backupApi.includes('requireControlAccount(context.request, context.env)'), 'Backup API does not reverify subscriber entitlement.');
 
 for (const text of [recovery, mediaRepair, safeSave, snapshots, versioning, recoveryLeases]) {
   assert.ok(text.includes('principal_id'), 'A guide recovery/save/version path still lacks explicit tenant ownership checks.');
 }
-assert.ok(safeSaveApi.includes('const admin = await requireAdmin') && safeSaveApi.includes('saveGuideDraft(context.env, admin, id, body)'), 'Safe guide save does not pass the authenticated principal.');
+assert.ok(safeSaveApi.includes('const account = await requireControlAccount') && safeSaveApi.includes('saveGuideDraft(context.env, account, id, body)'), 'Safe guide save does not pass the authenticated account principal.');
+assert.ok(recovery.includes('const account = await requireControlAccount') && mediaRepair.includes('const account = await requireControlAccount'), 'Recovery routes are not entitlement-gated by subscriber account.');
+assert.ok(subscriberAuth.includes('subscriberPrincipalIdForUser(whopUserId) !== account.principalId'), 'Subscriber access can drift from its stable Whop identity.');
 
 console.log('\nWHOP TENANT WORKSPACE REGRESSION PASSED\n');
 console.log('✓ Same subscriber + same upstream data maps deterministically; different subscribers get different physical keys.');
 console.log('✓ Source, post, guide, browser-capture, bulk, history, backup, rollback, and recovery paths carry an explicit principal boundary.');
-console.log('✓ Subscriber workspaces remain private while public guide publishing/search stays owner-only.');
+console.log('✓ Entitled subscriber routes reverify access while public guide publishing/search stays owner-only.');
