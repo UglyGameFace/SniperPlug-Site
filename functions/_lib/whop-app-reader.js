@@ -188,7 +188,7 @@ export function browserCaptureMatchesReader(reader, pageUrl) {
 
 export function appReaderReason(reader) {
   if (reader?.status === 'available' && reader?.mode === 'browser-capture') {
-    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the rendered-app capture path. Captures must stay inside Whop’s HTTPS app-frame boundary, and any exp_ identity exposed by the rendered URL must match the selected Experience; the server separately re-verifies membership and app identity before creating a private draft.`;
+    return `Access confirmed · reader available. SniperPlug supports this exact ${reader.appName || 'Whop app'} module through the rendered-app capture path. Captures must stay inside Whop’s HTTPS app-frame boundary, and any exp_ identity exposed by the rendered URL must match the exact Experience selected in SniperPlug; the server separately re-verifies membership and app identity before creating a private draft.`;
   }
   if (reader?.status === 'contract-advertised') {
     const interfaceName = reader.documentedInterface === 'skills' ? 'Skills interface' : 'OpenAPI contract';
