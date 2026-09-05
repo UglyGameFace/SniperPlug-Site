@@ -3,3 +3,4 @@ SNIPERPLUG_SESSION_SECRET=replace-with-a-different-high-entropy-secret
 WHOP_TOKEN_SECRET=replace-with-a-third-high-entropy-secret
 WHOP_CLIENT_ID=app_xxxxxxxxxxxxx
 WHOP_REDIRECT_URI=http://localhost:8788/api/whop/oauth/callback
+WHOP_IMPORTER_PRODUCT_ID=prod_xxxxxxxxxxxxx
