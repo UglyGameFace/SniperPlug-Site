@@ -52,7 +52,22 @@ function clientSourceState(saved, experience, logicalExperienceId) {
   };
 }
 
+function legacyDiscoveryRead(principalValue, experience, requestedId) {
+  return principalValue && typeof principalValue === 'object'
+    && typeof experience === 'string'
+    && requestedId === undefined
+    && /^exp_[A-Za-z0-9_-]+$/.test(experience);
+}
+
 export async function sourceDecision(env, principalValue, experience, requestedId) {
+  // discovery.js historically called sourceDecision(env, experience, id) without
+  // an authenticated principal. Never default that read to the owner tenant. It
+  // returns pending only; /api/discover hydrates real saved decisions afterward
+  // with the authenticated principal.
+  if (legacyDiscoveryRead(principalValue, experience, requestedId)) {
+    return clientSourceState(null, principalValue, experience);
+  }
+
   const principalId = principalIdFrom(principalValue);
   const db = await ensureImporterWorkspaceSchema(env);
   const logicalExperienceId = experienceIdFrom(requestedId || experience?.id);
@@ -102,7 +117,7 @@ export async function saveSourceDecisions(env, principalValue, entries, decision
 
   const now = new Date().toISOString();
   const statements = [];
-  for (const { experience, state } of prepared) {
+  for (const { experience: itemExperience, state } of prepared) {
     const storageId = await sourceStorageId(principalId, state.experienceId);
     statements.push(db.prepare(`
       INSERT INTO whop_sources (
@@ -122,10 +137,10 @@ export async function saveSourceDecisions(env, principalValue, entries, decision
       storageId,
       principalId,
       state.experienceId,
-      experienceLabel(experience),
-      String(experience?.company?.id || '') || null,
-      String(experience?.company?.title || experience?.company?.name || '') || null,
-      String(experience?.name || '') || null,
+      experienceLabel(itemExperience),
+      String(itemExperience?.company?.id || '') || null,
+      String(itemExperience?.company?.title || itemExperience?.company?.name || '') || null,
+      String(itemExperience?.name || '') || null,
       decision,
       state.defaultGroup,
       now,
