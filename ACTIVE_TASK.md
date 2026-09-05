@@ -14,9 +14,10 @@ Finish the Whop importer and Better Content guide review/publish lifecycle on Fi
 - PR #52 merged: local publish feedback, dirty-save gate, published locking, Published-filter retention.
 - PR #53 merged: D1/SQLite capture → save → publish → view → unpublish → republish regression.
 - PR #54 merged as `ff2e6d43ec15af71d5ec9f60e12e908c4f03064c`: manual Publish is explicit review for unchanged imported guides and the tablet editor was simplified.
-- PR #54 exact-head and post-merge Node 22, private-guide privacy, and affiliate-production checks passed.
-- Real tablet acceptance after PR #54 found **Unpublish & edit broken**. This is a genuine client execution-path conflict that existing server roundtrip tests did not exercise through the browser event stack.
-- PR #55 is active on `fix/unpublish-lifecycle`.
+- Real tablet acceptance after PR #54 found **Unpublish & edit broken**. Existing server roundtrip tests did not exercise the competing browser event handlers.
+- PR #55 merged to `main` as `c9c26fcfb65755ff5543e4971fabfb1eedc6e98b` after exact-head full validation passed.
+- PR #55 post-merge full Node 22 build/regression, production private-guide privacy, and production affiliate/visual-route checks all passed.
+- The remaining Definition-of-Done gate is the real Android interaction sequence on the deployed code.
 
 ## Findings / root cause
 The server implementation was not the failing part. `guide-status` already supports `draft`, reserves the exact guide version, persists `published_at = NULL`, reads back the authoritative guide, and is covered by the publish/unpublish/republish server roundtrip.
@@ -24,36 +25,36 @@ The server implementation was not the failing part. `guide-status` already suppo
 The browser had **two competing implementations of the same Unpublish action**:
 
 1. `control-center-v2.js` is the canonical guide mutation/render runtime. Its `returnDraft` path posts `guide-status: draft`, then updates the guide cache and calls `renderGuideEditor(output.guide, 'status')` so the editor unlocks in place.
-2. `control-center-integrity-fix.js` contained an older capture-phase `[data-return-draft]` click listener. It called `preventDefault()` + `stopImmediatePropagation()`, manually fetched `guide-detail`, manually posted `guide-status: draft`, then forced `window.location.replace(...?guide=<id>&fresh=<timestamp>)`.
+2. `control-center-integrity-fix.js` contained an older capture-phase `[data-return-draft]` listener. It called `preventDefault()` + `stopImmediatePropagation()`, manually fetched `guide-detail`, manually posted `guide-status: draft`, then forced `window.location.replace(...?guide=<id>&fresh=<timestamp>)`.
 
-Because the legacy listener ran during capture, it prevented the canonical root click handler from receiving the event. The forced reload was also internally inconsistent: Control Center initialization does not consume the `guide` query parameter, so the workaround could unpublish server-side and still leave the UI looking broken or lose the selected guide.
+Because the legacy listener ran during capture, it prevented the canonical root click handler from receiving the event. The forced reload was internally inconsistent because Control Center startup does not consume that `guide` query parameter to restore the selection. The result could therefore be a server-side unpublish with a browser that still looked broken or lost the selected guide.
 
-This duplicate existed even though `control-center-network-guard.js` already tracks the last server-confirmed `updatedAt` and injects `expectedUpdatedAt` into canonical `guide-status` writes. The legacy detail-fetch/write/reload sequence therefore duplicated stale-write protection rather than providing missing safety.
+The duplicate was also unnecessary because `control-center-network-guard.js` already records the last server-confirmed `updatedAt` and injects `expectedUpdatedAt` into canonical `guide-status` writes.
 
 ## Related redundancy found in the affected area
 - `control-center-editor-clarity.js` duplicated lifecycle ownership of button labels, state copy, editor sizing, and sticky mobile actions.
-- That script removed `.editor-lock-message` after `control-center-lifecycle.js` created it, while lifecycle continued manipulating the now-detached node. This was conflicting/dead UI logic, not merely extra styling.
-- The lifecycle also had a network-guard loader in addition to the explicit guard script in `index.html`. The existing network audit revealed that this loader is intentional stale-cached-page recovery, so it must not simply be deleted. It now skips the fallback request when `window.__sniperplugApiFetchGuardInstalled` proves the explicit guard already ran, while still loading the guard for a stale page that lacks it.
-- Preview-close and media-repair code in `control-center-integrity-fix.js` remain separate concerns and were intentionally not folded into this status-lifecycle fix.
+- That script removed `.editor-lock-message` after `control-center-lifecycle.js` created it, while lifecycle continued manipulating the detached node. This was conflicting/dead logic rather than harmless extra styling.
+- The lifecycle network-guard loader initially looked redundant because `index.html` also loads the guard. Existing network regression coverage proved it is an intentional stale-cached-page fallback. It now skips the fallback request when `window.__sniperplugApiFetchGuardInstalled` proves the explicit guard already ran, while still recovering a genuinely stale page that lacks it.
+- Preview-close and media-repair behavior in `control-center-integrity-fix.js` remains separate. It was inspected but not folded into this status lifecycle because no shared root cause or failure evidence justified changing it.
 
-## Authoritative execution path after this branch
+## Authoritative execution path now on `main`
 `Better Content iframe → verified capture → tenant private draft → review → unchanged Publish OR Save edited revision → control-center-v2 guide-status mutation → network guard injects expectedUpdatedAt → server reserves exact version → status persisted/read back → canonical renderGuideEditor → lifecycle updates local state/filter/locking`.
 
 For Unpublish specifically:
 `Unpublish & edit → control-center-v2 guide-status {status:draft} → expectedUpdatedAt injected by network guard → server return-to-draft reservation → D1 status=draft + published_at=NULL → returned guide rendered in place → lifecycle switches to Needs review, unlocks fields, shows Save/Publish/Remove`.
 
-## Changes on `fix/unpublish-lifecycle`
+## Changes merged in PR #55
 - Removed the legacy capture-phase Unpublish handler from `control-center-integrity-fix.js`.
-- Removed its duplicate `guide-detail` read, duplicate `guide-status` write, and forced `window.location.replace` recovery path.
+- Removed its duplicate `guide-detail` read, duplicate `guide-status` write, and forced `window.location.replace` path.
 - Kept media repair and preview compatibility code intact.
-- Consolidated the PR #54 editor clarity/state behavior into `control-center-lifecycle.js` so one lifecycle owns status copy, button labels, dirty state, locking, textarea sizing, and sticky mobile actions.
+- Consolidated editor state/copy, button labels, dirty state, locking, textarea sizing, and sticky mobile actions into `control-center-lifecycle.js`.
 - Deleted redundant `control-center-editor-clarity.js`.
-- Preserved the stale-page network-guard fallback but prevent a duplicate request when the explicit pre-v2 guard is already installed.
+- Preserved stale-page network-guard recovery while skipping the request when the explicit guard is already installed.
 - Cache-busted lifecycle and integrity-fix assets to `20260905.3`.
-- Expanded `test-guide-publish-feedback.mjs` into a publish/unpublish lifecycle regression that fails if a second return-draft handler or forced reload reappears.
+- Expanded the guide lifecycle regression so a second return-draft handler, forced reload, duplicate clarity layer, unsafe guard loading, lost exact-version protection, or lost status render path fails CI.
 
 ## Validation / results
-### Previously established server/persistence coverage
+### Server / persistence coverage
 - [x] Capture membership + exact-app + tenant roundtrip.
 - [x] Manual Publish review vs bulk manual-review policy separation.
 - [x] Save exact edited revision before Publish.
@@ -62,33 +63,38 @@ For Unpublish specifically:
 - [x] Subscriber isolation and attachment/integrity gates fail closed.
 - [x] Exact guide-version reservation and rollback audits.
 
-### Current branch validation
-- [x] Traced every `[data-return-draft]` owner in the default-branch browser code before changing anything.
-- [x] Confirmed canonical v2 handler already supports return-to-draft and authoritative in-place rendering.
+### PR #55 investigation and cleanup
+- [x] Traced every `[data-return-draft]` owner before changing code.
+- [x] Confirmed canonical v2 already supports return-to-draft and authoritative in-place rendering.
 - [x] Confirmed network guard already supplies `expectedUpdatedAt` for canonical `guide-status` writes.
-- [x] Removed the conflicting status mutation/reload implementation rather than stacking another handler on top.
+- [x] Removed the competing mutation/reload implementation instead of stacking another handler.
 - [x] Removed the directly conflicting/redundant editor-clarity layer.
-- [x] Preserved intentional stale-page network protection while removing its unnecessary duplicate request on current pages.
-- [x] Updated focused lifecycle regression coverage.
-- [x] PR #55 run #1023 reached the new regression and failed because one assertion matched the guard source incorrectly; the implementation path itself had passed all earlier audits. The assertion was corrected to the actual `JSON.stringify({ ...body, expectedUpdatedAt })` implementation.
-- [x] PR #55 run #1024 passed the new publish/unpublish regression, then the existing network audit correctly caught that deleting the stale-page guard fallback would weaken compatibility. The fallback was restored with an installed-guard skip instead of weakening the audit.
-- [ ] Fresh exact-head full Node 22 build/regression suite after the compatibility correction.
-- [ ] Final branch diff/review-thread inspection.
-- [ ] Merge only after exact-head validation is green.
-- [ ] Post-merge main/production checks.
-- [ ] Real Android acceptance: Publish → Unpublish & edit stays on the selected guide, changes to Draft/Needs review, unlocks fields, allows edit/save/republish, and creates no duplicate/stale state.
+- [x] Preserved intentional stale-page network protection while removing unnecessary repeat loading on current pages.
+- [x] Kept unrelated preview/media repair logic unchanged after inspecting its role.
+- [x] Final PR diff contained only `ACTIVE_TASK.md`, lifecycle/integrity/index/test changes, and deletion of the redundant clarity script.
+- [x] No inline review threads remained before merge.
+
+### CI / production evidence
+- [x] PR #55 run #1023 exposed an incorrect new assertion; corrected the test to the real network-guard implementation.
+- [x] PR #55 run #1024 passed the new publish/unpublish regression and then correctly exposed loss of the stale-page guard fallback; restored the intentional fallback without weakening the audit.
+- [x] PR #55 exact-head run #1027 passed the full Node 22 build/regression suite.
+- [x] PR #55 merged as `c9c26fcfb65755ff5543e4971fabfb1eedc6e98b`.
+- [x] Post-merge run #1028 passed the full Node 22 build/regression suite.
+- [x] Post-merge production guide-privacy run #80 passed.
+- [x] Post-merge production affiliate/visual-route run #76 passed.
+- [ ] Real Android acceptance: Published guide → Unpublish & edit stays on selected guide → Draft/Needs review → fields unlock → edit → Publish blocked while dirty → Save changes → republish → no duplicate/stale state.
 
 ## Cleanup / conflicts
-- `control-center-v2.js` remains the sole normal guide status mutation/render runtime.
-- `control-center-network-guard.js` remains the sole browser layer for expected-version injection and API request timeout behavior; lifecycle only ensures a stale cached page can load that same guard if it is absent.
+- `control-center-v2.js` is the sole normal guide-status mutation/render runtime.
+- `control-center-network-guard.js` is the sole expected-version injection and API timeout layer; lifecycle only loads that same guard for stale pages if absent.
 - `control-center-lifecycle.js` owns editor dirty protection, state copy, locking, action visibility/labels, mobile editor layout, and local action feedback only.
-- `control-center-integrity-fix.js` no longer mutates guide status; it retains preview compatibility and media-repair behavior only.
+- `control-center-integrity-fix.js` no longer mutates guide status; it retains preview compatibility and media repair only.
 - Bulk publishing remains distinct and cannot inherit manual Publish review confirmation.
-- No auth, tenant, source-access, media, link, backup, or recovery bypass was introduced.
+- No auth, tenant, source-access, media, link, backup, recovery, or publication safety gate was bypassed.
 
 ## Blockers / risks
-- CI can validate the browser source contracts and server paths but cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device acceptance remains required before this active task is called complete.
-- A separate preview compatibility layer remains intentionally duplicated relative to v2 because it covers pointer/capture behavior outside the status lifecycle; it is not being changed without evidence that it is broken.
+- Automated tests cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device acceptance remains required before this active task is called complete.
+- Search indexing can briefly return older commit matches after a merge, so final source verification used direct `main` file reads rather than trusting stale code-search results.
 - Duplicate Vercel build-rate-limit statuses are unrelated to the active Cloudflare Pages deployment.
 
 ## Backlog
@@ -97,4 +103,4 @@ For Unpublish specifically:
 - Paid subscriber authentication/billing onboarding until a real subscriber identity binds to the tenant-scoped `principalId` model.
 
 ## Next step
-Require the fresh PR #55 exact head to pass the full repository validation suite, inspect the final diff and review state, merge, require post-merge production checks, then run the real-tablet Publish → Unpublish & edit → edit → Save → republish acceptance sequence.
+Run the real-tablet production sequence on the merged PR #55 code: open a Published guide, tap **Unpublish & edit**, verify it stays selected and unlocks as Draft/Needs review, make one small edit, verify Publish is blocked until **Save changes**, save, republish, and confirm there is still only one guide with no stale state. If that passes, this active task can finally close and the queued whole-site UX overhaul can become active.
