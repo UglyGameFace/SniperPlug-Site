@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -11,6 +10,7 @@ const fail = (message) => {
 
 const html = read('index.html');
 const css = read('assets/css/homepage.css');
+const shellCss = read('assets/css/site-shell.css');
 const runtime = read('assets/js/site.js');
 
 const requiredHtml = [
@@ -73,51 +73,39 @@ if (fs.existsSync(path.join(root, 'assets/sniperplug-logo.svg'))) {
   fail('obsolete substitute SVG remains in the repository');
 }
 
-const logoArrayMatch = runtime.match(/const logoAsset = \[([\s\S]*?)\]\.join\(''\);/);
-if (!logoArrayMatch) {
-  fail('the embedded exact-logo array is missing from the shared runtime');
-} else {
-  const parts = [...logoArrayMatch[1].matchAll(/'([^']*)'/g)].map((match) => match[1]);
-  const dataUri = parts.join('');
-  const prefix = 'data:image/png;base64,';
-  if (!dataUri.startsWith(prefix)) {
-    fail('the exact embedded PNG logo is missing from the shared runtime');
-  } else {
-    const logo = Buffer.from(dataUri.slice(prefix.length), 'base64');
-    const pngSignature = '89504e470d0a1a0a';
-    if (logo.subarray(0, 8).toString('hex') !== pngSignature) fail('embedded logo is not a valid PNG');
-    if (logo.length < 24) fail('embedded logo is truncated');
-    else {
-      const width = logo.readUInt32BE(16);
-      const height = logo.readUInt32BE(20);
-      if (width !== 96 || height !== 96) fail(`embedded logo must be 96×96, received ${width}×${height}`);
-    }
-    const digest = crypto.createHash('sha256').update(logo).digest('hex');
-    if (digest !== '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86') {
-      fail(`embedded logo checksum changed: ${digest}`);
-    }
-  }
+if (!fs.existsSync(path.join(root, 'assets/sniperplug-logo-exact.png'))) {
+  fail('the approved static SniperPlug PNG is missing');
 }
+
+const requiredBrandShell = [
+  '.brand-mark{',
+  "url('/assets/sniperplug-logo-exact.png')",
+  'center/contain no-repeat!important',
+  'color:transparent!important',
+  'font-size:0!important',
+];
+for (const token of requiredBrandShell) {
+  if (!shellCss.includes(token)) fail(`single-source brand rendering is missing from the shared shell: ${token}`);
+}
+
+const bannedBrandRuntime = [
+  'data:image/png;base64,',
+  'logoAsset',
+  "document.querySelectorAll('.brand-mark')",
+  "document.createElement('img')",
+  'mark.replaceChildren(logo)',
+  'mark.dataset.brandLogo',
+  'mark.dataset.brandArtwork',
+];
+for (const token of bannedBrandRuntime) {
+  if (runtime.includes(token)) fail(`duplicate runtime logo rendering was reintroduced: ${token}`);
+}
+if (shellCss.includes('.brand-mark img')) fail('dead runtime-logo image styling remains in the shared shell');
 
 if (!/@media\s*\(max-width\s*:\s*9(?:40|39)px\)/i.test(css)) fail('tablet breakpoint is missing');
 if (!/@media\s*\(max-width\s*:\s*(?:6\d{2}|700)px\)/i.test(css)) fail('mobile breakpoint is missing');
 if (!css.includes('minmax(0,1fr)')) fail('responsive grid overflow protection is missing');
 if (/min-width\s*:\s*[7-9]\d{2,}px/i.test(css)) fail('large fixed min-width may cause horizontal overflow');
-
-const requiredBrandRuntime = [
-  'data:image/png;base64,',
-  "document.querySelectorAll('.brand-mark')",
-  "logo.style.objectFit = 'contain'",
-  "logo.style.aspectRatio = '1 / 1'",
-  "mark.style.overflow = 'hidden'",
-  "mark.replaceChildren(logo)",
-  "mark.dataset.brandLogo = 'true'",
-  "mark.dataset.brandArtwork = 'owner-approved-exact'",
-  "mark.setAttribute('aria-hidden', 'true')",
-];
-for (const token of requiredBrandRuntime) {
-  if (!runtime.includes(token)) fail(`exact brand-logo rendering is missing: ${token}`);
-}
 
 const requiredMobileOwnerRuntime = [
   'querySelector(\'a[href="/control-center/"]\')',
