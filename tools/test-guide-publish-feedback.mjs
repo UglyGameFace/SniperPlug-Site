@@ -29,6 +29,8 @@ for (const copy of [
   'Published successfully. SniperPlug confirmed the guide is now available in Private Guides.',
   'Draft saved. It is still private and has not been published yet.',
   'Not published. Save your current changes first so the version you reviewed is exactly the version that goes live.',
+  'Publishing and waiting for server confirmation…',
+  'Saving draft and validating the exact content…',
   'Edit / unpublish',
   'View published guide',
 ]) {
@@ -63,6 +65,14 @@ assert.ok(
 );
 
 assert.ok(
+  lifecycle.includes('function mirrorPendingFailure()')
+    && lifecycle.includes("globalStatus.dataset.type !== 'error'")
+    && lifecycle.includes("/^(Publishing|Saving)\\b/.test(actionStatus.textContent.trim())")
+    && lifecycle.includes("setActionStatus(text, 'error')"),
+  'A failed Save or Publish can still leave the mobile editor stuck on a false in-progress message.',
+);
+
+assert.ok(
   lifecycle.includes("statusFilter.value = 'published'")
     && lifecycle.includes("statusFilter.dispatchEvent(new Event('change', { bubbles: true }))"),
   'Successful publishing does not move the visible queue into the Published view.',
@@ -88,6 +98,6 @@ assert.ok(
 
 console.log('\nGUIDE PUBLISH FEEDBACK REGRESSION PASSED\n');
 console.log('✓ Dirty drafts cannot publish a stale saved version; Save is required first.');
-console.log('✓ Save, publish, published-lock, view, and edit/unpublish states have local mobile-visible feedback.');
+console.log('✓ Save, publish, failure, published-lock, view, and edit/unpublish states have local mobile-visible feedback.');
 console.log('✓ Successful publish switches the review queue to Published instead of making the selected guide appear unchanged.');
 console.log('✓ Existing versioned server publication remains authoritative.');
