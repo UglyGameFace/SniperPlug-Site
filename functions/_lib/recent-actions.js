@@ -1,12 +1,11 @@
-import { HttpError, requireDatabase } from './http.js';
+import { HttpError } from './http.js';
+import { ensureImporterWorkspaceSchema, principalIdFrom, upstreamSourceKey } from './importer-workspace.js';
 
 const HISTORY_HOURS = 48;
 const MAX_ACTIONS = 1000;
 
 function actionOwnerKey(admin) {
-  const sid = String(admin?.sid || '').trim();
-  if (!sid) throw new HttpError(401, 'Unlock the SniperPlug Control Center first.');
-  return sid;
+  return principalIdFrom(admin);
 }
 
 function safeJson(value, fallback) {
@@ -67,7 +66,7 @@ async function recentJobs(db, ownerKey) {
 
 export async function listRecentActions(env, admin) {
   const ownerKey = actionOwnerKey(admin);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   await ensureDismissalTable(db);
   const jobs = await recentJobs(db, ownerKey);
   const references = [];
@@ -87,26 +86,25 @@ export async function listRecentActions(env, admin) {
     }
   }
   const cutoff = new Date(Date.now() - HISTORY_HOURS * 3_600_000).toISOString();
-  if (admin?.kind === 'owner') {
-    const rejected = await db.prepare(`
-      SELECT id, source_key, source_group, updated_at
-      FROM guides
-      WHERE status = 'rejected' AND source_key IS NOT NULL AND updated_at >= ?
-      ORDER BY updated_at DESC
-      LIMIT ?
-    `).bind(cutoff, MAX_ACTIONS).all();
-    for (const guide of rejected.results || []) {
-      references.push({
-        actionId: `manual-reject:${guide.id}`,
-        jobId: null,
-        jobStatus: 'manual',
-        jobCreatedAt: guide.updated_at,
-        sourceId: null,
-        sourceTitle: guide.source_group || 'Imported Whop source',
-        guideId: Number(guide.id),
-      });
-    }
+  const rejected = await db.prepare(`
+    SELECT id, source_key, upstream_source_key, source_group, updated_at
+    FROM guides
+    WHERE principal_id = ? AND status = 'rejected' AND source_key IS NOT NULL AND updated_at >= ?
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).bind(ownerKey, cutoff, MAX_ACTIONS).all();
+  for (const guide of rejected.results || []) {
+    references.push({
+      actionId: `manual-reject:${guide.id}`,
+      jobId: null,
+      jobStatus: 'manual',
+      jobCreatedAt: guide.updated_at,
+      sourceId: null,
+      sourceTitle: guide.source_group || 'Imported Whop source',
+      guideId: Number(guide.id),
+    });
   }
+
   const dismissedRows = await db.prepare(`
     SELECT action_id FROM recent_action_dismissals
     WHERE admin_session_id = ?
@@ -119,12 +117,12 @@ export async function listRecentActions(env, admin) {
   const placeholders = ids.map(() => '?').join(',');
   const rows = await db.prepare(`
     SELECT guides.id, guides.title, guides.status, guides.category_slug, guides.source_key,
-           guides.source_group, guides.published_at, guides.updated_at,
+           guides.upstream_source_key, guides.source_group, guides.published_at, guides.updated_at,
            guide_categories.label AS category_label
     FROM guides
     LEFT JOIN guide_categories ON guide_categories.slug = guides.category_slug
-    WHERE guides.id IN (${placeholders})
-  `).bind(...ids).all();
+    WHERE guides.principal_id = ? AND guides.id IN (${placeholders})
+  `).bind(ownerKey, ...ids).all();
   const guideById = new Map((rows.results || []).map((row) => [Number(row.id), row]));
   const actions = values.map((reference) => {
     const guide = guideById.get(reference.guideId);
@@ -135,7 +133,7 @@ export async function listRecentActions(env, admin) {
       status: guide.status,
       category: guide.category_slug,
       categoryLabel: guide.category_label || guide.category_slug,
-      sourceKey: guide.source_key,
+      sourceKey: upstreamSourceKey(guide),
       sourceGroup: guide.source_group,
       publishedAt: guide.published_at,
       updatedAt: guide.updated_at,
@@ -151,7 +149,7 @@ export async function listRecentActions(env, admin) {
 
 export async function dismissRecentActions(env, admin, input = {}) {
   const ownerKey = actionOwnerKey(admin);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   await ensureDismissalTable(db);
   const history = await listRecentActions(env, admin);
   const requested = new Set((Array.isArray(input.actionIds) ? input.actionIds : []).map((value) => String(value || '').trim()).filter(Boolean));
@@ -170,7 +168,7 @@ export async function dismissRecentActions(env, admin, input = {}) {
 
 export async function undoRecentActions(env, admin, input = {}) {
   const ownerKey = actionOwnerKey(admin);
-  const db = requireDatabase(env);
+  const db = await ensureImporterWorkspaceSchema(env);
   const history = await listRecentActions(env, admin);
   const requested = new Set((Array.isArray(input.actionIds) ? input.actionIds : []).map((value) => String(value || '').trim()).filter(Boolean));
   const all = input.all === true;
@@ -179,20 +177,29 @@ export async function undoRecentActions(env, admin, input = {}) {
   if (selected.length > MAX_ACTIONS) throw new HttpError(422, `Undo at most ${MAX_ACTIONS} actions at once.`);
 
   const now = new Date().toISOString();
-  const guideRows = await Promise.all(selected.map((item) => db.prepare('SELECT integrity_json FROM guides WHERE id = ?').bind(item.guideId).first()));
+  const guideRows = await Promise.all(selected.map((item) => db.prepare(`
+    SELECT integrity_json, source_key FROM guides WHERE principal_id = ? AND id = ?
+  `).bind(ownerKey, item.guideId).first()));
   const statements = [];
   selected.forEach((item, index) => {
-    const integrity = safeJson(guideRows[index]?.integrity_json, {});
+    const row = guideRows[index];
+    if (!row) return;
+    const integrity = safeJson(row.integrity_json, {});
     statements.push(db.prepare(`
       UPDATE guides
       SET status = 'draft', published_at = NULL, updated_at = ?, integrity_json = ?
-      WHERE id = ? AND status IN ('published', 'rejected')
-    `).bind(now, JSON.stringify({ ...integrity, undone: true, undoneAt: now, undoReason: item.status === 'rejected' ? 'Owner restored a rejected imported guide.' : 'Owner reversed a recent bulk-publish action.' }), item.guideId));
-    if (item.sourceKey) {
+      WHERE principal_id = ? AND id = ? AND status IN ('published', 'rejected')
+    `).bind(now, JSON.stringify({
+      ...integrity,
+      undone: true,
+      undoneAt: now,
+      undoReason: item.status === 'rejected' ? 'Account restored a rejected imported guide.' : 'Account reversed a recent bulk-publish action.',
+    }), ownerKey, item.guideId));
+    if (row.source_key) {
       statements.push(db.prepare(`
         UPDATE whop_posts SET decision = 'pending', decision_updated_at = NULL
-        WHERE source_key = ? AND decision != 'blocked'
-      `).bind(item.sourceKey));
+        WHERE principal_id = ? AND source_key = ? AND decision != 'blocked'
+      `).bind(ownerKey, row.source_key));
     }
   });
   if (statements.length) await db.batch(statements);
