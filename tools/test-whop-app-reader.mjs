@@ -78,9 +78,16 @@ try {
   assert.equal(metadata.experienceUrl, 'https://better-content.apps.whop.com/experiences/exp_make_money_here');
   assert.equal(metadata.reader.status, 'available');
   assert.equal(metadata.reader.mode, 'browser-capture');
-  assert.equal(metadata.reader.frameHost, 'better-content.apps.whop.com');
-  assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://better-content.apps.whop.com/experiences/exp_make_money_here/guides/guide_1'), true);
-  assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://another.apps.whop.com/experiences/exp_make_money_here'), false);
+  assert.equal(metadata.reader.framePolicy, 'whop-app-frame');
+  assert.equal(metadata.reader.metadataFrameHost, 'better-content.apps.whop.com');
+  assert.equal(
+    browserCaptureMatchesReader(metadata.reader, 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_make_money_here/guides/guide_1'),
+    true,
+    'Whop may render an authorized app under an instance-specific *.apps.whop.com host instead of the metadata origin.',
+  );
+  assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://another.apps.whop.com/experiences/exp_make_money_here'), true);
+  assert.equal(browserCaptureMatchesReader(metadata.reader, 'https://example.com/experiences/exp_make_money_here'), false);
+  assert.equal(browserCaptureMatchesReader(metadata.reader, 'http://better-content.apps.whop.com/experiences/exp_make_money_here'), false);
 
   const cached = await inspectWhopApp(session, experience);
   assert.deepEqual(cached, metadata, 'The short-lived app metadata cache changed the resolved reader contract.');
@@ -104,8 +111,8 @@ try {
   assert.equal(noExactMatch.hasSkillsView, false, 'SniperPlug must not borrow a Skills contract from a similarly named app.');
   assert.equal(noExactMatch.openapiUrl, null);
   assert.equal(noExactMatch.skillsUrl, null);
-  assert.equal(noExactMatch.reader.status, 'available', 'The already-enrolled exact Better Content app ID must retain its canonical rendered reader if public metadata is temporarily absent.');
-  assert.equal(noExactMatch.reader.frameHost, 'better-content.apps.whop.com');
+  assert.equal(noExactMatch.reader.status, 'available', 'The already-enrolled exact Better Content app ID must retain its rendered reader if public metadata is temporarily absent.');
+  assert.equal(noExactMatch.reader.framePolicy, 'whop-app-frame');
 
   clearWhopAppMetadataCacheForTests();
   globalThis.fetch = async () => jsonResponse({ message: 'Unauthorized' }, 401);
@@ -129,7 +136,9 @@ try {
   assert.equal(contentReader.status, 'available');
   assert.equal(contentReader.mode, 'browser-capture');
   assert.equal(contentReader.verifiedBy, 'whop-app-metadata+stable-app-id');
-  assert.equal(contentReader.frameHost, 'content-library.apps.whop.com');
+  assert.equal(contentReader.metadataFrameHost, 'content-library.apps.whop.com');
+  assert.equal(contentReader.framePolicy, 'whop-app-frame');
+  assert.equal(browserCaptureMatchesReader(contentReader, 'https://render-instance-42.apps.whop.com/experiences/exp_content'), true);
 
   const unverifiedContent = resolveWhopAppReader({
     ...verifiedContent,
@@ -143,7 +152,7 @@ try {
     id: 'app_wrong_origin_content_123',
     origin: 'https://example.invalid/',
   }, { id: 'exp_wrong_origin', app: { id: 'app_wrong_origin_content_123', name: 'Content' } });
-  assert.equal(wrongOriginContent.status, 'unavailable', 'Verified Content-family apps still require a resolved HTTPS *.apps.whop.com origin.');
+  assert.equal(wrongOriginContent.status, 'unavailable', 'Verified Content-family apps still require a resolved HTTPS *.apps.whop.com metadata origin before reader enrollment.');
 
   const documentedOnly = resolveWhopAppReader({
     id: 'app_documented_123',
@@ -172,12 +181,14 @@ try {
   assert.equal(annotatedEntry.capability.readerStatus, 'available');
   assert.equal(annotatedEntry.capability.readerMode, 'browser-capture');
   assert.match(annotatedEntry.capability.reason, /Access confirmed · reader available/);
+  assert.match(annotatedEntry.capability.reason, /exact Experience, membership, and app identity/);
   assert.strictEqual(annotated.groups[0].unsupported[0], annotatedEntry, 'Legacy unsupported alias must point to the same annotated external-app entry used by the Control Center.');
 
   console.log('\nWHOP CUSTOM APP READER METADATA TEST PASSED\n');
   console.log('✓ Customer OAuth resolves public app metadata through GET /apps, never developer-only GET /apps/{id}.');
-  console.log('✓ Exact Better Content remains an enrolled rendered reader with canonical frame-host binding.');
-  console.log('✓ Other Content-family apps require exact ID resolution, Whop verification, and a safe *.apps.whop.com origin.');
+  console.log('✓ Exact Better Content remains an enrolled rendered reader while real instance-specific Whop app-frame hosts stay valid.');
+  console.log('✓ Other Content-family apps require exact ID resolution, Whop verification, and a safe *.apps.whop.com metadata origin before enrollment.');
+  console.log('✓ Runtime captures stay inside HTTPS *.apps.whop.com while exact Experience/app identity is reverified separately on the server.');
   console.log('✓ Published OpenAPI/Skills metadata is capability evidence only and never becomes guessed endpoint execution.');
   console.log('✓ Discovery differentiates access-confirmed reader availability from reader-unavailable state.');
 } finally {
