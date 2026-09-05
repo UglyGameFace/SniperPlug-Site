@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { importBrowserCaptures, BETTER_CONTENT_APP_ID } from '../functions/_lib/browser-capture.js';
 import { adminGuide, publicGuide, saveGuideDraft, setGuideStatus } from '../functions/_lib/guides.js';
+import { assertGuidePublishable, publishReadyGuides } from '../functions/_lib/publish.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const migration = readFileSync(join(root, 'migrations/0001_whop_guides.sql'), 'utf8');
@@ -84,7 +85,7 @@ try {
       pageIdentity: `${appUrl}|PUBLISH ROUNDTRIP GUIDE`,
       documentTitle: 'PUBLISH ROUNDTRIP GUIDE',
       appHint: 'Better Content',
-      bodyMarkdown: '# PUBLISH ROUNDTRIP GUIDE\n\nThis is a complete imported guide used to verify the real draft, save, publish, view, and unpublish lifecycle.\n\n## Steps\n\n1. Save the reviewed draft.\n2. Publish the exact saved version.\n3. Confirm it is visible only while published.',
+      bodyMarkdown: '# PUBLISH ROUNDTRIP GUIDE\n\nThis is a complete imported guide used to verify the real draft, save, publish, view, and unpublish lifecycle.\n\n## Steps\n\n1. Review the imported guide.\n2. Publish it directly if unchanged, or save edits first.\n3. Confirm it is visible only while published.',
       images: [],
     }],
   });
@@ -96,7 +97,26 @@ try {
   const initial = await adminGuide(env, owner, row.id);
   assert.equal(initial.status, 'draft');
   assert.equal(initial.publishedAt, null);
+  assert.equal(initial.integrity?.manualReviewCompleted, false, 'Browser capture skipped the explicit manual-review gate.');
   assert.equal(await publicGuide(env, row.slug), null, 'A draft leaked into the published guide route.');
+
+  const automaticAttempt = await publishReadyGuides(env, owner, { guideIds: [row.id] });
+  assert.equal(automaticAttempt.published, 0, 'Bulk/automatic publishing bypassed browser-capture manual review.');
+  assert.equal(automaticAttempt.skippedIntegrity.length, 1, 'Bulk publishing did not report the manual-review hold.');
+
+  await assertGuidePublishable(env, owner, row.id);
+  const confirmedReview = await adminGuide(env, owner, row.id);
+  assert.equal(confirmedReview.integrity?.manualReviewCompleted, true, 'Manual Publish did not count as the explicit account review action.');
+  assert.equal(confirmedReview.integrity?.publishHoldReason, null, 'Manual Publish left the browser-capture review hold active.');
+
+  const directPublished = await setGuideStatus(env, owner, row.id, 'published');
+  assert.equal(directPublished.status, 'published');
+  assert.ok(directPublished.publishedAt, 'Direct manual Publish did not persist publication state.');
+  assert.ok(await publicGuide(env, row.slug), 'A reviewed unchanged import could not publish directly.');
+
+  const backToDraft = await setGuideStatus(env, owner, row.id, 'draft');
+  assert.equal(backToDraft.status, 'draft');
+  assert.equal(backToDraft.publishedAt, null);
 
   const saved = await saveGuideDraft(env, owner, row.id, {
     title: initial.title,
@@ -140,14 +160,15 @@ try {
     .run(JSON.stringify({ reviewCount: 1 }), owner.principalId, row.id);
   await setGuideStatus(env, owner, row.id, 'draft');
   await assert.rejects(
-    () => setGuideStatus(env, owner, row.id, 'published'),
-    (error) => error?.status === 422,
-    'Publishing ignored unresolved private/expiring attachment review.',
+    () => assertGuidePublishable(env, owner, row.id),
+    (error) => error?.status === 422 && error?.details?.code === 'attachment_review',
+    'Manual review confirmation bypassed unresolved private/expiring attachment review.',
   );
 
   console.log('\nGUIDE PUBLISH SERVER ROUNDTRIP PASSED\n');
-  console.log('✓ Imported Better Content draft stays private before publication.');
-  console.log('✓ Save preserves draft/private state and Publish promotes the exact saved body.');
+  console.log('✓ Imported Better Content drafts stay private and bulk publishing cannot bypass manual review.');
+  console.log('✓ Manual Publish itself is the explicit review action for an unchanged imported guide.');
+  console.log('✓ Edited guides still save exact reviewed content before publication.');
   console.log('✓ Published route appears only after confirmed publication and disappears after Edit / unpublish.');
   console.log('✓ Publish → unpublish → republish remains one guide row with no duplicate.');
   console.log('✓ Subscriber publishing and unresolved attachment publishing fail closed.');

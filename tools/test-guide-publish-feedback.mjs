@@ -8,70 +8,72 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const page = read('control-center/index.html');
 const lifecycle = read('assets/js/control-center-lifecycle.js');
+const clarity = read('assets/js/control-center-editor-clarity.js');
 const control = read('assets/js/control-center-v2.js');
 const api = read('functions/api/control.js');
 const guides = read('functions/_lib/guides.js');
+const publish = read('functions/_lib/publish.js');
 
 assert.ok(
-  page.includes('/assets/js/control-center-lifecycle.js?v=20260905.1'),
-  'Control Center does not cache-bust the publish-state lifecycle fix.',
+  page.includes('/assets/js/control-center-lifecycle.js?v=20260905.1')
+    && page.includes('/assets/js/control-center-editor-clarity.js?v=20260905.2'),
+  'Control Center does not load the publish lifecycle and cache-busted editor-clarity layer.',
 );
 
 assert.ok(
   lifecycle.includes("statePanel.dataset.editorPublishState = ''")
     && lifecycle.includes("actionStatus.dataset.editorActionStatus = ''"),
-  'The guide editor is missing persistent local publish-state and action-status surfaces.',
+  'The guide editor is missing persistent publish-state and action-status surfaces.',
+);
+
+assert.ok(
+  clarity.includes("editor.querySelector('.editor-lock-message')?.remove()")
+    && clarity.includes("stateTitle.textContent = 'Unsaved changes'")
+    && clarity.includes("stateTitle.textContent = 'Ready to review'")
+    && clarity.includes("stateTitle.textContent = 'Published'"),
+  'The mobile editor still renders duplicate or ambiguous persistent state messaging.',
 );
 
 for (const copy of [
-  'Draft · not published',
-  'Published and confirmed',
-  'Published successfully. SniperPlug confirmed the guide is now available in Private Guides.',
-  'Draft saved. It is still private and has not been published yet.',
-  'Not published. Save your current changes first so the version you reviewed is exactly the version that goes live.',
-  'Publishing and waiting for server confirmation…',
-  'Saving draft and validating the exact content…',
-  'Edit / unpublish',
-  'View published guide',
+  'Save changes',
+  'Publish guide',
+  'Remove draft',
+  'Unpublish & edit',
+  'Guide content',
+  'If this looks right, publish it. If you edit anything, save first.',
+  'Save before publishing so the live guide matches what you see here.',
 ]) {
-  assert.ok(lifecycle.includes(copy), `Publish lifecycle is missing required user-visible state: ${copy}`);
+  assert.ok(clarity.includes(copy) || page.includes(copy), `Simplified guide editor is missing required user-visible copy: ${copy}`);
 }
 
 assert.ok(
-  lifecycle.includes('.draft-editor[data-guide-status="published"] input:disabled')
-    && lifecycle.includes('.draft-editor[data-guide-status="published"] textarea:disabled')
-    && lifecycle.includes('.draft-editor[data-guide-status="published"] select:disabled'),
-  'Published fields do not have an unmistakable locked visual state.',
+  clarity.includes('textarea[name="body"]{height:min(36vh,420px)')
+    && clarity.includes('position:sticky')
+    && page.includes('rows="12"')
+    && page.includes('class="exact-preview" hidden'),
+  'The guide editor still lets raw Markdown dominate the tablet/mobile viewport or hides primary actions below it.',
 );
 
 assert.ok(
-  lifecycle.includes("publishButton.hidden = normalized !== 'draft'")
-    && lifecycle.includes("saveButton.hidden = normalized !== 'draft'")
-    && lifecycle.includes("returnButton.hidden = normalized === 'draft'"),
-  'Published/draft actions are not being reduced to the actions that are valid for the current state.',
+  !clarity.includes('MutationObserver')
+    && !clarity.includes('fetch(')
+    && lifecycle.includes('function watchPendingFailure()')
+    && lifecycle.includes("globalStatus.dataset.type === 'error'")
+    && lifecycle.includes("actionWatchTimer = setTimeout(poll, 250)"),
+  'Editor simplification introduced a polling/network/DOM-observer side channel instead of reusing the canonical lifecycle.',
 );
 
 const genericRiskySelector = lifecycle.match(/const risky = target\.closest\(([^\n]+)\);/)?.[1] || '';
 assert.ok(genericRiskySelector, 'Draft lifecycle no longer has its guarded navigation selector.');
 assert.ok(
   !genericRiskySelector.includes('data-publish-guide'),
-  'Publish is still routed through generic discard confirmation instead of its dedicated save-first gate.',
+  'Publish is still routed through generic discard confirmation instead of its dedicated dirty-draft gate.',
 );
 assert.ok(
   lifecycle.includes("const publish = target.closest('[data-publish-guide]')")
     && lifecycle.includes('if (dirty)')
     && lifecycle.includes('event.stopImmediatePropagation();'),
   'Unsaved edits can still fall through into the publish request.',
-);
-
-assert.ok(
-  !lifecycle.includes('MutationObserver')
-    && lifecycle.includes('function watchPendingFailure()')
-    && lifecycle.includes("globalStatus.dataset.type === 'error'")
-    && lifecycle.includes("/^(Publishing|Saving)\\b/.test(actionStatus.textContent.trim())")
-    && lifecycle.includes("actionWatchTimer = setTimeout(poll, 250)")
-    && lifecycle.includes("setActionStatus(text, 'error')"),
-  'Save/publish failure feedback is not using the bounded low-overhead action watcher.',
 );
 
 assert.ok(
@@ -84,14 +86,23 @@ assert.ok(
   control.includes("const status = button === elements.publishGuide ? 'published'")
     && control.includes("api('guide-status', { method: 'POST'")
     && control.includes("renderGuideEditor(output.guide, 'status')"),
-  'The existing authoritative publish mutation/render path was lost while improving feedback.',
+  'The authoritative publish mutation/render path was lost while simplifying the editor.',
 );
 
 assert.ok(
   api.includes("if (status === 'published') await assertGuidePublishable(env, admin, id);")
     && api.includes('reserveGuideVersion(env, admin, id, body.expectedUpdatedAt, operation)'),
-  'Publish feedback is not backed by the existing publishability and version-confirmation server gate.',
+  'Manual Publish is not backed by the existing publishability and exact-version server gate.',
 );
+
+assert.ok(
+  publish.includes('async function auditRow(db, principalId, row, { manualReviewConfirmed = false } = {})')
+    && publish.includes('manualReviewCompleted: true')
+    && publish.includes('await auditRow(db, principalId, row, { manualReviewConfirmed: true })')
+    && publish.includes('const { attachments, integrity, linkAudit, holdReason } = await auditRow(db, principalId, row);'),
+  'Manual Publish no longer counts as explicit review, or bulk publishing can incorrectly inherit that confirmation.',
+);
+
 assert.ok(
   guides.includes("UPDATE guides SET status = ?, updated_at = ?, published_at = ?")
     && guides.includes("status === 'published' ? now : null"),
@@ -99,8 +110,9 @@ assert.ok(
 );
 
 console.log('\nGUIDE PUBLISH FEEDBACK REGRESSION PASSED\n');
-console.log('✓ Dirty drafts cannot publish a stale saved version; Save is required first.');
-console.log('✓ Save, publish, failure, published-lock, view, and edit/unpublish states have local mobile-visible feedback.');
-console.log('✓ Failed writes use a bounded action-only status watcher instead of broad DOM observation.');
-console.log('✓ Successful publish switches the review queue to Published instead of making the selected guide appear unchanged.');
+console.log('✓ The editor uses one concise state surface instead of stacked warning boxes.');
+console.log('✓ Raw guide content is bounded on tablet/mobile and primary actions stay reachable.');
+console.log('✓ Dirty drafts still cannot publish stale unsaved edits.');
+console.log('✓ Clicking Publish is the explicit manual review action for an unchanged imported guide.');
+console.log('✓ Bulk publishing remains unable to bypass manual-review-only policy.');
 console.log('✓ Existing versioned server publication remains authoritative.');

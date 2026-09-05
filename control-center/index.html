@@ -176,28 +176,27 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Only real guide candidates stay in this queue. Replies, chat chatter, raw links, duplicate cards, expired picks, and other weak imports are quarantined automatically. Publishing here only makes a guide available inside the owner-only private library; it does not expose the guide publicly.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Open a guide, check it, and publish it. If you change the content, save those changes first. Published guides stay inside the owner-only Private Guides library.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
         <div class="publish-ready-visual" aria-hidden="true">
           <div class="publish-ready-track"><span></span></div>
           <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides were added to the private library and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open private guides</a></div>
         </div>
-        <p class="draft-cleanup-note"><strong>Clean review queue:</strong> questionable content is kept private and removed from this normal list. Saving a corrected draft marks it as manually reviewed.</p>
-        <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published to private library</option><option value="all">All valid guides</option></select></label></div>
+        <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published</option><option value="all">All guides</option></select></label></div>
         <div class="draft-layout">
           <aside class="draft-list" data-draft-list></aside>
-          <div class="draft-empty" data-draft-empty><strong>No guide selected</strong><p>Choose an imported guide to review its exact content.</p></div>
+          <div class="draft-empty" data-draft-empty><strong>No guide selected</strong><p>Choose a guide to review.</p></div>
           <form class="draft-editor" data-draft-editor hidden>
             <input type="hidden" name="id">
             <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open private guide</a></div>
             <label><span>Title</span><input name="title" maxlength="140" required></label>
             <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
             <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft">＋ Add category</button></div>
-            <label><span>Guide Markdown</span><textarea name="body" rows="24" spellcheck="true" required></textarea></label>
+            <label><span>Guide content</span><textarea name="body" rows="12" spellcheck="true" required></textarea></label>
             <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring media file.</span></label>
-            <label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide above normal guide ordering.</span></label>
-            <div class="editor-actions"><button class="btn ghost" type="submit">Save draft</button><button class="decision approve" type="button" data-publish-guide>Publish to private library</button><button class="decision disapprove" type="button" data-reject-guide>Reject</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
-            <details class="exact-preview"><summary>Exact Markdown preview</summary><pre data-markdown-preview></pre></details>
+            <details class="guide-options"><summary>More options</summary><label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide</span></label></details>
+            <div class="editor-actions"><button class="btn ghost" type="submit">Save changes</button><button class="decision approve" type="button" data-publish-guide>Publish guide</button><button class="decision disapprove" type="button" data-reject-guide>Remove draft</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
+            <details class="exact-preview" hidden><summary>Raw Markdown</summary><pre data-markdown-preview></pre></details>
           </form>
         </div>
       </section>
@@ -214,6 +213,7 @@
   <script src="/assets/js/control-center-network-guard.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-v2.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-lifecycle.js?v=20260905.1" defer></script>
+  <script src="/assets/js/control-center-editor-clarity.js?v=20260905.2" defer></script>
   <script src="/assets/js/control-center-whop-backups.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-integrity-fix.js?v=20260730.14" defer></script>
 </body>

@@ -1,105 +1,101 @@
 # Active Task
 
 ## Active task / outcome
-Finish the Whop importer end to end so the Firefox Android Better Content flow is clear, deterministic, and safe enough for real users. The concrete live target remains **Hidden Files → Make Money Here → Better Content**.
-
-The capture, handoff, server persistence, and publish-state implementation are now deployed. The only remaining Definition-of-Done gate is a real Android acceptance pass of the exact production Save → Publish → View → Edit/unpublish interaction.
+Finish the Whop importer and Better Content guide-review/publish lifecycle on Firefox Android so the flow is correct, obvious, and safe for real users. The concrete live source remains **Hidden Files → Make Money Here → Better Content**.
 
 ## Scope lock
-- Stay on Whop importer / Better Content Firefox Android capture / imported-guide review and publish lifecycle / tenant-safe persistence only until the real-device acceptance gate passes.
-- The requested head-to-toe whole-site UX redesign is backlogged and must not begin before this task is actually complete.
-- Issue #20 and unrelated work remain backlog.
-- Do not weaken auth, membership, tenant, origin, media, or private-guide checks.
+- Active scope: Firefox Android Better Content capture, imported-guide review/publish lifecycle, tenant-safe persistence, and the directly required mobile editor UX.
+- Do not begin the requested whole-site head-to-toe redesign until this production publish flow passes the real-device acceptance gate.
+- Issue #20 and unrelated cleanup remain backlog.
+- Do not weaken auth, membership, tenant, origin, link, media, or private-guide isolation.
 
 ## Status
-- PR #51 merged to `main` as `b0b85bf44ad8e62a49ba00e407ae6d5e9a29833c` with Firefox Android v0.1.6 recovery, browser-capture server roundtrip coverage, and the core `whop_posts.stale_at` schema repair.
-- Real Firefox Android capture reached the Control Center and created an editable imported guide.
-- PR #52 merged to `main` as `d6e059b29de081ac4db54f0af72bc89e311417d4` with mobile-visible publish state, save-first protection, bounded failure feedback, published locking, and focused regression coverage.
-- Post-merge production validation for the exact merge commit passed the full Node 22 build/regression suite, Cloudflare production visual-route smoke, private-guide production privacy checks, affiliate production readiness, and retired-route safety checks.
-- The duplicate Vercel project still reports its known build-rate-limit failure while the active deployment/status path remains green; this is not an application regression.
+- PR #51 merged: Firefox v0.1.6 app-frame recovery + browser-capture roundtrip + core `whop_posts.stale_at` schema ownership.
+- Real Firefox Android Better Content capture reached SniperPlug and created an editable private draft.
+- PR #52 merged: local publish feedback, dirty-save gate, published locking, Published-filter retention.
+- PR #53 merged: complete D1/SQLite publish lifecycle regression from Better Content capture through save/publish/view/unpublish/republish.
+- Real tablet acceptance then exposed a remaining product defect: the editor showed stacked warnings, an oversized raw-Markdown field, and a red manual-review error when Publish was pressed on an unchanged browser-captured guide.
+- PR #54 is active on `fix/control-review-ux` to repair that exact acceptance failure.
 
 ## Findings / root cause
-### Capture and persistence, resolved
-- v0.1.5 erased valid Firefox app-frame candidates during popup recovery. v0.1.6 preserves/probes the real `*.apps.whop.com` frame and targets exact Firefox frame IDs.
-- Browser capture depended accidentally on backup initialization to create `whop_posts.stale_at`. The core importer workspace now owns that schema state.
+### Capture/persistence defects already resolved
+- Firefox v0.1.5 could erase its own valid Better Content iframe candidate when the popup opened. v0.1.6 preserves/probes the exact `*.apps.whop.com` frame and targets the exact frame ID.
+- Browser capture used to depend on backup initialization to create `whop_posts.stale_at`. Core importer schema setup now owns that column/index.
 
-### Publish-state UX, resolved in code and production deployment
-The server path was already versioned and authoritative:
-`Publish → POST guide-status → reserve guide version → assert publishable → persist status + published_at → read back authoritative guide`.
+### Publish acceptance defect found on the real tablet
+Browser-captured guides intentionally enter D1 with a manual-review-only policy:
+`autoPublishEligible=false` + `manualReviewCompleted=false`.
 
-The confusing behavior was client presentation:
-- Publish success used only the global Control Center status near the top of the page, off-screen from the mobile editor.
-- The default filter was Draft. A successful publish removed the guide from that list while the selected editor remained open, which looked like nothing changed.
-- Published inputs were disabled but visually similar to editable inputs.
-- Publish shared generic unsaved-change discard handling, allowing a user to confirm the warning and publish the last saved version rather than the visible unsaved edits.
+Before PR #54, only **Save draft** changed `manualReviewCompleted` to true. Therefore an unchanged imported guide could be fully reviewed by the owner, but pressing **Publish** still failed with the policy text “Browser-captured app content always requires explicit account review…” until the owner performed a meaningless Save first.
 
-## Current production execution path
-`Firefox Better Content frame → verified v0.1.6 capture → SniperPlug relay → server verification → tenant private draft → Save exact reviewed content → versioned Publish → local server-confirmed Published state → Published queue view → locked fields → View published guide → Edit / unpublish → Draft + editable fields`.
+That is backwards. The authoritative manual Publish request is itself the explicit review action. The safe distinction is:
+- unchanged guide + manual version-reserved Publish → counts as explicit review;
+- edited guide + Publish → still blocked client-side until Save stores the exact visible revision;
+- bulk/automatic publish → does **not** gain manual-review confirmation and stays blocked for manual-review-only imports.
 
-## Implemented publish lifecycle
-### State and action clarity
-- Persistent editor-local state panel: **Draft · not published**, **Published and confirmed**, or **Rejected and private**.
-- Editor-local assertive status next to the action buttons instead of relying on an off-screen page banner.
-- Draft state shows Save / Publish / Reject.
-- Published state hides Save / Publish / Reject and shows **View published guide** plus **Edit / unpublish**.
-- Published form fields are visibly muted and locked.
-- Successful publish switches the queue to the Published filter so the selected guide stays visibly present.
-- Save explicitly confirms that the guide is saved but still private and not published.
-- Publish explicitly confirms that SniperPlug received the server-confirmed published guide.
+The screenshots also showed two persistent warning boxes competing for attention, a raw Markdown textarea consuming most of the tablet viewport, and primary actions pushed to the bottom.
 
-### Unsaved-edit safety
-- Publish has its own save-first gate and is no longer part of the generic discard-confirmation path.
-- Dirty Publish is stopped before any server mutation and tells the user to Save first.
-- This guarantees the reviewed/saved version is the version submitted for publication.
+## Execution path after PR #54
+`Better Content iframe → verified capture → tenant private draft → owner opens guide → unchanged: Publish guide directly OR edited: Save changes first → version-reserved guide-status request → manual Publish records explicit review → attachment/integrity/time-sensitive/link gates still run → D1 status + published_at → canonical guide read-back → Published queue + locked editor → View published guide → Unpublish & edit → Draft`.
 
-### Failure feedback without performance regression
-- Save/Publish begin a bounded action-only status watcher.
-- It checks only while one of those writes is pending and mirrors an authoritative global error beside the editor.
-- It stops on success/failure and has a 125-second fail-closed confirmation limit.
-- An attempted `MutationObserver` implementation was rejected by the existing performance audit because broad DOM observation can recreate mobile input lag; it was removed rather than weakening that performance invariant.
+## PR #54 changes
+### Correct review semantics
+- `assertGuidePublishable()` now records explicit manual review only on its existing version-reserved manual Publish path.
+- `publishReadyGuides()` continues to use the normal audit path and cannot bypass manual-review-only policy.
+- Attachment, blocked-integrity, quarantine, expiration, and link checks remain authoritative after manual review confirmation.
+- Dirty edits remain blocked by the existing lifecycle before a publish mutation can leave the browser.
 
-### Regression coverage
-- `tools/test-guide-publish-feedback.mjs` is part of the full audit chain.
-- It requires save-first publishing, local success/failure feedback, visible published locking, Published-filter transition, no MutationObserver, bounded write-status polling, and preservation of the existing versioned server publication path.
+### Tablet/mobile editor clarity
+- One concise persistent state surface instead of stacked warning boxes.
+- Labels reduced to **Save changes**, **Publish guide**, **Remove draft**, and **Unpublish & edit**.
+- Clean draft copy says it is ready to review; dirty copy says save before publishing.
+- Raw guide textarea is viewport-bounded on tablet/mobile.
+- Primary actions stay reachable in a sticky action bar on coarse-pointer/mobile layouts.
+- Raw Markdown preview is hidden from the normal review path.
+- Featured is moved under **More options**.
+- No new fetch layer, retry mutation, MutationObserver, or alternate publish implementation was added.
 
 ## Validation / results
-### Capture path
-- [x] Firefox candidate-retention and exact-frame regressions.
-- [x] Browser-capture membership + exact-app + D1-compatible source/post/guide roundtrip.
-- [x] Core `stale_at` schema ownership repaired.
-- [x] PR #51 exact-head and post-merge release workflows passed.
-- [x] Production v0.1.6 XPI packaged and inspected.
-- [x] Real Android capture reached SniperPlug as an imported editable guide.
-
-### Publish-state path
-- [x] Dedicated publish-feedback regression added to full audit.
-- [x] Performance regression caught and removed before merge; no broad MutationObserver remains.
-- [x] PR #52 final head green and mergeable with no unresolved review threads.
-- [x] PR #52 merged to `main` as `d6e059b29de081ac4db54f0af72bc89e311417d4`.
-- [x] Post-merge full Node 22 build/regression suite passed.
-- [x] Cloudflare production visual-route smoke passed.
-- [x] Production private-guide privacy smoke passed.
-- [x] Production affiliate readiness smoke passed.
-- [x] Production retired-route safety smoke passed.
-- [ ] Real Android acceptance: dirty Publish blocked; Save says still private; Publish becomes Published and confirmed; fields visibly lock; Published filter retains guide; View published guide works; Edit / unpublish returns to Draft and unlocks editing.
-- [ ] Confirm no duplicate or stale overwrite appears during that real-device sequence.
+- [x] Existing capture, membership, exact-app, tenant, auth, media, backup, recovery, network, concurrency, versioning, and privacy audits pass on PR #54.
+- [x] PR #54 Node 22 full build/regression run #1019 passed.
+- [x] `GUIDE PUBLISH SERVER ROUNDTRIP PASSED` proves:
+  - imported Better Content draft stays private;
+  - bulk publish cannot bypass manual review;
+  - manual Publish is explicit review for an unchanged imported guide;
+  - edited guide still saves exact content before publishing;
+  - publish/view/unpublish/republish works;
+  - no duplicate guide row;
+  - subscriber publishing and unresolved attachment publishing fail closed.
+- [x] `GUIDE PUBLISH FEEDBACK REGRESSION PASSED` proves:
+  - one concise editor state surface;
+  - bounded tablet/mobile guide field and reachable primary actions;
+  - dirty drafts cannot publish stale edits;
+  - manual Publish and bulk-policy behavior remain separated;
+  - versioned server publication remains authoritative.
+- [x] Control Center mobile-flow and hardening audits passed.
+- [x] PR #54 currently has no inline review threads and is mergeable before this task-record update.
+- [ ] Fresh exact-head workflows after this task-record commit.
+- [ ] Merge PR #54 only after the new exact head is green.
+- [ ] Post-merge `main` production checks.
+- [ ] Real Android acceptance on deployed code: open an unchanged imported guide and Publish directly with no manual-review error; verify Published/locked/view state; Unpublish & edit; then modify one field and verify Publish is blocked until Save changes.
 
 ## Cleanup / conflicts
-- `control-center-v2.js` remains the authoritative mutation/render runtime.
-- `control-center-network-guard.js` remains authoritative for versioned `expectedUpdatedAt` write safety and timeouts.
-- Lifecycle owns editor safety and local state feedback only.
-- No duplicate publish implementation, retry mutation, new auth bypass, or server fallback was added.
-- Final production change stayed focused on the importer/publish lifecycle plus its regression and cache-bust.
-- A temporary empty file was accidentally added to `main` in `66d1f7eade65f54711e38bf37e3d384c3ba970c9` and immediately removed in `aa991d9522b17abbc0c5893f444a10ba096cd8c8`. Net repository content was restored before PR #52 began; no user work was overwritten.
+- `control-center-v2.js` remains the sole guide mutation/render runtime.
+- `control-center-network-guard.js` remains authoritative for `expectedUpdatedAt`, timeouts, and stale-write protection.
+- `control-center-lifecycle.js` remains authoritative for dirty-draft protection and confirmed action feedback.
+- `control-center-editor-clarity.js` is presentation/state-copy only. It issues no network requests and creates no alternate persistence path.
+- Bulk publishing remains distinct from manual publishing and does not inherit manual-review confirmation.
+- PR #54 changes only the directly affected editor/publish files and regressions plus this task record.
 
 ## Blockers / risks
-- Automated validation cannot reproduce the owner's authenticated Android touch/scroll session. The only remaining blocker is the real-device production acceptance pass.
-- The whole-site redesign remains intentionally separate until this gate passes; starting it now would violate the active-task lock and make any remaining publish defect harder to isolate.
+- CI cannot reproduce the owner’s authenticated Firefox Nightly touch session. Real-device interaction remains the final acceptance gate after deployment.
+- Manual review confirmation is persisted when the owner explicitly presses Publish even if a later attachment/link/etc. gate blocks publication. Those independent gates still block the guide; a later bulk run still re-audits them. This is intentional because review completion and publishability are separate facts.
+- Duplicate Vercel build-rate-limit statuses are not the active deployment runtime; Cloudflare Pages remains authoritative.
 
 ## Backlog
-- Full SniperPlug head-to-toe information architecture, navigation, mobile layout, action hierarchy, terminology, status/notification system, accessibility, loading/empty/error states, and efficiency pass requested by the user.
+- Full SniperPlug head-to-toe information architecture, navigation, mobile layout, action hierarchy, terminology, status/notification, accessibility, loading/empty/error-state, and efficiency overhaul.
 - Issue #20 and unrelated UI work.
 - Paid subscriber authentication/billing onboarding until a real subscriber identity binds to the tenant-scoped `principalId` model.
 
 ## Next step
-On the real Android production Control Center, run one exact acceptance sequence: make a small edit and verify dirty Publish is blocked; Save and confirm **Draft · not published**; Publish and confirm **Published and confirmed** plus locked fields and Published filter retention; open **View published guide**; use **Edit / unpublish** and confirm the guide returns to Draft with editable fields. If all of that passes without duplicate/stale state, close this active task and begin the queued head-to-toe website UX overhaul as the next active task.
+Require the fresh PR #54 exact head to pass all repository workflows, inspect the final diff/review state, merge to `main`, require post-merge production validation, then perform the short real-tablet acceptance sequence. Only after that passes can this task be closed and the whole-site overhaul become active.
