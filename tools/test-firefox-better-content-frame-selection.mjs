@@ -12,7 +12,8 @@ const background = read('browser-extension/background.js');
 const captureScript = read('browser-extension/content-capture.js');
 const captureApi = read('functions/api/browser-capture.js');
 
-assert.equal(manifest.version, '0.1.5', 'Firefox hardening package version was not bumped.');
+assert.equal(manifest.version, '0.1.6', 'Firefox stable-recovery package version was not bumped.');
+assert.ok(manifest.permissions.includes('webNavigation'), 'Firefox frame inventory permission is missing.');
 assert.deepEqual(
   manifest.content_scripts?.[0]?.matches,
   ['https://*.apps.whop.com/*'],
@@ -24,8 +25,9 @@ assert.ok(appGuard >= 0 && idempotentGuard > appGuard, 'App-frame validation mus
 assert.ok(captureScript.includes("if (!APP_FRAME_HOST || location.protocol !== 'https:') return;"), 'Non-HTTPS or non-app Whop frames are not rejected before DOM extraction.');
 assert.ok(background.includes("candidate?.likelyAppFrame !== true || !isWhopAppHost(candidate?.host)"), 'Background candidate storage still accepts the Whop shell.');
 assert.ok(background.includes('const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);'), 'The current top-level Whop exp_ ID is not linked to the app frame.');
-assert.ok(background.includes('await clearCandidatesForTab(tab.id);'), 'A fresh popup probe can still reuse stale frame candidates.');
-assert.ok(background.includes('waitForAppCandidate'), 'Firefox recovery still returns before the Better Content app frame has time to register.');
+assert.ok(background.includes('verifyCandidate') && !background.includes('await clearCandidatesForTab(tab.id);'), 'Popup recovery can still erase a known-good app-frame candidate before verifying it.');
+assert.ok(background.includes('chrome.webNavigation?.getAllFrames') && background.includes('frameIds: [frameId]'), 'Firefox recovery does not target the exact app frame discovered by browser frame inventory.');
+assert.ok(background.includes('APP_FRAME_SETTLE_MS = 4000'), 'Mobile app-frame recovery window is too short for a loaded Firefox Android tab.');
 assert.ok(captureApi.includes('requireWhopAppFrameCaptures(body)'), 'The server API does not independently reject shell-frame captures.');
 
 const appUrl = 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/profit';
@@ -47,8 +49,11 @@ const whopTab = {
 };
 let runtimeListener = null;
 let removedListener = null;
+let committedListener = null;
 let captureFrameId = null;
 let returnBadCapture = false;
+let broadInjectionCount = 0;
+let targetedInjectionCount = 0;
 
 function storageGet(key) {
   if (typeof key === 'string') return { [key]: storageState[key] };
@@ -113,6 +118,7 @@ const context = {
         return [];
       },
       sendMessage: async (_tabId, message, options = {}) => {
+        if (message?.type === 'sniperplug:probe-now') return { ok: true };
         if (message?.type === 'sniperplug:capture-now') {
           captureFrameId = options.frameId;
           if (!returnBadCapture) return { ok: true, capture: goodCapture };
@@ -140,35 +146,38 @@ const context = {
     windows: {
       update: async () => ({}),
     },
+    webNavigation: {
+      getAllFrames: async ({ tabId }) => {
+        assert.equal(tabId, whopTab.id);
+        return [
+          { frameId: 0, url: whopTab.url },
+          { frameId: 4, url: appUrl },
+        ];
+      },
+      onCommitted: {
+        addListener: (listener) => { committedListener = listener; },
+      },
+    },
     scripting: {
       executeScript: async ({ target, files }) => {
-        assert.equal(target?.tabId, whopTab.id);
-        assert.equal(target?.allFrames, true);
         assert.deepEqual(Array.from(files || []), ['content-capture.js']);
-
-        await dispatch({
-          type: 'sniperplug:candidate',
-          candidate: {
-            experienceId: 'exp_rpaFYR2AD7Mb9d',
-            title: 'SniperPlug Better Content Capture',
-            pageUrl: whopTab.url,
-            textLength: 112,
-            host: 'whop.com',
-            likelyAppFrame: false,
-          },
-        }, { tab: whopTab, frameId: 0 });
-
-        await dispatch({
-          type: 'sniperplug:candidate',
-          candidate: {
-            experienceId: '',
-            title: '$2000+ PROFIT WITH NO RISK',
-            pageUrl: appUrl,
-            textLength: 3428,
-            host: 'mfk8y74zmein6tne8o5e.apps.whop.com',
-            likelyAppFrame: true,
-          },
-        }, { tab: whopTab, frameId: 4 });
+        if (Array.isArray(target?.frameIds)) {
+          targetedInjectionCount += 1;
+          assert.deepEqual(Array.from(target.frameIds), [4]);
+          await dispatch({
+            type: 'sniperplug:candidate',
+            candidate: {
+              experienceId: '',
+              title: '$2000+ PROFIT WITH NO RISK',
+              pageUrl: appUrl,
+              textLength: 3428,
+              host: 'mfk8y74zmein6tne8o5e.apps.whop.com',
+              likelyAppFrame: true,
+            },
+          }, { tab: whopTab, frameId: 4 });
+          return [];
+        }
+        if (target?.allFrames === true) broadInjectionCount += 1;
         return [];
       },
     },
@@ -177,6 +186,19 @@ const context = {
 context.globalThis = context;
 runInNewContext(background, context, { filename: 'browser-extension/background.js' });
 assert.equal(typeof removedListener, 'function', 'Tab cleanup listener was not registered.');
+assert.equal(typeof committedListener, 'function', 'Frame-navigation cleanup listener was not registered.');
+
+await dispatch({
+  type: 'sniperplug:candidate',
+  candidate: {
+    experienceId: 'exp_rpaFYR2AD7Mb9d',
+    title: 'SniperPlug Better Content Capture',
+    pageUrl: whopTab.url,
+    textLength: 112,
+    host: 'whop.com',
+    likelyAppFrame: false,
+  },
+}, { tab: whopTab, frameId: 0 });
 
 const popupState = await dispatch({ type: 'sniperplug:popup-state', tabId: whopTab.id });
 assert.equal(popupState.ok, true);
@@ -184,6 +206,8 @@ assert.equal(popupState.candidate?.host, 'mfk8y74zmein6tne8o5e.apps.whop.com', '
 assert.equal(popupState.candidate?.title, '$2000+ PROFIT WITH NO RISK');
 assert.equal(popupState.candidate?.experienceId, 'exp_rpaFYR2AD7Mb9d', 'Current top-level experience ID was not attached to the app frame.');
 assert.equal(popupState.candidateCount, 1, 'Shell candidates should never enter the usable capture candidate set.');
+assert.equal(targetedInjectionCount, 1, 'Recovery did not target the exact app frame once.');
+assert.equal(broadInjectionCount, 0, 'Broad all-frame injection ran despite a known app frame.');
 
 const captureResult = await dispatch({ type: 'sniperplug:capture-current', tabId: whopTab.id });
 assert.equal(captureResult.ok, true);
@@ -198,5 +222,6 @@ assert.match(rejectedShellCapture.error, /did not come from the rendered Better 
 console.log('\nFIREFOX BETTER CONTENT FRAME SELECTION REGRESSION PASSED\n');
 console.log('✓ Top-level whop.com shell candidate is ignored even when it carries the exp_ ID.');
 console.log('✓ Current Whop tab exp_ identity is attached to the real *.apps.whop.com frame.');
-console.log('✓ Fresh all-frame recovery selects frame 4 rather than frame 0.');
+console.log('✓ Firefox frame inventory targets frame 4 directly rather than clearing/rebuilding every frame.');
+console.log('✓ Verified app-frame candidates survive popup recovery and Capture page targets the same frame.');
 console.log('✓ Shell-frame capture payloads are rejected by both extension queue and server preflight.');
