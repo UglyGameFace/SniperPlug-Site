@@ -65,15 +65,41 @@
   let dirty = false;
   let backupTimer = null;
   let loading = false;
+  let actionWatchTimer = null;
 
   function currentStatus() {
     return status.textContent.trim().toLowerCase();
+  }
+
+  function stopActionWatch() {
+    if (actionWatchTimer != null) clearTimeout(actionWatchTimer);
+    actionWatchTimer = null;
   }
 
   function setActionStatus(text, type = 'ok') {
     actionStatus.textContent = String(text || '');
     actionStatus.dataset.type = type;
     actionStatus.hidden = !text;
+    if (!/^(Publishing|Saving)\b/.test(actionStatus.textContent.trim())) stopActionWatch();
+  }
+
+  function watchPendingFailure() {
+    stopActionWatch();
+    const startedAt = Date.now();
+    const poll = () => {
+      if (actionStatus.hidden || !/^(Publishing|Saving)\b/.test(actionStatus.textContent.trim())) return stopActionWatch();
+      if (globalStatus instanceof HTMLElement && !globalStatus.hidden && globalStatus.dataset.type === 'error') {
+        const text = globalStatus.textContent.trim();
+        if (text) setActionStatus(text, 'error');
+        return;
+      }
+      if (Date.now() - startedAt >= 125_000) {
+        setActionStatus('SniperPlug did not receive a confirmed result. Refresh the saved guide status before retrying so the action is not submitted twice.', 'error');
+        return;
+      }
+      actionWatchTimer = setTimeout(poll, 250);
+    };
+    actionWatchTimer = setTimeout(poll, 100);
   }
 
   function fieldValue(name) {
@@ -210,23 +236,6 @@
     return !dirty || window.confirm('This guide has unsaved changes. Continue without saving? A local recovery copy will remain available.');
   }
 
-  function mirrorPendingFailure() {
-    if (!(globalStatus instanceof HTMLElement) || globalStatus.hidden || globalStatus.dataset.type !== 'error' || actionStatus.hidden) return;
-    if (!/^(Publishing|Saving)\b/.test(actionStatus.textContent.trim())) return;
-    const text = globalStatus.textContent.trim();
-    if (text) setActionStatus(text, 'error');
-  }
-
-  if (globalStatus instanceof HTMLElement) {
-    new MutationObserver(mirrorPendingFailure).observe(globalStatus, {
-      attributes: true,
-      attributeFilter: ['hidden', 'data-type'],
-      childList: true,
-      characterData: true,
-      subtree: true,
-    });
-  }
-
   editor.addEventListener('input', updateDirty);
   editor.addEventListener('change', updateDirty);
   editor.addEventListener('submit', () => {
@@ -234,6 +243,7 @@
     message.textContent = 'Saving draft…';
     message.dataset.state = 'working';
     setActionStatus('Saving draft and validating the exact content…', 'ok');
+    watchPendingFailure();
   });
 
   document.addEventListener('click', (event) => {
@@ -250,6 +260,7 @@
         return;
       }
       setActionStatus('Publishing and waiting for server confirmation…', 'ok');
+      watchPendingFailure();
       return;
     }
 
@@ -268,6 +279,7 @@
   });
 
   root.addEventListener('sniperplug:guide-loaded', (event) => {
+    stopActionWatch();
     loading = true;
     syncLockState();
     const mode = event.detail?.mode || 'select';
