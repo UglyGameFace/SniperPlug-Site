@@ -10,22 +10,41 @@ Make finished bulk importer workflows unmistakable in the Control Center, especi
 - Do not alter Whop authorization, import/publish semantics, guide status, tenant ownership, recovery, media policy, billing, or private-guide safety.
 - Remaining requested work will continue sequentially after this focused task: branch-check governance where connector permissions allow it, issue #25 custom Whop app readers, paid-subscriber onboarding, and the larger product/UX redesign.
 
-## Starting state
-- `main` starts this task at `2c1c6336fc0de14a116801a45a25619b20b3812c` after the completed public-logo optimization.
+## Starting state / root cause
+- Starting `main`: `2c1c6336fc0de14a116801a45a25619b20b3812c`.
 - Working branch: `improve/bulk-completion-outcome`.
+- PR #58: **Clarify bulk completion outcomes**.
 - `functions/_lib/bulk-jobs.js` already returns `outcome: completed-with-issues|completed-successfully` and `issueCount` from server-confirmed failures/held categories.
-- `assets/js/control-center-v2.js` currently renders every completed workflow with the generic heading `Bulk job completed`, followed by counts. That makes a workflow with held/failed items look deceptively similar to a clean run.
-- `assets/js/control-center-bulk-reset.js` already owns finished-job aftermath/reset UI and already refreshes `/api/bulk-jobs`, so it is the narrowest place to add a subordinate completion explanation without duplicating the authoritative progress renderer.
+- `assets/js/control-center-v2.js` renders every completed workflow with the generic heading `Bulk job completed`, followed by counts. A workflow with held/failed items therefore looked deceptively similar to a clean run.
+- `assets/js/control-center-bulk-reset.js` already owns finished-job aftermath/reset UI and already refreshes `/api/bulk-jobs`, making it the narrowest place for a subordinate explanation without duplicating the authoritative progress renderer.
 
-## Definition of Done
-- [ ] Clean completion explicitly says all processed items finished without held/failed issues.
-- [ ] Completion with issues explicitly says how many issues need review and that successful publications remain intact.
-- [ ] Show the server-provided issue breakdown for source failures, item failures, held files, held integrity/policy, held links, and held permissions when nonzero.
-- [ ] Do not label a completed-with-issues workflow as failure or imply successful publications were rolled back.
-- [ ] Keep reset/stop behavior unchanged.
-- [ ] Add an accessible live outcome note under the existing bulk job card rather than replacing the v2 title/summary renderer.
-- [ ] Add targeted regression coverage proving both clean and issue outcomes and preventing a second mutation/state implementation.
-- [ ] Run exact-head full Node 22 regression plus Cloudflare preview checks, inspect diff/review state, merge, then require post-merge production checks.
+## Implementation
+- [x] Added a persistent, accessible `data-bulk-job-outcome` note under the existing bulk job summary.
+- [x] Clean completion explicitly says every processed source finished without held or failed items.
+- [x] Completed-with-issues explicitly states the issue count, says successful publications remain published, and says held/failed items need review rather than being silently treated as clean success.
+- [x] Exposes the server-provided nonzero breakdown for source failures, item failures, held files, integrity/policy holds, link holds, and permission holds.
+- [x] Leaves active/canceled jobs without a misleading completion outcome note.
+- [x] Keeps reset/stop behavior unchanged.
+- [x] Keeps `control-center-v2.js` as the authoritative bulk title/progress renderer. The helper does not query or rewrite `[data-bulk-job-title]` or `[data-bulk-job-summary]`.
+- [x] Keeps `/api/bulk-jobs` read-only in the helper; only the pre-existing `/api/bulk-job-reset` endpoint mutates finished-job state.
+- [x] Adds `tools/test-bulk-completion-outcome.mjs` to the full audit chain.
+- [x] Adds no `MutationObserver`, second state machine, or duplicate publication/import mutation path.
+
+## Validation / results
+- [x] Net PR diff inspected: exactly four scoped files (`ACTIVE_TASK.md`, `assets/js/control-center-bulk-reset.js`, `package.json`, and `tools/test-bulk-completion-outcome.mjs`). Temporary files accidentally created while operating the connector were deleted immediately and are absent from the PR diff.
+- [x] Code head `80c79761359c290af6178fc24cb0fa0162630c09` passed **Verify SniperPlug #1038**, including the complete Node 22 audit/build suite and Firefox Android extension packaging.
+- [x] The same code head passed **Verify affiliate-ready preview #112**.
+- [x] The same code head passed **Verify retired public deal routes #112**.
+- [x] PR #58 is mergeable and has no inline review threads.
+- [ ] Fresh exact-head validation after this final task-record commit.
+- [ ] Merge PR #58 only after the fresh exact head remains green.
+- [ ] Post-merge Node 22, production affiliate/visual, private-guide privacy, and any path-triggered retired-route checks.
+
+## Safety / compatibility
+- No Whop authorization, import, publication, guide status, tenant ownership, recovery, media, billing, or private-guide implementation changed.
+- Successful publications are never described as rolled back merely because another item was held or failed.
+- The helper consumes the existing server `outcome`, `issueCount`, `summary`, and `failures`; it does not independently decide import success from client-only state.
+- Static JavaScript delivery uses `Cache-Control: public, max-age=0, must-revalidate`, so the updated helper is revalidated without introducing another cache-bust mechanism.
 
 ## Backlog after this task
 - Required branch-check governance if repository administration endpoints are writable through the active GitHub connection.
@@ -34,4 +53,4 @@ Make finished bulk importer workflows unmistakable in the Control Center, especi
 - Larger product/brand/UX redesign across the public site and Control Center.
 
 ## Next step
-Implement the completion explanation in the existing bulk reset/aftermath helper, add a regression, and validate the exact branch head before merge.
+Require fresh CI on this exact task-record head. If all scheduled checks remain green and review state stays clean, merge PR #58 and verify the resulting production `main` before closing this task and moving directly to the next backlog item.
