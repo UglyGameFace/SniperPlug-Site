@@ -42,10 +42,10 @@ assert.ok(!existsSync(join(root, 'browser-extension/frame-url-compat.js')), 'The
 assert.ok(!/document\.cookie|chrome\.cookies|localStorage|sessionStorage/.test(captureScript), 'The Whop content script reads browser credentials or persistent site storage.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must remain DOM-only instead of probing Better Content private APIs.');
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
-const appFrameGuardIndex = captureScript.indexOf('const APP_FRAME_HOST = effectiveAppHost();');
+const appFrameGuardIndex = captureScript.indexOf('const APP_FRAME_HOST = isWhopAppHost(location.hostname)');
 const reinjectionIndex = captureScript.indexOf('globalThis.__sniperplugBetterContentCapture?.registerCandidate');
 assert.ok(appFrameGuardIndex >= 0 && reinjectionIndex > appFrameGuardIndex, 'App-frame validation must happen before the reinjection shortcut.');
-assert.ok(captureScript.includes('if (!APP_FRAME_HOST) return;') && captureScript.includes("endsWith('.apps.whop.com')"), 'The content extractor can still run against the Whop shell.');
+assert.ok(captureScript.includes("if (!APP_FRAME_HOST || location.protocol !== 'https:') return;") && captureScript.includes("endsWith('.apps.whop.com')"), 'The content extractor can still run against the Whop shell or a non-HTTPS document.');
 assert.ok(captureScript.includes('currentAppFrameFallbackUrl') && captureScript.includes('return currentFrameFallback'), 'Firefox current-frame HTTPS fallback is not kept inside the app-frame extractor.');
 assert.ok(captureScript.includes('__sniperplugBetterContentCapture') && captureScript.includes('registerCandidate'), 'Dynamic reinjection can create duplicate capture observers instead of reprobeing the existing frame.');
 assert.ok(!captureScript.includes('Object.defineProperty(globalThis, \'URL\'') && !captureScript.includes('SniperPlugURL'), 'The global URL constructor is being monkeypatched again.');
