@@ -85,6 +85,7 @@ The existing browser-capture audit was strengthened to enforce app-frame-only ex
 - PR #46: browser capture source-row FK materialization/verification.
 - PR #47: stable account principal separated from browser session identity.
 - PR #48: complete importer workspace tenant isolation, owner-only public publishing, principal-scoped backup/reset/restore/recovery/bulk/history.
+- PR #50 merged at `02c8e7791a5cc5001dcb32c740ae161f8e9a7fa8`: Firefox v0.1.5 app-frame-only capture hardening and server origin defense.
 
 ## Validation
 - [x] Exact live v0.1.4 shell false-positive reproduced as an executable test case.
@@ -94,8 +95,11 @@ The existing browser-capture audit was strengthened to enforce app-frame-only ex
 - [x] Full importer/discovery/OAuth/tenant/backups/recovery/media/control-center regressions remained green.
 - [x] Firefox XPI packaging and ZIP integrity passed.
 - [x] Affiliate preview and retired-route workflows remained green.
-- [ ] Re-run full CI on the final PR #50 documentation/task-record head.
-- [ ] Merge PR #50 only if final head is current with main, mergeable, review-thread clean, and CI green.
+- [x] Exact final PR #50 head `4b399a66944ef66f9a3a46eeabfac37b3aadce04` passed Verify SniperPlug #998, affiliate preview #95, and retired-route #92.
+- [x] PR #50 was 0 behind `main`, mergeable, and had no inline review threads before merge.
+- [x] PR #50 merged to `main` at `02c8e7791a5cc5001dcb32c740ae161f8e9a7fa8`.
+- [x] Post-merge main passed Verify SniperPlug #999, production guide privacy #70, affiliate production #66, and retired-route #93.
+- [x] Production-built v0.1.5 CI artifact was retrieved; the XPI archive passed `unzip -t` and is 15,376 bytes.
 - [ ] Install the fresh v0.1.5 XPI on Firefox Nightly and verify the card shows the actual guide title plus `*.apps.whop.com`, never `whop.com`.
 - [ ] Capture one page and verify `1 page queued`.
 - [ ] Send it and verify one private SniperPlug draft exists in the current tenant workspace.
@@ -118,4 +122,4 @@ CI cannot execute against the owner's private live Better Content DOM. The remai
 - Paid subscriber authentication/billing onboarding remains separate from this active capture correctness gate and must not be enabled until a real subscriber identity binds to `principalId`.
 
 ## Next step
-After PR #50 is final-head green and merged, install a fresh v0.1.5 XPI, keep one **Hidden Files → Make Money Here** guide visibly rendered in Firefox Nightly, and open SniperPlug Capture. The acceptable card must show the actual guide and an `*.apps.whop.com` host. Anything else is a failure and continues this same task at the exact failing step.
+Install the fresh v0.1.5 XPI, keep one **Hidden Files → Make Money Here** guide visibly rendered in Firefox Nightly, and open SniperPlug Capture. The acceptable card must show the actual guide and an `*.apps.whop.com` host. Anything else is a failure and continues this same task at the exact failing step. Once that card is correct, capture one page, require `1 page queued`, send it, and verify the private draft before enabling multi-page auto-capture.
