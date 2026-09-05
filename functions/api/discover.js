@@ -1,5 +1,6 @@
 import { requireAdmin } from '../_lib/auth.js';
 import { enforceLiveWhopAccess } from '../_lib/access-truth.js';
+import { annotateWhopAppReaders } from '../_lib/whop-app-reader.js';
 import { discoverWhopSources, isTransientDiscoveryError, loadWhopMemberships } from '../_lib/discovery.js';
 import { HttpError, json, methodNotAllowed } from '../_lib/http.js';
 import { requireWhopSession } from '../_lib/whop.js';
@@ -28,7 +29,8 @@ export async function onRequest(context) {
     const session = await requireWhopSession(context.request, context.env, admin);
     const memberships = await loadWhopMemberships(session);
     const discovered = await discoverWhopSources(session, context.env, admin, memberships);
-    return json(await enforceLiveWhopAccess(session, discovered, memberships));
+    const accessVerified = await enforceLiveWhopAccess(session, discovered, memberships);
+    return json(annotateWhopAppReaders(accessVerified));
   } catch (error) {
     return discoveryError(error);
   }
