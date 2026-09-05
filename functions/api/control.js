@@ -45,7 +45,6 @@ import {
 } from '../_lib/source-policy.js';
 import {
   disconnectWhop,
-  purgeLegacyWhopSessions,
   requireWhopSession,
   resolveWhopExperienceType,
   whopSessionSummary,
@@ -88,11 +87,18 @@ function requestedSourceValues(body) {
   return values;
 }
 
+function accountSummary(session) {
+  return {
+    principalId: String(session?.principalId || session?.sid || ''),
+    kind: String(session?.kind || 'owner'),
+  };
+}
+
 async function login(request, env) {
   if (request.method === 'GET') {
     try {
       const session = await requireAdmin(request, env);
-      return json({ authenticated: true, expiresAt: session.expiresAt });
+      return json({ authenticated: true, expiresAt: session.expiresAt, account: accountSummary(session) });
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) return json({ authenticated: false }, 200);
       throw error;
@@ -107,9 +113,8 @@ async function login(request, env) {
       throw new HttpError(401, 'Incorrect Control Center password.');
     }
     await clearLoginFailures(request, env);
-    await purgeLegacyWhopSessions(env);
     const result = await createAdminSession(env);
-    return appendCookie(json({ authenticated: true, expiresAt: result.session.expiresAt }), result.cookie);
+    return appendCookie(json({ authenticated: true, expiresAt: result.session.expiresAt, account: accountSummary(result.session) }), result.cookie);
   }
   if (request.method === 'DELETE') {
     requireSameOrigin(request);
@@ -210,6 +215,7 @@ async function dashboard(request, env, admin, context) {
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
   if (mediaStorageUsage.inventoryDue || mediaStorageUsage.cleanupDue) scheduleMediaMaintenance(context, env);
   return json({
+    account: accountSummary(admin),
     whop,
     capabilities: {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
