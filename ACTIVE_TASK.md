@@ -1,49 +1,56 @@
 # Active Task
 
 ## Active task / outcome
-No implementation task is currently active. The public-logo single-source optimization is completed and merged.
+Make finished bulk importer workflows unmistakable in the Control Center, especially the difference between a clean completion and a completion that safely held or failed some items.
 
-## Completed outcome
-PR #57, **Make the public logo single-source**, removed the duplicate embedded/runtime SniperPlug logo path and made `/assets/sniperplug-logo-exact.png` the sole authoritative logo image source.
+## Scope lock
+- Active scope: bulk-job completion outcome copy/presentation, the existing bulk reset/aftermath helper, targeted regression coverage, and only the package audit hook required to run that regression.
+- Keep `assets/js/control-center-v2.js` as the authoritative bulk progress/title renderer and keep `functions/_lib/bulk-jobs.js` as the authoritative server outcome source.
+- Do not add another mutation path, another job state machine, or another broad observer.
+- Do not alter Whop authorization, import/publish semantics, guide status, tenant ownership, recovery, media policy, billing, or private-guide safety.
+- Remaining requested work will continue sequentially after this focused task: branch-check governance where connector permissions allow it, issue #25 custom Whop app readers, paid-subscriber onboarding, and the larger product/UX redesign.
 
-## Root cause removed
-- `site-shell.css` already rendered `.brand-mark` from the approved static PNG.
-- `site.js` separately embedded the exact same PNG as a large base64 payload, created an `<img>`, restyled the mark inline, and replaced its contents after DOMContentLoaded.
-- That second renderer provided no unique behavior while increasing public JavaScript payload, startup DOM work, and branding drift risk.
+## Starting state / root cause
+- Starting `main`: `2c1c6336fc0de14a116801a45a25619b20b3812c`.
+- Working branch: `improve/bulk-completion-outcome`.
+- PR #58: **Clarify bulk completion outcomes**.
+- `functions/_lib/bulk-jobs.js` already returns `outcome: completed-with-issues|completed-successfully` and `issueCount` from server-confirmed failures/held categories.
+- `assets/js/control-center-v2.js` renders every completed workflow with the generic heading `Bulk job completed`, followed by counts. A workflow with held/failed items therefore looked deceptively similar to a clean run.
+- `assets/js/control-center-bulk-reset.js` already owns finished-job aftermath/reset UI and already refreshes `/api/bulk-jobs`, making it the narrowest place for a subordinate explanation without duplicating the authoritative progress renderer.
 
-## Changes merged
-- Removed the embedded base64 PNG from `assets/js/site.js`.
-- Removed the duplicate `.brand-mark` runtime query, image creation, inline logo styling, DOM replacement, and branding data attributes.
-- Preserved mobile Owner access pinning and deal-card filtering behavior in `site.js`.
-- Removed dead `.brand-mark img` CSS left behind by the runtime renderer.
-- Kept `.brand-mark` rendering the approved static PNG through the global shell CSS.
-- Kept the approved PNG unchanged at 96×96 with SHA-256 `3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86`.
-- Updated homepage/public-theme audits to require the single static/CSS owner and fail if an embedded/runtime logo renderer reappears.
-- Updated Cloudflare preview and production smoke checks to validate the exact static PNG, the single CSS reference, absence of the old runtime duplicate, and retention of the remaining public runtime behavior.
+## Implementation
+- [x] Added a persistent, accessible `data-bulk-job-outcome` note under the existing bulk job summary.
+- [x] Clean completion explicitly says every processed source finished without held or failed items.
+- [x] Completed-with-issues explicitly states the issue count, says successful publications remain published, and says held/failed items need review rather than being silently treated as clean success.
+- [x] Exposes the server-provided nonzero breakdown for source failures, item failures, held files, integrity/policy holds, link holds, and permission holds.
+- [x] Leaves active/canceled jobs without a misleading completion outcome note.
+- [x] Keeps reset/stop behavior unchanged.
+- [x] Keeps `control-center-v2.js` as the authoritative bulk title/progress renderer. The helper does not query or rewrite `[data-bulk-job-title]` or `[data-bulk-job-summary]`.
+- [x] Keeps `/api/bulk-jobs` read-only in the helper; only the pre-existing `/api/bulk-job-reset` endpoint mutates finished-job state.
+- [x] Adds `tools/test-bulk-completion-outcome.mjs` to the full audit chain.
+- [x] Adds no `MutationObserver`, second state machine, or duplicate publication/import mutation path.
 
 ## Validation / results
-- [x] Implementation diff inspected: seven scoped files only; no Control Center, importer, auth, tenant, publication, recovery, billing, or private-guide implementation changed.
-- [x] PR head `0c7ccc54cf2a79885c7f5087f19b2a55c0eb3e3e` passed Verify SniperPlug #1034 and affiliate-ready preview #110.
-- [x] Final PR head `c04eb5a789f5c74cd9463e0b2e327da98384647f` passed Verify SniperPlug #1035 and affiliate-ready preview #111.
-- [x] Final PR state was mergeable with no inline review threads.
-- [x] PR #57 merged to `main` as `85894041773d48a76e0b70834fa112676dfdf52f`.
-- [x] Post-merge Verify SniperPlug #1036 passed, including the complete Node 22 build/regression suite and Firefox Android extension packaging.
-- [x] Post-merge affiliate-ready production #80 passed against the deployed public visual route surface and the new single-source logo contract.
-- [x] Post-merge production guide privacy #84 passed.
-- [x] Retired-route workflow did not run because none of this task's changed paths are included in that workflow's push/pull-request path filter. The full Node suite still includes the retired-deal static regression, and no retired route implementation changed.
+- [x] Net PR diff inspected: exactly four scoped files (`ACTIVE_TASK.md`, `assets/js/control-center-bulk-reset.js`, `package.json`, and `tools/test-bulk-completion-outcome.mjs`). Temporary files accidentally created while operating the connector were deleted immediately and are absent from the PR diff.
+- [x] Code head `80c79761359c290af6178fc24cb0fa0162630c09` passed **Verify SniperPlug #1038**, including the complete Node 22 audit/build suite and Firefox Android extension packaging.
+- [x] The same code head passed **Verify affiliate-ready preview #112**.
+- [x] The same code head passed **Verify retired public deal routes #112**.
+- [x] PR #58 is mergeable and has no inline review threads.
+- [ ] Fresh exact-head validation after this final task-record commit.
+- [ ] Merge PR #58 only after the fresh exact head remains green.
+- [ ] Post-merge Node 22, production affiliate/visual, private-guide privacy, and any path-triggered retired-route checks.
 
 ## Safety / compatibility
-- No approved artwork bytes changed.
-- Logo rendering is now available directly through CSS/static asset delivery and no longer waits for JavaScript or mutates the brand mark after DOMContentLoaded.
-- The fallback `SP` markup remains but is visually suppressed by the same `.brand-mark` CSS that owns the PNG, so there is no second image source.
-- No auth, Whop access, tenant, publication, backup, media, recovery, billing, or private-guide safety gate was weakened.
+- No Whop authorization, import, publication, guide status, tenant ownership, recovery, media, billing, or private-guide implementation changed.
+- Successful publications are never described as rolled back merely because another item was held or failed.
+- The helper consumes the existing server `outcome`, `issueCount`, `summary`, and `failures`; it does not independently decide import success from client-only state.
+- Static JavaScript delivery uses `Cache-Control: public, max-age=0, must-revalidate`, so the updated helper is revalidated without introducing another cache-bust mechanism.
 
-## Backlog
-- Canonical bulk completed-with-issues UX wording refinement.
-- Required branch-check governance if repository administration access becomes available; current `main` branch protection is disabled.
+## Backlog after this task
+- Required branch-check governance if repository administration endpoints are writable through the active GitHub connection.
 - Issue #25 custom Whop app readers.
 - Paid-subscriber authentication/billing onboarding.
-- Larger product/brand redesign work.
+- Larger product/brand/UX redesign across the public site and Control Center.
 
 ## Next step
-No coding task is active. Select the next focused improvement from the backlog rather than combining unrelated changes into this completed optimization.
+Require fresh CI on this exact task-record head. If all scheduled checks remain green and review state stays clean, merge PR #58 and verify the resulting production `main` before closing this task and moving directly to the next backlog item.

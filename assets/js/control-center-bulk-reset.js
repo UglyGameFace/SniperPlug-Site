@@ -5,6 +5,22 @@
   if (!(panel instanceof HTMLElement)) return;
 
   const row = panel.querySelector('.button-row') || panel;
+  const summaryBlock = panel.firstElementChild;
+
+  const outcome = document.createElement('section');
+  outcome.className = 'control-status bulk-job-outcome';
+  outcome.dataset.bulkJobOutcome = '';
+  outcome.setAttribute('role', 'status');
+  outcome.setAttribute('aria-live', 'polite');
+  outcome.hidden = true;
+
+  const outcomeTitle = document.createElement('strong');
+  const outcomeCopy = document.createElement('span');
+  const outcomeBreakdown = document.createElement('small');
+  outcome.append(outcomeTitle, outcomeCopy, outcomeBreakdown);
+  if (summaryBlock instanceof HTMLElement && summaryBlock !== row) summaryBlock.after(outcome);
+  else panel.prepend(outcome);
+
   const control = document.createElement('button');
   control.type = 'button';
   control.className = 'btn ghost';
@@ -31,9 +47,50 @@
     return data;
   }
 
+  function issueBreakdown(job) {
+    const summary = job?.summary || {};
+    const counts = [
+      ['source failures', Number(job?.failures?.length || 0)],
+      ['item failures', Number(summary.itemFailures || 0)],
+      ['files held', Number(summary.heldFiles || 0)],
+      ['integrity/policy holds', Number(summary.heldIntegrity || 0)],
+      ['link holds', Number(summary.heldLinks || 0)],
+      ['permission holds', Number(summary.heldPermissions || 0)],
+    ].filter(([, count]) => count > 0);
+    return counts.map(([label, count]) => `${count} ${label}`).join(' · ');
+  }
+
+  function renderOutcome(job) {
+    if (!job || job.status !== 'completed') {
+      outcome.hidden = true;
+      outcome.removeAttribute('data-state');
+      outcomeTitle.textContent = '';
+      outcomeCopy.textContent = '';
+      outcomeBreakdown.textContent = '';
+      return;
+    }
+
+    const issueCount = Math.max(0, Number(job.issueCount || 0));
+    const hasIssues = job.outcome === 'completed-with-issues' || issueCount > 0;
+    outcome.hidden = false;
+    outcome.dataset.state = hasIssues ? 'warning' : 'ok';
+
+    if (hasIssues) {
+      outcomeTitle.textContent = `Completed with ${issueCount || 'some'} issue${issueCount === 1 ? '' : 's'}.`;
+      outcomeCopy.textContent = ' Successful publications remain published. Held or failed items were kept out of the live result and need review; nothing was silently treated as a clean success.';
+      outcomeBreakdown.textContent = issueBreakdown(job) || 'Review the held and failed counts above before clearing this finished workflow.';
+      return;
+    }
+
+    outcomeTitle.textContent = 'Completed successfully.';
+    outcomeCopy.textContent = ' Every processed source finished without held or failed items.';
+    outcomeBreakdown.textContent = 'The finished workflow can be cleared when you no longer need this completion card.';
+  }
+
   function render(job) {
     current = job || null;
     control.hidden = !current;
+    renderOutcome(current);
     if (!current) return;
     const active = current.status === 'active';
     control.textContent = active ? 'Stop current job' : 'Clear finished job';
