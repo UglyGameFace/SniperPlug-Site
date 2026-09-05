@@ -1,123 +1,121 @@
 # Active Task
 
 ## Active task / outcome
-Repair the Whop importer end to end so it can become a safe subscription product, while preserving the concrete live target **Hidden Files → Make Money Here → Better Content** through the Firefox Android rendered-DOM capture bridge.
+Repair the Whop importer end to end so it can become a safe subscription product while preserving the concrete live target **Hidden Files → Make Money Here → Better Content** through Firefox Android rendered-DOM capture.
 
-The task is not complete until both conditions hold:
-1. one real Make Money Here page reaches SniperPlug as a private draft through the existing v0.1.4 queue/retry path; and
-2. importer connection/workspace data is isolated by the authenticated SniperPlug account principal so future subscribers cannot read, overwrite, disconnect, reset, restore, publish, or purge one another.
+The task is not complete until one real Make Money Here page reaches SniperPlug as a private draft through the hardened mobile capture path. Subscription onboarding also remains disabled until a real subscriber account identity is bound to the already tenant-scoped `principalId` model.
 
 ## Scope lock
-- Stay on Whop importer/subscription isolation only.
+- Stay on Whop importer / Better Content mobile capture / tenant isolation only.
 - Issue #20, general UI redesign, and unrelated work remain backlog.
-- No guessed Better Content endpoints, Whop credential forwarding, extra OAuth scopes, or weakened OAuth/cookie checks.
+- No guessed Better Content endpoints, iframe/JWT theft, Whop cookie reading, OAuth-token forwarding, extra OAuth scopes, or weakened auth/cookie checks.
+- Browser capture remains user-triggered, rendered-DOM only, and private-draft only.
 
-## Status
-- PR #34 merged: membership access false-denial fix.
-- PR #35 merged: OAuth callback/login-loop fix.
-- PR #36 merged: source-access truth/loading/fan-out fix.
-- PR #37 merged: Experiences `account_id` contract fix.
-- PR #38 merged: user-OAuth-compatible custom-app reader metadata.
-- PR #39 merged: Better Content rendered-DOM capture bridge.
-- PR #41 merged: Firefox Android package support.
-- PR #45 merged: v0.1.4 all-frame recovery for already-open Whop tabs.
-- PR #46 merged: browser capture materializes/verifies its `whop_posts` FK row before the guide draft write.
-- PR #47 merged at `2da4e0d3667f45cbafd69975967e76fdad66b199`: browser-session identity is separate from stable account principal and Whop connection lifecycle is principal-scoped.
-- PR #48 merged at `78171001834444181eabf90c23d11325d8f0447a`: complete importer workspace is tenant-isolated by stable SniperPlug principal.
-- PR #48 exact final head `29c08696e1f594c408c7ab602c4bc04c2007f1bd` passed **Verify SniperPlug #987**, affiliate preview #87, and retired-route #83 before merge.
-- Post-merge `main` passed **Verify SniperPlug #988**, production guide privacy #68, affiliate production #64, and retired-route #84.
-- Current stage: production live validation of the existing Firefox Android v0.1.4 Better Content capture. No extension reinstall is required for PR #48.
+## Current live evidence
+The latest Firefox Android v0.1.4 screenshot showed a false capture candidate even though the real Better Content guide was open:
+- title: `SniperPlug Better Content Capture`
+- experience: `exp_rpaFYR2AD7Mb9d`
+- host: `whop.com`
+- rendered characters: `112`
+- queue: `0 pages`
 
-## Confirmed subscription root causes
-1. Existing owner data used upstream Whop `experience_id` and content `source_key` directly as global D1 primary/unique keys.
-2. Two subscribers can legitimately import the same Whop experience/item, so upstream IDs cannot remain the physical tenant storage key.
-3. `guides.slug` is globally unique, so identical subscriber imports need tenant-specific slug entropy.
-4. Numerous old source/post/guide/recovery/backup queries selected by upstream ID or numeric guide ID without an explicit principal predicate.
-5. Backup rows stored an owner field, but old snapshot/reset/restore SQL operated on the importer globally.
-6. Public guide publishing/search must remain an owner workspace, not become implicitly available to subscription tenants.
-7. Bulk-job reset still used the per-browser `sid` after the worker moved to stable principal ownership; PR #48 fixed Stop/Clear to use the same stable principal as the worker.
+This proves the extension was selecting the top-level Whop shell/extension-facing text rather than the real Better Content `*.apps.whop.com` frame. The user was operating the flow correctly.
 
-## Tenant storage model
-`browser login → stable SniperPlug principal → principal-scoped Whop OAuth connection → principal-scoped importer workspace`
+Earlier live evidence already proved the real app frame is readable on Firefox Android: the extension previously found the exact experience, an `mfk8y74zmein6tne8o5e.apps.whop.com` host, the actual guide title, and 3,428 rendered characters.
 
-Logical upstream identity and physical D1 identity are separate:
-- `whop_sources.principal_id` + `upstream_experience_id`
-- `whop_posts.principal_id` + `upstream_source_key` + `upstream_experience_id`
-- `guides.principal_id` + `upstream_source_key`
+## Root cause
+v0.1.4 still allowed `content-capture.js` to run against the top-level Whop shell. Candidate ranking heavily rewarded a frame carrying an `exp_...` ID, and recovery returned as soon as any candidate appeared. A fast shell candidate could therefore win before the real cross-origin app iframe registered. The old 15-second cross-frame experience-link window also made correctness dependent on timing.
 
-Existing owner rows retain their original physical keys for backward compatibility. Non-owner principals receive deterministic hashed physical source/post keys. Subscriber A and Subscriber B can therefore import the same upstream Whop source/item without sharing a row, FK, lease, draft, backup, or slug.
+The resulting failure was structural, not user error:
+`popup → popup-state → recoverCandidateAcrossWhopTabs → all-frame injection → shell candidate arrives first → bestCandidate(frame 0) → popup renders false guide state`
 
-## Implemented changes
-### Schema / identity
-- Added runtime idempotent tenant schema repair in `functions/_lib/importer-workspace.js`.
-- Added `migrations/0007_importer_tenant_workspace.sql`.
-- Losslessly backfills existing rows to `sniperplug-owner` and preserves owner physical keys.
-- Adds unique principal/upstream indexes for sources, posts, and guides.
+## Current execution path after v0.1.5 hardening
+`Firefox Whop tab → fresh all-frame probe → content-capture rejects every non-HTTPS/non-*.apps.whop.com document → background rejects non-app candidates again → current top-level Whop tab URL supplies current exp_ identity → real app frame candidate → Capture page message targets that exact frameId → app-frame URL/DOM captured → extension queue re-validates app-frame URL → SniperPlug Control Center relay → same-origin /api/browser-capture → server rejects non-app-frame URL again → owner + Whop + exact Better Content experience verification → tenant-scoped whop_posts row → private guide draft`
 
-### Discovery / sources / scans
-- Source decisions are read/written by principal + logical Whop experience ID.
-- Whop discovery receives the authenticated principal directly.
-- Scan leases use tenant-specific physical source IDs.
-- Scanned posts, stale marking, post decisions, saved-post reads, and preserved-guide reattachment are principal-scoped.
+## Implemented changes in PR #50
+### Firefox frame selection
+- Extension version raised to **0.1.5**.
+- Static rendered-DOM injection is restricted to `https://*.apps.whop.com/*`.
+- `content-capture.js` itself exits before its idempotent shortcut unless the running document is HTTPS and actually has an `*.apps.whop.com` hostname. Dynamic all-frame injection therefore cannot resurrect shell capture.
+- Firefox's current-frame URL fallback remains local to the extractor and only reduces the real current app-frame URL to safe HTTPS host/path form when URL parsing is unstable.
+- No global `URL` monkeypatch.
 
-### Native imports / Better Content
-- Native import reads approved posts by principal + upstream logical key.
-- Imported guide lookup/duplicate detection/update is restricted to the current principal.
-- Physical post key is used for FK integrity and slug entropy; logical upstream key remains visible to importer/client behavior.
-- Better Content capture applies the same principal/logical/physical split and protects reviewed/published/removed work only inside that tenant.
-- Existing Firefox Android v0.1.4 DOM capture regression remains green; server-side tenant changes do not require a new extension package.
+### Background recovery
+- Candidate storage rejects anything not explicitly marked as an app frame with an `*.apps.whop.com` host.
+- The current top-level Whop tab URL is authoritative for the current `exp_...` identity, so the real app frame does not depend on exposing the experience ID itself.
+- Fresh popup/capture recovery clears stale candidates before reinjection.
+- Recovery waits up to 1.5 seconds for a fresh eligible app-frame candidate instead of returning immediately on the first shell-like result.
+- Capture and auto-capture require a real app candidate.
+- Candidate ranking gives app-frame identity priority.
 
-### Private guides / media / rollback
-- Admin guide lists/details/saves/status updates require principal ownership.
-- Safe-save snapshots, optimistic version reservations, recovery leases, recovery rollback, and media repair verify principal ownership.
-- Import/media optimistic writes include principal ownership plus exact saved version/fingerprint conditions.
-- Media mirroring uses the tenant physical source key so two tenants cannot accidentally share mutable importer media identity.
+### Queue / handoff defenses
+- New captures are refused unless they contain an exact `exp_...`, rendered body, and HTTPS `*.apps.whop.com` page/frame URL.
+- Queue reads and pending handoffs filter legacy/invalid shell captures instead of forwarding them.
+- The existing retry path still preserves valid queued pages until a successful SniperPlug handoff.
 
-### Bulk / history / publishing
-- Bulk job version raised to v5; unsafe active pre-tenant jobs are canceled rather than resumed under new semantics.
-- Bulk jobs, Stop/Clear reset, and recent history/undo use the stable account principal, not the per-browser session ID.
-- Subscriber bulk jobs stop at private drafts; only owner principal can call the public publisher.
-- Public guide publishing and public guide search explicitly require/filter `sniperplug-owner`.
-- Global guide category mutation remains owner-only.
+### Server defense in depth
+- Added `functions/_lib/browser-capture-origin.js`.
+- `/api/browser-capture` now rejects non-HTTPS/non-`*.apps.whop.com` capture URLs before import writes.
+- Existing server checks remain: same-origin request, authenticated SniperPlug principal, connected Whop session, exact Better Content app ID, current membership, source approval, tenant-scoped source row, formatting/integrity checks, and private draft only.
 
-### Backup / reset / restore
-- Backup snapshot/list/download/authorization/reset/restore/delete all require the matching principal.
-- Signed backup manifest includes principal identity.
-- Cross-principal archive restore fails closed.
-- Legacy owner-only archives can still restore to the owner, but cannot be transplanted into a subscriber workspace.
-- Source-scoped reset uses logical upstream experience ID while deleting only that principal’s physical rows.
-- Post-reset Whop resync writes only into the same authenticated principal workspace.
+## Regression coverage
+A new executable Firefox regression reproduces the exact live failure:
+- frame 0: `whop.com`, title `SniperPlug Better Content Capture`, 112 chars, carries the exp ID;
+- frame 4: real `mfk8y74zmein6tne8o5e.apps.whop.com` guide, 3,428 chars, deliberately exposes no exp ID.
+
+The regression requires:
+- frame 0 never enters the usable candidate set;
+- frame 4 inherits the current top-level `exp_rpaFYR2AD7Mb9d` identity;
+- popup state reports frame 4;
+- Capture page sends to frameId 4;
+- an attempted shell-frame payload is rejected by extension queue validation;
+- server preflight independently rejects a shell URL.
+
+The existing browser-capture audit was strengthened to enforce app-frame-only extraction, stale-candidate clearing, settle waiting, queue validation, server origin validation, no cookies/storage/token access, no private API probing, exact Better Content app verification, source-row-before-guide FK integrity, manual review, and overwrite protections.
+
+## Prior importer / tenant work preserved
+- PR #34: membership false-denial fix.
+- PR #35: OAuth callback/login-loop fix.
+- PR #36: source-loading/access/fan-out fix.
+- PR #37: Experiences `account_id` contract fix.
+- PR #38: user-OAuth-compatible custom-app metadata.
+- PR #39: Better Content rendered-DOM bridge.
+- PR #41: Firefox Android package support.
+- PR #45: active all-frame recovery for already-open Whop tabs.
+- PR #46: browser capture source-row FK materialization/verification.
+- PR #47: stable account principal separated from browser session identity.
+- PR #48: complete importer workspace tenant isolation, owner-only public publishing, principal-scoped backup/reset/restore/recovery/bulk/history.
 
 ## Validation
-- [x] PR #47 connection isolation regression and post-merge build passed.
-- [x] Same-principal multi-device Whop connection model preserved.
-- [x] `test-whop-tenant-workspace.mjs` is in the mandatory audit chain.
-- [x] Runtime key regression checks owner compatibility, deterministic same-tenant keys, and distinct keys for two tenants importing identical upstream data.
-- [x] Static tenant regression covers source/post/guide/discovery/capture/bulk/history/publish/backup/recovery/safe-save boundaries.
-- [x] Legacy audits were updated only where exact strings encoded superseded single-owner behavior; behavioral checks enforce stronger principal-scoped contracts.
-- [x] CI exposed and PR #48 fixed the real bulk Stop/Clear browser-`sid` mismatch.
-- [x] Exact PR #48 final-head CI green.
-- [x] Branch was current with `main`, mergeable, and had no inline review threads.
-- [x] PR #48 merged to `main` at `78171001834444181eabf90c23d11325d8f0447a`.
-- [x] All four post-merge production workflows passed on the merge SHA.
-- [ ] Use preserved Firefox v0.1.4 queue and press **Retry capture**; one Make Money Here page must become a private draft.
-- [ ] If the queue no longer exists, capture one individual Make Money Here page again with v0.1.4 and send it to SniperPlug.
+- [x] Exact live v0.1.4 shell false-positive reproduced as an executable test case.
+- [x] Full Node 22 build/regression suite passed on the initial PR #50 hardening head.
+- [x] Firefox frame-selection regression passed.
+- [x] Existing Better Content browser-capture regression passed.
+- [x] Full importer/discovery/OAuth/tenant/backups/recovery/media/control-center regressions remained green.
+- [x] Firefox XPI packaging and ZIP integrity passed.
+- [x] Affiliate preview and retired-route workflows remained green.
+- [ ] Re-run full CI on the final PR #50 documentation/task-record head.
+- [ ] Merge PR #50 only if final head is current with main, mergeable, review-thread clean, and CI green.
+- [ ] Install the fresh v0.1.5 XPI on Firefox Nightly and verify the card shows the actual guide title plus `*.apps.whop.com`, never `whop.com`.
+- [ ] Capture one page and verify `1 page queued`.
+- [ ] Send it and verify one private SniperPlug draft exists in the current tenant workspace.
 - [ ] Validate multi-page auto-capture only after one-page live success.
 
 ## Cleanup / conflicts
-- Removed stray `SHOULD_NOT_EXIST.tmp` before PR #48 merge.
-- No destructive table rebuild.
-- No global account cleanup added.
-- No subscriber public publishing.
-- No cross-tenant backup restore.
-- Existing owner data and physical keys remain intact.
+- No unrelated site/runtime changes in PR #50.
+- No global URL monkeypatch restored.
+- No shell-frame capture compatibility fallback retained.
+- No cookie/token/site-storage permissions added.
+- No public publishing behavior changed.
+- Tenant isolation from PR #48 is untouched.
+- Older v0.1.4 queued shell payloads are filtered rather than imported.
 
-## Remaining blockers / risks
-- CI cannot execute against the owner’s private production Better Content page, so the final browser-capture proof is a real mobile production retry/capture.
-- PR #48 establishes the tenant data boundary. Actual paid subscriber authentication/billing onboarding is **not** implemented by this PR; a real subscriber account identity must bind to `principalId` before customer subscriptions are enabled.
-- The current owner-password login remains owner access, not the future subscriber identity system.
-- Subscription accounts must remain disabled until real subscriber authentication is attached to the principal contract.
-- The user’s broader Control Center/site UX redesign feedback remains backlog and is intentionally not mixed into importer correctness/security work.
+## Remaining blocker / risk
+CI cannot execute against the owner's private live Better Content DOM. The remaining production gate is therefore one real Firefox Android v0.1.5 capture and handoff. A successful build proves the known execution contracts and exact reproduced regression; it cannot honestly prove a private third-party DOM that CI cannot access.
+
+## Backlog
+- Issue #20 and unrelated UI work remain locked out.
+- Paid subscriber authentication/billing onboarding remains separate from this active capture correctness gate and must not be enabled until a real subscriber identity binds to `principalId`.
 
 ## Next step
-On Firefox Android v0.1.4, retry the preserved Make Money Here capture if it is still queued. If not, open one individual **Hidden Files → Make Money Here** Better Content page, capture it once, and send it to SniperPlug. The required success state is a private draft in the current account workspace; any production error continues this same task at the exact failing server step.
+After PR #50 is final-head green and merged, install a fresh v0.1.5 XPI, keep one **Hidden Files → Make Money Here** guide visibly rendered in Firefox Nightly, and open SniperPlug Capture. The acceptable card must show the actual guide and an `*.apps.whop.com` host. Anything else is a failure and continues this same task at the exact failing step.
