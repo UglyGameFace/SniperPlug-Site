@@ -6,32 +6,40 @@ This Manifest V3 extension is the fallback reader for Whop experiences powered b
 
 The extension deliberately does **not** request the `cookies` permission, does not read `document.cookie`, does not inspect browser storage for Whop credentials, and never forwards a Whop token to SniperPlug.
 
-It only reads the rendered DOM of a Whop app frame the owner can already see. Captures are queued in extension session storage and then handed to a content script running on `https://sniperplug.com/control-center/`. That SniperPlug-side content script performs a normal same-origin POST to `/api/browser-capture`, so the existing owner session and connected Whop session remain the authority.
+It only reads the rendered DOM of an HTTPS `*.apps.whop.com` app frame the owner can already see. The top-level `whop.com` page is used only as browser/tab context so the current `exp_...` identity can be attached to the real Better Content frame; it is never eligible as captured guide content. Captures are queued in extension session storage and then handed to a content script running on `https://sniperplug.com/control-center/`. That SniperPlug-side content script performs a normal same-origin POST to `/api/browser-capture`, so the existing owner session and connected Whop session remain the authority.
 
 The server then:
 
 1. verifies the Control Center owner session;
 2. verifies the connected Whop OAuth session;
-3. retrieves the exact `exp_...` experience through Whop;
-4. requires the exact Better Content app ID (`app_zv9yxan92U9fNy`);
-5. confirms current membership access when Whop exposes the company/product relationship;
-6. runs SniperPlug formatting/integrity checks;
-7. creates or updates a **private draft only**;
-8. never auto-publishes browser-captured content.
+3. rejects any browser capture whose rendered page URL is not HTTPS `*.apps.whop.com`;
+4. retrieves the exact `exp_...` experience through Whop;
+5. requires the exact Better Content app ID (`app_zv9yxan92U9fNy`);
+6. confirms current membership access when Whop exposes the company/product relationship;
+7. runs SniperPlug formatting/integrity checks;
+8. creates or updates a **private draft only**;
+9. never auto-publishes browser-captured content.
 
-Previously reviewed, published, or removed guides are never silently overwritten by a later capture.
+Previously reviewed, published, or removed guides are never silently overwritten by a later capture. Old or invalid queued shell captures are discarded rather than handed to SniperPlug.
+
+## Firefox Android frame recovery
+
+v0.1.5 treats the real Better Content app frame as the only capture candidate. Opening the extension performs a fresh all-frame probe of the current Whop tab, clears stale candidate state, and waits briefly for the app frame to register. If the app iframe itself does not expose the `exp_...` ID, the background page uses the current top-level Whop tab URL for that identity while keeping the rendered body tied to the `*.apps.whop.com` frame.
+
+This prevents the top-level Whop shell, extension UI text, stale frame records, or a previously queued shell payload from being mistaken for a Better Content guide.
 
 ## Capturing Make Money Here
 
-1. Open **Hidden Files → Make Money Here** inside Whop.
-2. Open an individual Better Content page.
+1. Open **Hidden Files → Make Money Here** inside Whop in Firefox Nightly.
+2. Open an individual Better Content page and leave the rendered guide visible.
 3. Open the extension.
-4. Press **Capture page**, or enable **Auto-capture** and click through the pages you want.
-5. The popup shows how many pages are queued.
-6. Confirm the rights checkbox.
-7. Press **Send queued pages to SniperPlug**.
-8. The extension opens/focuses the SniperPlug Control Center and sends the captured pages through the signed-in SniperPlug page.
-9. The resulting pages appear in the normal private SniperPlug draft/review queue.
+4. Confirm the card shows an `*.apps.whop.com` host and the actual guide title, not `whop.com` or `SniperPlug Better Content Capture`.
+5. Press **Capture page**, or enable **Auto-capture** and click through the pages you want.
+6. The popup shows how many pages are queued.
+7. Confirm the rights checkbox.
+8. Press **Send queued pages to SniperPlug**.
+9. The extension opens/focuses the SniperPlug Control Center and sends the captured pages through the signed-in SniperPlug page.
+10. The resulting pages appear in the normal private SniperPlug draft/review queue.
 
 Auto-capture is intentionally navigation-driven. It captures pages as they actually render in the authorized Better Content UI instead of guessing Better Content's private backend endpoints.
 
@@ -45,7 +53,7 @@ For immediate mobile-only development testing:
 2. Open `about:config` and set `xpinstall.signatures.required` to `false` for this development build.
 3. In Firefox Nightly, open **Settings → About Firefox Nightly** and tap the Firefox logo repeatedly until the hidden developer options unlock.
 4. Return to Settings and choose **Install Extension from File**.
-5. Select the SniperPlug `.xpi` package.
+5. For a clean development upgrade, remove the older SniperPlug Better Content Capture build first, then install the new `.xpi` package.
 6. Sign into Whop and unlock `https://sniperplug.com/control-center/` in that same Firefox profile.
 7. Open **Hidden Files → Make Money Here**, open one Better Content guide, then use the SniperPlug extension action to capture it.
 
@@ -67,8 +75,9 @@ In a Chromium desktop browser:
 
 The manifest is intentionally restricted to:
 
-- `https://*.apps.whop.com/*`
+- `https://whop.com/*`
 - `https://*.whop.com/*`
+- `https://*.apps.whop.com/*`
 - `https://sniperplug.com/*`
 
-There is no `<all_urls>` permission.
+Only `https://*.apps.whop.com/*` is eligible for rendered guide extraction. There is no `<all_urls>` permission.
