@@ -1,4 +1,3 @@
-import { requireAdmin } from '../_lib/auth.js';
 import { adminGuide, importApprovedPosts } from '../_lib/guides-media.js';
 import {
   handleError,
@@ -10,6 +9,7 @@ import {
 } from '../_lib/http.js';
 import { ensureImporterWorkspaceSchema, principalIdFrom, upstreamSourceKey } from '../_lib/importer-workspace.js';
 import { mediaRepairReview, whopRecoveryError } from '../_lib/recovery-media.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 function guideId(value) {
@@ -26,11 +26,11 @@ function deploymentInfo(env) {
   };
 }
 
-async function liveExperience(request, env, admin, row) {
+async function liveExperience(request, env, account, row) {
   const logicalSourceKey = upstreamSourceKey(row);
   let whop;
   try {
-    whop = await requireWhopSession(request, env, admin);
+    whop = await requireWhopSession(request, env, account);
   } catch (error) {
     throw whopRecoveryError(error, { experienceId: row.source_experience_id, sourceKey: logicalSourceKey, operation: 'repair this guide’s media' });
   }
@@ -43,8 +43,8 @@ async function liveExperience(request, env, admin, row) {
 
 export async function onRequest(context) {
   try {
-    const admin = await requireAdmin(context.request, context.env);
-    const principalId = principalIdFrom(admin);
+    const account = await requireControlAccount(context.request, context.env);
+    const principalId = principalIdFrom(account);
     if (context.request.method !== 'POST') return methodNotAllowed(['POST']);
     requireSameOrigin(context.request);
 
@@ -69,7 +69,7 @@ export async function onRequest(context) {
       });
     }
 
-    const { whop, experience } = await liveExperience(context.request, context.env, admin, row);
+    const { whop, experience } = await liveExperience(context.request, context.env, account, row);
     const output = await importApprovedPosts(context.env, principalId, whop, {
       experienceId: experience.id,
       sourceKeys: [logicalSourceKey],
