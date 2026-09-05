@@ -1,6 +1,15 @@
 (() => {
   'use strict';
 
+  function isWhopAppHost(hostname) {
+    return String(hostname || '').toLowerCase().endsWith('.apps.whop.com');
+  }
+
+  const APP_FRAME_HOST = isWhopAppHost(location.hostname)
+    ? String(location.hostname || '').toLowerCase()
+    : '';
+  if (!APP_FRAME_HOST || location.protocol !== 'https:') return;
+
   if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
     globalThis.__sniperplugBetterContentCapture.registerCandidate();
     return;
@@ -19,26 +28,25 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
-  function isWhopHost(hostname) {
-    const host = String(hostname || '').toLowerCase();
-    return host === 'whop.com' || host.endsWith('.whop.com') || host.endsWith('.apps.whop.com');
+  function currentAppFrameFallbackUrl() {
+    if (location.protocol !== 'https:' || !isWhopAppHost(location.hostname) || !location.host) return '';
+    const pathname = String(location.pathname || '/');
+    const safePath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return `https://${location.host}${safePath}`;
   }
 
   function safeCurrentFrameUrl(value) {
     const raw = String(value || '').trim();
     const current = String(location.href || '').trim();
     if (!raw || raw !== current) return '';
-    if (location.protocol !== 'https:' || !location.host || !isWhopHost(location.hostname)) return '';
-    const pathname = String(location.pathname || '/');
-    const safePath = pathname.startsWith('/') ? pathname : `/${pathname}`;
-    return `https://${location.host}${safePath}`;
+    return currentAppFrameFallbackUrl();
   }
 
   function safeHttpUrl(value) {
     const raw = String(value || '').trim();
     const currentFrameFallback = safeCurrentFrameUrl(raw);
     try {
-      const url = new URL(raw, location.href);
+      const url = new URL(raw, currentFrameFallback || location.href);
       if (!['http:', 'https:'].includes(url.protocol)) return currentFrameFallback;
       url.hash = '';
       for (const key of [...url.searchParams.keys()]) {
@@ -253,8 +261,8 @@
   }
 
   function pageIdentity(title) {
-    const url = safeHttpUrl(location.href);
-    return `${url || location.origin + location.pathname}|${title}`.slice(0, 600);
+    const url = safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
+    return `${url}|${title}`.slice(0, 600);
   }
 
   function collectImages(root) {
@@ -280,10 +288,10 @@
     const title = pageTitle(root);
     const bodyMarkdown = cleanMarkdown(renderNode(root));
     const experienceId = findExperienceId();
-    if (!experienceId) throw new Error('This Better Content frame does not expose its Whop experience ID yet. Open the guide inside the Whop app and try again.');
+    if (!experienceId) throw new Error('This Better Content frame does not expose its Whop experience ID yet. Keep the guide visible and reopen the extension.');
     if (bodyMarkdown.length < MIN_CAPTURE_CHARS) throw new Error('The rendered page is too small to capture. Open an individual Better Content guide first.');
-    const pageUrl = safeHttpUrl(location.href);
-    if (!pageUrl) throw new Error('The rendered Better Content page does not have a safe HTTPS URL.');
+    const pageUrl = safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
+    if (!pageUrl) throw new Error('The rendered Better Content page does not have a safe HTTPS app-frame URL.');
     return {
       experienceId,
       title,
@@ -304,10 +312,10 @@
     return {
       experienceId: findExperienceId(),
       title: pageTitle(root),
-      pageUrl: safeHttpUrl(location.href),
+      pageUrl: safeHttpUrl(location.href) || currentAppFrameFallbackUrl(),
       textLength: normalizeSpace(root?.innerText || '').length,
-      host: location.hostname,
-      likelyAppFrame: location.hostname.endsWith('.apps.whop.com'),
+      host: APP_FRAME_HOST,
+      likelyAppFrame: true,
     };
   }
 
@@ -374,7 +382,7 @@
     }
   }, 700);
 
-  globalThis.__sniperplugBetterContentCapture = { registerCandidate };
+  globalThis.__sniperplugBetterContentCapture = { registerCandidate, candidateSummary };
   registerCandidate();
   setTimeout(registerCandidate, 900);
   setTimeout(registerCandidate, 2200);
