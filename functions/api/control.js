@@ -43,8 +43,8 @@ import {
   saveSourceDecisions,
   sourceDecision,
 } from '../_lib/source-policy.js';
+import { disconnectPrincipalWhop } from '../_lib/whop-connection.js';
 import {
-  disconnectWhop,
   requireWhopSession,
   resolveWhopExperienceType,
   whopSessionSummary,
@@ -140,7 +140,7 @@ async function verifiedWhopSummary(request, env, admin) {
     };
   } catch (error) {
     if (error instanceof HttpError && [401, 403].includes(error.status)) {
-      await disconnectWhop(request, env, admin).catch(() => null);
+      await disconnectPrincipalWhop(request, env, admin).catch(() => null);
       return {
         connected: false,
         verified: false,
