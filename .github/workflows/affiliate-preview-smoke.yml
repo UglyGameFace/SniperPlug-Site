@@ -72,8 +72,8 @@ jobs:
               && grep -Fq "@import url('/assets/css/site-shell.css');" styles.css \
               && grep -Fq -- '--brand:#68e384' site-base.css \
               && grep -Fq 'sniperplug-logo-exact.png' site-shell.css \
-              && grep -Fq 'data:image/png;base64,' site-runtime.js \
-              && grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js; then
+              && ! grep -Fq 'data:image/png;base64,' site-runtime.js \
+              && ! grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js; then
               ready=1
               break
             fi
@@ -164,6 +164,8 @@ jobs:
           grep -Fq '.site-footer{' site-base.css
           grep -Fq '.brand-mark{' site-shell.css
           grep -Fq 'sniperplug-logo-exact.png' site-shell.css
+          grep -Fq 'center/contain no-repeat!important' site-shell.css
+          ! grep -Fq '.brand-mark img' site-shell.css
           grep -Fq '.page-hero{position:relative' site-shell.css
           grep -Fq '.legal-card{max-width:980px' site-shell.css
           grep -Fq '.error-shell{' site-shell.css
@@ -177,34 +179,30 @@ jobs:
           grep -Fq '@media(max-width:700px)' marketing-theme.css
           ! grep -Fq 'sniperplug-logo-exact.png' marketing-theme.css
 
-          echo 'Checking exact logo delivery and runtime behavior.'
+          echo 'Checking exact single-source logo delivery and retained runtime behavior.'
           grep -Fiq 'cache-control: public, max-age=0, must-revalidate' exact-logo.headers
-          grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
-          grep -Fq "logo.style.objectFit = 'contain'" site-runtime.js
-          grep -Fq "logo.style.aspectRatio = '1 / 1'" site-runtime.js
-          grep -Fq "mark.dataset.brandArtwork = 'owner-approved-exact'" site-runtime.js
-          grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
+          test "$(grep -Fc 'sniperplug-logo-exact.png' site-shell.css)" = '1'
+          ! grep -Fq 'data:image/png;base64,' site-runtime.js
+          ! grep -Fq 'logoAsset' site-runtime.js
+          ! grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
+          ! grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
+          grep -Fq "matchMedia('(max-width: 620px)')" site-runtime.js
+          grep -Fq "ownerLink.dataset.mobilePinned = 'true'" site-runtime.js
+          grep -Fq "document.querySelectorAll('.deal-card')" site-runtime.js
+          grep -Fq 'requestAnimationFrame(apply)' site-runtime.js
 
           python3 - <<'PY'
-          import base64, hashlib, re, struct
+          import hashlib, struct
           expected = '3df6e4d5fc89940a406c2a938c1e30d23e8e96ed54fc5328386d82e780a5fd86'
-          runtime = open('site-runtime.js', encoding='utf-8').read()
-          match = re.search(r"data:image/png;base64,([A-Za-z0-9+/='\",\s]+?)',\s*\]", runtime, re.S)
-          if not match:
-              raise SystemExit('exact PNG not found in site runtime')
-          runtime_png = base64.b64decode(re.sub(r"['\",\s]", '', match.group(1)), validate=True)
-          asset_png = open('exact-logo.png', 'rb').read()
-          for label, image in [('runtime', runtime_png), ('asset', asset_png)]:
-              if image[:8] != b'\x89PNG\r\n\x1a\n':
-                  raise SystemExit(f'{label} logo is not PNG')
-              width, height = struct.unpack('>II', image[16:24])
-              if (width, height) != (96, 96):
-                  raise SystemExit(f'{label} logo is {width}x{height}, expected 96x96')
-              digest = hashlib.sha256(image).hexdigest()
-              if digest != expected:
-                  raise SystemExit(f'{label} logo checksum changed: {digest}')
-          if runtime_png != asset_png:
-              raise SystemExit('runtime and static exact-logo bytes differ')
+          image = open('exact-logo.png', 'rb').read()
+          if image[:8] != b'\x89PNG\r\n\x1a\n':
+              raise SystemExit('static exact logo is not PNG')
+          width, height = struct.unpack('>II', image[16:24])
+          if (width, height) != (96, 96):
+              raise SystemExit(f'static exact logo is {width}x{height}, expected 96x96')
+          digest = hashlib.sha256(image).hexdigest()
+          if digest != expected:
+              raise SystemExit(f'static exact logo checksum changed: {digest}')
           PY
 
           echo 'Checking retired deal behavior.'
