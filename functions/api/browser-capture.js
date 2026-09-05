@@ -10,7 +10,7 @@ export async function onRequest(context) {
     const admin = await requireAdmin(context.request, context.env);
     const whop = await requireWhopSession(context.request, context.env, admin);
     const body = await readJson(context.request, { maxBytes: 2_750_000 });
-    return json(await importBrowserCaptures(context.env, whop, body));
+    return json(await importBrowserCaptures(context.env, admin, whop, body));
   } catch (error) {
     return handleError(error);
   }
