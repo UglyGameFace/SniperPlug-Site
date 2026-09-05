@@ -7,7 +7,8 @@ const PENDING_KEY = 'sniperplugPendingCaptures';
 const MAX_QUEUE = 25;
 const CANDIDATE_TTL_MS = 10 * 60_000;
 const EXPERIENCE_LINK_WINDOW_MS = 15_000;
-const INJECTION_SETTLE_MS = 180;
+const APP_FRAME_SETTLE_MS = 1500;
+const APP_FRAME_POLL_MS = 100;
 const WHOP_TAB_PATTERNS = [
   'https://whop.com/*',
   'https://*.whop.com/*',
@@ -27,13 +28,37 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function isWhopAppHost(hostname) {
+  return String(hostname || '').toLowerCase().endsWith('.apps.whop.com');
+}
+
+function experienceIdFromUrl(value) {
+  const match = String(value || '').match(/\bexp_[A-Za-z0-9_-]+\b/);
+  return match ? match[0] : '';
+}
+
+function safeAppFrameUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return url.protocol === 'https:' && isWhopAppHost(url.hostname) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 function candidateKey(tabId, frameId) {
   return `${tabId}:${frameId}`;
 }
 
+function isCaptureCandidate(candidate) {
+  return candidate?.likelyAppFrame === true
+    && isWhopAppHost(candidate?.host)
+    && Math.max(0, Number(candidate?.textLength || 0)) >= 80;
+}
+
 function candidateRank(candidate) {
-  return (candidate?.experienceId ? 1_000_000 : 0)
-    + (candidate?.likelyAppFrame ? 500_000 : 0)
+  return (candidate?.likelyAppFrame ? 2_000_000 : 0)
+    + (candidate?.experienceId ? 1_000_000 : 0)
     + Math.max(0, Number(candidate?.textLength || 0));
 }
 
@@ -73,10 +98,14 @@ async function saveCandidate(sender, candidate) {
   const tabId = Number(sender?.tab?.id);
   const frameId = Number(sender?.frameId ?? 0);
   if (!Number.isInteger(tabId)) return;
+  if (candidate?.likelyAppFrame !== true || !isWhopAppHost(candidate?.host)) return;
 
   const candidates = pruneCandidates(await readState(CANDIDATE_KEY, {}));
   const now = Date.now();
-  const experienceId = String(candidate?.experienceId || '') || recentExperienceForTab(candidates, tabId, now);
+  const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);
+  const experienceId = tabExperienceId
+    || String(candidate?.experienceId || '')
+    || recentExperienceForTab(candidates, tabId, now);
   const normalized = {
     tabId,
     frameId,
@@ -85,8 +114,8 @@ async function saveCandidate(sender, candidate) {
     title: String(candidate?.title || ''),
     pageUrl: String(candidate?.pageUrl || ''),
     textLength: Math.max(0, Number(candidate?.textLength || 0)),
-    host: String(candidate?.host || ''),
-    likelyAppFrame: candidate?.likelyAppFrame === true,
+    host: String(candidate?.host || '').toLowerCase(),
+    likelyAppFrame: true,
   };
 
   candidates[candidateKey(tabId, frameId)] = normalized;
@@ -102,7 +131,7 @@ async function saveCandidate(sender, candidate) {
 async function allFreshCandidates() {
   const candidates = pruneCandidates(await readState(CANDIDATE_KEY, {}));
   await writeState(CANDIDATE_KEY, candidates);
-  return Object.values(candidates);
+  return Object.values(candidates).filter(isCaptureCandidate);
 }
 
 async function candidatesForTab(tabId) {
@@ -124,6 +153,18 @@ async function bestCandidateAcrossTabs(preferredTabId = null) {
   return { candidate: best, usingRecentTab: Boolean(best && best.tabId !== preferredTabId) };
 }
 
+async function clearCandidatesForTab(tabId) {
+  const candidates = await readState(CANDIDATE_KEY, {});
+  let changed = false;
+  for (const key of Object.keys(candidates)) {
+    if (key.startsWith(`${tabId}:`)) {
+      delete candidates[key];
+      changed = true;
+    }
+  }
+  if (changed) await writeState(CANDIDATE_KEY, candidates);
+}
+
 async function whopTabs() {
   try {
     return await chrome.tabs.query({ url: WHOP_TAB_PATTERNS });
@@ -139,45 +180,68 @@ async function injectCaptureIntoTab(tabId) {
       target: { tabId, allFrames: true },
       files: ['content-capture.js'],
     });
-    await wait(INJECTION_SETTLE_MS);
     return true;
   } catch {
     return false;
   }
 }
 
-async function recoverCandidateAcrossWhopTabs(openTabs = null) {
+async function waitForAppCandidate(tabId, timeoutMs = APP_FRAME_SETTLE_MS) {
+  const started = Date.now();
+  do {
+    const candidate = await bestCandidate(tabId);
+    if (candidate) return candidate;
+    await wait(APP_FRAME_POLL_MS);
+  } while (Date.now() - started < timeoutMs);
+  return null;
+}
+
+async function recoverCandidateAcrossWhopTabs(openTabs = null, preferredTabId = null) {
   const tabs = Array.isArray(openTabs) ? openTabs : await whopTabs();
   const ordered = [...tabs]
     .filter((tab) => Number.isInteger(tab?.id))
-    .sort((left, right) => Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0));
+    .sort((left, right) => {
+      if (left.id === preferredTabId && right.id !== preferredTabId) return -1;
+      if (right.id === preferredTabId && left.id !== preferredTabId) return 1;
+      return Number(right.lastAccessed || 0) - Number(left.lastAccessed || 0);
+    });
 
   for (const tab of ordered.slice(0, 4)) {
-    await injectCaptureIntoTab(tab.id);
-    const candidate = await bestCandidate(tab.id);
+    await clearCandidatesForTab(tab.id);
+    const injected = await injectCaptureIntoTab(tab.id);
+    if (!injected) continue;
+    const candidate = await waitForAppCandidate(tab.id);
     if (candidate) return candidate;
   }
   return null;
 }
 
 async function resolveCandidate(preferredTabId = null, openTabs = null) {
-  let resolved = await bestCandidateAcrossTabs(preferredTabId);
-  if (resolved.candidate) return resolved;
-  const recovered = await recoverCandidateAcrossWhopTabs(openTabs);
-  if (!recovered) return resolved;
-  resolved = await bestCandidateAcrossTabs(preferredTabId);
-  return resolved;
+  const recovered = await recoverCandidateAcrossWhopTabs(openTabs, preferredTabId);
+  if (recovered) {
+    return {
+      candidate: recovered,
+      usingRecentTab: Boolean(Number.isInteger(preferredTabId) && recovered.tabId !== preferredTabId),
+    };
+  }
+  return bestCandidateAcrossTabs(preferredTabId);
 }
 
 function captureIdentity(capture) {
   return `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;
 }
 
+function isSafeAppCapture(capture) {
+  return /^exp_[A-Za-z0-9_-]+$/.test(String(capture?.experienceId || ''))
+    && Boolean(String(capture?.bodyMarkdown || '').trim())
+    && Boolean(safeAppFrameUrl(capture?.pageUrl || capture?.frameUrl));
+}
+
 async function addCapture(tabId, capture) {
-  if (!capture?.experienceId || !capture?.bodyMarkdown) throw new Error('The Better Content page did not return a complete capture.');
+  if (!isSafeAppCapture(capture)) throw new Error('SniperPlug refused a capture that did not come from the rendered Better Content app frame.');
   const queues = await readState(QUEUE_KEY, {});
   const key = String(tabId);
-  const current = Array.isArray(queues[key]) ? queues[key] : [];
+  const current = Array.isArray(queues[key]) ? queues[key].filter(isSafeAppCapture) : [];
   const identity = captureIdentity(capture);
   const next = current.filter((item) => captureIdentity(item) !== identity);
   next.push(capture);
@@ -197,7 +261,9 @@ async function captureCurrent(tabId) {
   const openTabs = await whopTabs();
   const resolved = await resolveCandidate(Number.isInteger(tabId) ? tabId : null, openTabs);
   const candidate = resolved.candidate;
-  if (!candidate) throw new Error('Whop is open in Firefox, but the Better Content frame still did not register. Keep the guide visible and reopen the extension.');
+  if (!candidate || !isCaptureCandidate(candidate)) {
+    throw new Error('Whop is open in Firefox, but SniperPlug has not found the rendered Better Content app frame yet. Keep the guide visible and reopen the extension.');
+  }
   const sourceTabId = candidate.tabId;
   const response = await chrome.tabs.sendMessage(sourceTabId, { type: 'sniperplug:capture-now' }, { frameId: candidate.frameId });
   if (!response?.ok) throw new Error(response?.error || 'The Better Content frame could not be captured.');
@@ -208,25 +274,34 @@ async function captureCurrent(tabId) {
 async function setAutoCapture(tabId, enabled) {
   const openTabs = await whopTabs();
   const resolved = await resolveCandidate(Number.isInteger(tabId) ? tabId : null, openTabs);
-  const sourceTabId = resolved.candidate?.tabId ?? tabId;
-  if (!Number.isInteger(sourceTabId)) throw new Error('Open a Better Content guide in Firefox Nightly before enabling auto-capture.');
+  const candidate = resolved.candidate;
+  if (!candidate || !isCaptureCandidate(candidate)) throw new Error('Open a rendered Better Content guide in Firefox Nightly before enabling auto-capture.');
+  const sourceTabId = candidate.tabId;
 
   const autoTabs = await readState(AUTO_KEY, {});
   if (enabled) autoTabs[String(sourceTabId)] = true;
   else delete autoTabs[String(sourceTabId)];
   await writeState(AUTO_KEY, autoTabs);
   const candidates = await candidatesForTab(sourceTabId);
-  await Promise.allSettled(candidates.map((candidate) => chrome.tabs.sendMessage(
+  await Promise.allSettled(candidates.map((item) => chrome.tabs.sendMessage(
     sourceTabId,
     { type: 'sniperplug:set-auto', enabled },
-    { frameId: candidate.frameId },
+    { frameId: item.frameId },
   )));
   return { enabled, targetTabId: sourceTabId };
 }
 
 async function queueForTab(tabId) {
   const queues = await readState(QUEUE_KEY, {});
-  return Array.isArray(queues[String(tabId)]) ? queues[String(tabId)] : [];
+  const key = String(tabId);
+  const current = Array.isArray(queues[key]) ? queues[key] : [];
+  const safe = current.filter(isSafeAppCapture);
+  if (safe.length !== current.length) {
+    if (safe.length) queues[key] = safe;
+    else delete queues[key];
+    await writeState(QUEUE_KEY, queues);
+  }
+  return safe;
 }
 
 async function openWhop() {
@@ -278,6 +353,17 @@ async function pendingCapture(id) {
     delete pending[String(id || '')];
     await writeState(PENDING_KEY, pending);
     return null;
+  }
+  const captures = Array.isArray(item.captures) ? item.captures.filter(isSafeAppCapture) : [];
+  if (!captures.length) {
+    delete pending[String(id || '')];
+    await writeState(PENDING_KEY, pending);
+    return null;
+  }
+  if (captures.length !== item.captures.length) {
+    item.captures = captures;
+    pending[String(id || '')] = item;
+    await writeState(PENDING_KEY, pending);
   }
   return item;
 }
