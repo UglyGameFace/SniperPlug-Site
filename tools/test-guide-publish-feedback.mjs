@@ -59,9 +59,10 @@ assert.ok(
 );
 
 assert.ok(
-  !lifecycle.includes("['controlNetworkGuard'")
-    && page.indexOf('/assets/js/control-center-network-guard.js') < page.indexOf('/assets/js/control-center-v2.js'),
-  'The network guard is still redundantly injected or no longer loads before the canonical Control Center runtime.',
+  page.indexOf('/assets/js/control-center-network-guard.js') < page.indexOf('/assets/js/control-center-v2.js')
+    && lifecycle.includes('control-center-network-guard.js')
+    && lifecycle.includes("name === 'controlNetworkGuard' && window.__sniperplugApiFetchGuardInstalled === true"),
+  'The network guard no longer loads before v2, lacks stale-page fallback, or is redundantly requested after it is already installed.',
 );
 
 const genericRiskySelector = lifecycle.match(/const risky = target\.closest\(([^\n]+)\);/)?.[1] || '';
