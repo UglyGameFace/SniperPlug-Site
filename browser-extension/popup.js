@@ -7,6 +7,10 @@ const elements = {
   openWhop: document.getElementById('openWhop'),
   crawl: document.getElementById('crawl'),
   crawlScope: document.getElementById('crawlScope'),
+  crawlProgress: document.getElementById('crawlProgress'),
+  crawlProgressBar: document.getElementById('crawlProgressBar'),
+  crawlProgressLabel: document.getElementById('crawlProgressLabel'),
+  crawlProgressPercent: document.getElementById('crawlProgressPercent'),
   crawlMeta: document.getElementById('crawlMeta'),
   crawlDiagnostic: document.getElementById('crawlDiagnostic'),
   crawlFailures: document.getElementById('crawlFailures'),
@@ -82,6 +86,55 @@ function crawlSummary() {
   return '';
 }
 
+function crawlProgressState(input = state) {
+  const status = String(input?.crawlStatus || 'idle');
+  const finished = Math.max(0, Number(input?.crawlVisited || 0));
+  const remaining = Math.max(0, Number(input?.crawlRemaining || 0));
+  const discovered = Math.max(0, Number(input?.crawlDiscovered || 0));
+  const knownTotal = Math.max(discovered, finished + remaining);
+  const complete = status === 'complete' || status === 'complete-empty';
+
+  if (complete) {
+    return {
+      percent: 100,
+      indeterminate: false,
+      label: knownTotal > 0 ? `${knownTotal} of ${knownTotal} known pages checked` : 'Scan finished',
+    };
+  }
+
+  if (status === 'idle') {
+    return { percent: 0, indeterminate: false, label: 'Ready to scan' };
+  }
+
+  if (status === 'starting' || (status === 'running' && knownTotal === 0)) {
+    return { percent: 0, indeterminate: true, label: 'Discovering guide tree…' };
+  }
+
+  if (knownTotal === 0) {
+    return { percent: 0, indeterminate: false, label: status === 'interrupted' ? 'Waiting to resume' : 'No pages discovered yet' };
+  }
+
+  const rawPercent = Math.round((finished / knownTotal) * 100);
+  const percent = Math.max(0, Math.min(status === 'running' ? 99 : 100, rawPercent));
+  const suffix = status === 'running'
+    ? 'known pages checked'
+    : status === 'interrupted' || status === 'stopped'
+      ? 'known pages checked before pause'
+      : 'known pages checked';
+  return { percent, indeterminate: false, label: `${finished} of ${knownTotal} ${suffix}` };
+}
+
+function renderCrawlProgress() {
+  const progress = crawlProgressState();
+  elements.crawlProgress.classList.toggle('is-indeterminate', progress.indeterminate);
+  elements.crawlProgressBar.style.width = progress.indeterminate ? '38%' : `${progress.percent}%`;
+  elements.crawlProgressLabel.textContent = progress.label;
+  elements.crawlProgressPercent.textContent = progress.indeterminate ? 'Scanning…' : `${progress.percent}%`;
+  elements.crawlProgress.setAttribute('aria-valuetext', progress.label);
+  if (progress.indeterminate) elements.crawlProgress.removeAttribute('aria-valuenow');
+  else elements.crawlProgress.setAttribute('aria-valuenow', String(progress.percent));
+}
+
 function versionSummary() {
   const version = state.extensionVersion;
   if (!version?.installed) return '';
@@ -123,6 +176,7 @@ function render() {
   elements.auto.disabled = !candidate || state.crawlEnabled;
   elements.auto.textContent = `Capture as I browse: ${state.autoEnabled ? 'on' : 'off'}`;
   elements.queueCount.textContent = `${state.queueCount} page${state.queueCount === 1 ? '' : 's'} queued`;
+  renderCrawlProgress();
   elements.crawlMeta.textContent = crawlSummary();
   elements.crawlDiagnostic.textContent = state.crawlDiagnostic || '';
   elements.crawlFailures.replaceChildren(...(state.crawlFailureTitles || []).map((title) => {

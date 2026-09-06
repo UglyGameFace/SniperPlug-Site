@@ -12,7 +12,7 @@ const background = read('browser-extension/background.js');
 const captureScript = read('browser-extension/content-capture.js');
 const captureApi = read('functions/api/browser-capture.js');
 
-assert.equal(manifest.version, '0.2.0', 'Firefox authorized-sync package version was not bumped.');
+assert.equal(manifest.version, '0.2.1', 'Firefox authorized-sync package version was not bumped.');
 assert.ok(manifest.permissions.includes('webNavigation'), 'Firefox frame inventory permission is missing.');
 assert.deepEqual(
   manifest.content_scripts?.[0]?.matches,
