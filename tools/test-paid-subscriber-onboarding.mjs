@@ -170,6 +170,7 @@ const ownerWhopStart = read('functions/api/whop/oauth/start.js');
 const privateGuides = read('functions/_lib/private-guides.js');
 const page = read('control-center/index.html');
 const subscriberUi = read('assets/js/control-center-subscriber.js');
+const journeyCss = read('assets/css/control-center-journey.css');
 const example = read('.dev.vars.example');
 
 assert.ok(auth.includes("SUBSCRIBER_PRINCIPAL_PREFIX = 'whop-user:'"));
@@ -202,11 +203,13 @@ assert.ok(privateGuides.includes('requirePrivateGuideOwner') && privateGuides.in
 
 assert.ok(page.includes('href="/api/subscriber/oauth/start" data-subscriber-login'));
 assert.ok(page.includes('data-subscriber-workspace'));
-assert.ok(page.includes('/assets/js/control-center-subscriber.js?v=20260905.1'));
+assert.ok(page.includes('/assets/js/control-center-subscriber.js?v=20260906.1'));
 for (const ownerOnly of ['data-publish-guide data-owner-only', 'data-publish-all-ready data-owner-only', 'id="category-registry" data-owner-only']) {
   assert.ok(page.includes(ownerOnly), `Control Center is missing an owner-only presentation boundary: ${ownerOnly}`);
 }
-assert.ok(subscriberUi.includes('data-sniperplug-account-kind="subscriber"') && subscriberUi.includes('[data-owner-only]'));
+assert.ok(subscriberUi.includes('data-sniperplug-account-kind') && subscriberUi.includes('subscriberCopy'));
+assert.ok(!subscriberUi.includes("document.createElement('style')"), 'Subscriber runtime injects a competing presentation stylesheet.');
+assert.ok(journeyCss.includes('html[data-sniperplug-account-kind="subscriber"] [data-owner-only]') && journeyCss.includes('.subscriber-login-card'), 'Subscriber presentation is not owned by the canonical Control Center stylesheet.');
 assert.ok(subscriberUi.includes('Subscriber workspaces never publish to the public SniperPlug guide site.'));
 assert.ok(!subscriberUi.includes('MutationObserver'), 'Subscriber presentation added a broad DOM observer instead of using existing lifecycle events.');
 assert.ok(example.includes('WHOP_IMPORTER_PRODUCT_ID=prod_'));
@@ -218,4 +221,4 @@ console.log('✓ Whop OIDC user identity maps to a stable tenant principal while
 console.log('✓ Exact current product entitlement is required and verification failures lock access.');
 console.log('✓ Subscriber OAuth has its own one-time callback correlation and cannot require the owner password.');
 console.log('✓ Import, capture, recovery, backup, and bulk routes reverify subscriber access while public publishing stays owner-only.');
-console.log('✓ The Control Center exposes subscriber sign-in without restoring the deleted customer-pending, Discord, or paid-access architecture.');
+console.log('✓ Account presentation is bounded and styled by the canonical Control Center CSS rather than injected runtime CSS.');
