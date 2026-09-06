@@ -156,7 +156,10 @@ assert.ok(markdown.includes('noopener noreferrer nofollow') && markdown.includes
 for (const marker of ['data-source-approve', 'data-source-disapprove', 'data-approve-all', 'data-disapprove-all', 'data-reset-all', 'data-rights-confirm', 'data-publish-guide', 'data-reject-guide', 'data-inline-category-form', 'data-open-inline-category', 'publish-ready-visual']) {
   assert.ok(page.includes(marker), `Owner control is missing: ${marker}`);
 }
-assert.ok(page.includes('Forums, Courses, and Chat') && page.includes('data-scope-warning'));
+assert.ok(page.includes('Whop-readable content') && page.includes('data-scope-warning'), 'Source selection no longer explains readable Whop content or scope limitations.');
+for (const sourceFilter of ['value="forum"', 'value="course"', 'value="chat"']) {
+  assert.ok(page.includes(sourceFilter), `Source browser lost a supported source type: ${sourceFilter}.`);
+}
 assert.ok(page.includes('/assets/js/control-center-v2.js'), 'Active Control Center runtime is not loaded.');
 assert.ok(client.includes("action === 'post-approve' ? 'approved'") && client.includes("action === 'post-disapprove' ? 'disapproved'"), 'Individual post decisions are not delegated.');
 assert.ok(client.includes('return decidePosts([key], decision, button)'), 'Individual post decisions do not reach the API path.');
