@@ -1,20 +1,9 @@
 # Active Task
 
-## Active task / outcome
-Redesign and simplify the entire SniperPlug experience from the public site through the Control Center so the information architecture, navigation, hierarchy, mobile behavior, status language, accessibility, and task flows feel like one deliberate product instead of accumulated feature layers.
+## Current state
+The full-site SniperPlug UX redesign is complete and merged. No implementation task is currently active.
 
-## Scope lock
-- Active scope: public route architecture and navigation, shared visual/design tokens, homepage and marketing pages, retailer/deal surfaces, legal/error shells, Control Center information architecture, owner/subscriber entry states, source/import/review/publish/recovery flows, loading/empty/error/success states, mobile/tablet layouts, accessibility, terminology, action hierarchy, and removal of redundant presentation/runtime code discovered during the redesign.
-- Preserve all proven security and data boundaries from the importer work: tenant isolation, owner-only public publishing/shared categories/private-guide library, exact Whop entitlement checks, same-origin protections, versioned writes, no blind retries, private media rules, and fail-closed publication gates.
-- Do not create duplicate renderers, duplicate event handlers, second API implementations, or a parallel design system. Improve the existing canonical runtimes and shared CSS layers.
-- Do not change backend behavior merely to make screenshots look cleaner. Backend changes require a concrete UX or correctness reason and matching regressions.
-- Mobile/tablet is a first-class acceptance target, not a later CSS patch.
-
-## Completed prerequisite
-- PR #61 **Enable paid subscriber Control Center onboarding** merged as `fce18eb6dc212e7b6bd5dd5b805044c31025f426` and passed exact-head plus post-merge production validation.
-- Paid subscriber access uses verified Whop OIDC identity plus exact `WHOP_IMPORTER_PRODUCT_ID` entitlement, while owner-global operations remain owner-only.
-
-## Redesign progress already merged
+## Completed redesign
 - PR #62 **Improve shared navigation foundation** merged as `42b92fdbe38896bd68dcc82d5f0cc6c828d43830`.
   - Replaced the narrow-screen horizontal pill/sticky-owner workaround with one progressive mobile menu.
   - Added visible keyboard focus, 44px touch targets, Escape-to-close, reduced-motion support, and a no-JavaScript wrapped fallback.
@@ -22,39 +11,39 @@ Redesign and simplify the entire SniperPlug experience from the public site thro
   - Established Connect Whop → Choose sources → Review content → Review guides as the primary workflow.
   - Separated Safety & recovery and optional category setup from the primary task hierarchy.
   - Clarified owner versus subscriber publication boundaries without changing canonical data/mutation ownership.
+- PR #64 **Complete the full-site UX redesign** merged as `8861aabb8c6c611a6ed01d0b0ba2e2e3c9a4f5bd`.
+  - Added `docs/UX_ARCHITECTURE.md` as the route, journey, status-language, responsive, accessibility, and runtime-ownership map.
+  - Added shared semantic surface/status/touch tokens without creating another design-system layer.
+  - Reworked the homepage and Deal Board around truthful current-state messaging instead of live-looking placeholder content.
+  - Simplified Control Center copy and moved detailed media-operation counters behind progressive disclosure.
+  - Fixed publishing-evidence accessibility, added an accessible guide-list name, and tightened tablet/phone guide-editor bounds with safe-area-aware actions.
+  - Removed runtime-injected presentation CSS from the guide lifecycle and subscriber helper; canonical static Control Center styles now own those rules.
+  - Preserved tenant isolation, exact Whop entitlement checks, owner-only publication/shared categories/private-guide access, same-origin checks, versioned writes, no-blind-retry behavior, private-media rules, and fail-closed publication/recovery boundaries.
+  - Added `tools/audit-ux-completion.mjs` and extended existing regressions to prevent route/journey drift, duplicate presentation ownership, inaccessible publishing evidence, lost responsive bounds, or dishonest public empty states.
 
-## Final completion pass on `ux/complete-full-site-redesign`
-- Added `docs/UX_ARCHITECTURE.md` as the route, journey, status-language, responsive, accessibility, and runtime-ownership map.
-- Added shared semantic surface/status/touch tokens in `site-shell.css` without creating another design-system stylesheet.
-- Reworked the homepage value proposition around exact-offer understanding and added a truthful, prominent no-live-deals state.
-- Reworked `/deals/` around one authoritative empty state, retailer coverage, and the exact publication standard instead of duplicating status cards.
-- Simplified Control Center copy so implementation details do not dominate primary instructions.
-- Moved detailed media-operation counters behind progressive `Usage details` disclosure.
-- Fixed a real accessibility defect where the publishing evidence container was `aria-hidden` while containing a focusable Private Guides link; only the decorative track is hidden now.
-- Added an accessible name to the guide list.
-- Bounded the guide body editor more tightly on tablets/coarse pointers and phones while keeping sticky actions safe-area aware.
-- Removed runtime-injected CSS from both `control-center-lifecycle.js` and `control-center-subscriber.js`; canonical static Control Center styles now own those presentation rules.
-- Kept `control-center-v2.js`, the network guard, lifecycle, subscriber helper, backup runtime, and integrity compatibility layer in their existing singular responsibilities.
-- Extended existing regressions and added `tools/audit-ux-completion.mjs` to prevent route/journey drift, duplicate presentation ownership, inaccessible publishing evidence, lost responsive bounds, or dishonest public empty states.
+## Validation
+Final PR head `4e432eccc7a6a39de4cec199836aabe92d2f0cc1` passed:
+- **Verify SniperPlug #1071**, including the full Node 22 regression suite and Firefox Android extension packaging/upload.
+- **Verify affiliate-ready preview #132**.
+- **Verify retired public deal routes #132**.
+- No inline review threads or submitted reviews were outstanding.
 
-## Definition of Done
-- [x] Map every user-facing route and group routes by purpose: discovery/marketing, trust/legal, retailer/deal browsing, owner/subscriber access, private guides/media, and error/recovery surfaces.
-- [x] Audit shared tokens, typography, spacing, radii, controls, cards, status colors, responsive breakpoints, and duplicated component rules before changing visual code.
-- [x] Map the key journeys: first-time visitor, deal/retailer browser, owner sign-in, paid subscriber sign-in, Whop connection, source discovery, import, review/edit, publish/unpublish, bulk completion, backup/recovery, and failure recovery.
-- [x] Define one clearer navigation and page hierarchy for desktop, tablet, and phone without hiding important owner/subscriber actions.
-- [x] Refactor shared visual foundations so global tokens/components are authoritative and page-specific CSS stops compensating for one another.
-- [x] Improve homepage and public pages for clearer value proposition, trust, primary actions, scanability, and consistent empty/no-live-deal states.
-- [x] Rework Control Center hierarchy so account/connection state, source selection, content review, guide review, and recovery are conceptually distinct.
-- [x] Simplify status and error language so one state has one message surface and technical detail is progressive rather than dumped into the primary workflow.
-- [x] Make mobile/tablet controls reachable, non-overlapping, appropriately sized, and ordered by task priority; prevent giant text areas/panels from taking over the viewport.
-- [x] Improve accessibility: visible focus, semantic headings/landmarks, form labels, status announcements, contrast, touch targets, reduced-motion support, and keyboard navigation.
-- [x] Remove redundant CSS/JS/markup discovered during the redesign only after proving the canonical replacement covers the same behavior.
-- [x] Add/extend automated UX integrity checks for navigation ownership, duplicate controls, responsive hierarchy, accessibility markers, and canonical asset/runtime loading.
-- [ ] Run exact-head Node 22/full regression plus applicable Cloudflare preview checks, inspect the final diff/review state, merge, then require post-merge production validation for the complete redesign.
+Post-merge `main` commit `8861aabb8c6c611a6ed01d0b0ba2e2e3c9a4f5bd` passed:
+- **Verify SniperPlug #1072**.
+- **Verify production guide privacy #93**.
+- **Verify affiliate-ready production #89**.
+- **Verify retired public deal routes #133**.
 
-## Branch-governance backlog
-- `main` remains unprotected through the connected GitHub surface and no repository rulesets are visible.
-- The GitHub App connection still lacks repository-administration write access required to configure mandatory checks, so this remains a separate blocked administrative item.
+## Preserved architecture
+- `control-center-v2.js` remains the canonical Control Center state/mutation/render runtime.
+- `control-center-network-guard.js` remains the canonical timeout/version/auth gate.
+- `control-center-lifecycle.js` remains the canonical guide-editor lifecycle and dirty/publish feedback owner.
+- `control-center-subscriber.js` remains bounded account-specific presentation logic and does not own authentication or inject a second stylesheet.
+- `control-center-whop-backups.js` remains the canonical backup/recovery workflow owner.
+- `control-center-integrity-fix.js` remains compatibility/media repair only and does not reclaim guide status mutation.
 
-## Final gate
-Open the completion PR, require the exact branch head to pass the complete Node 22 regression suite, Firefox Android packaging, applicable Cloudflare preview checks, and clean review state. Merge only that exact head, then require post-merge `main` production guide privacy, affiliate-ready production, retired-route, and full verification checks before closing this redesign.
+## Administrative backlog
+- `main` is still unprotected because the connected GitHub App does not have repository-administration write access required to configure mandatory branch checks. This is an administrative permission limitation, not an unfinished site implementation task.
+
+## Next task
+Select the next implementation task separately. Do not mix unrelated feature work into this completed redesign record.
