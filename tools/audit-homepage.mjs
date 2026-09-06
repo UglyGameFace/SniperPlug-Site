@@ -28,14 +28,14 @@ const requiredHtml = [
   'href="/privacy/"',
   'href="/terms/"',
   'assets/css/homepage.css',
+  '>Control Center</a>',
+  'No public deal cards are live right now.',
+  'class="status-card" data-state="warning"',
+  'Know exactly what the deal is before you click.',
 ];
 
 for (const token of requiredHtml) {
   if (!html.includes(token)) fail(`missing required homepage token: ${token}`);
-}
-
-if (!html.includes('href="/control-center/"')) {
-  fail('the public homepage does not provide a clear Control Center entry point');
 }
 
 if (html.includes('href="/guides/"')) {
@@ -121,8 +121,8 @@ for (const token of requiredNavigationRuntime) {
 for (const obsolete of ['mobilePinned', "ownerLink.style.position = 'sticky'", "ownerLink.style.left = '0'"]) {
   if (runtime.includes(obsolete)) fail(`obsolete pinned Owner access mobile hack remains: ${obsolete}`);
 }
-for (const token of ['.nav-toggle{', 'min-height:44px', ':focus-visible', 'html[data-site-nav-enhanced="true"] .nav[data-open="true"]']) {
-  if (!shellCss.includes(token)) fail(`shared accessible navigation styling is missing: ${token}`);
+for (const token of ['.nav-toggle{', '--control-height:44px', ':focus-visible', '.status-card', 'html[data-site-nav-enhanced="true"] .nav[data-open="true"]']) {
+  if (!shellCss.includes(token)) fail(`shared accessible navigation/state styling is missing: ${token}`);
 }
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
