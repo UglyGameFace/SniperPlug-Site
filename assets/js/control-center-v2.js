@@ -619,8 +619,7 @@
     const key = groupKey(group);
     const query = elements.sourceSearch.value.trim().toLocaleLowerCase('en-US');
     const filter = elements.sourceFilter.value;
-    const filterKey = `${query}
-${filter}`;
+    const filterKey = `${query}\n${filter}`;
     const filterChanged = list.dataset.filterKey !== filterKey;
     const current = filterChanged ? SOURCE_PAGE_SIZE : state.sourceRenderLimits.get(key) || SOURCE_PAGE_SIZE;
     const limit = more ? current + SOURCE_PAGE_SIZE : current;
@@ -1417,6 +1416,28 @@ ${filter}`;
     };
   }
 
+  function bulkCompletionCopy(job) {
+    if (job?.status !== 'completed') return null;
+    const progress = progressSummary(job);
+    const issueCount = Math.max(0, Number(job.issueCount || 0));
+    const hasIssues = job.outcome === 'completed-with-issues' || issueCount > 0;
+    if (hasIssues) {
+      const issueLabel = issueCount === 1 ? '1 review item' : `${issueCount || 'Some'} review items`;
+      return {
+        title: `Bulk job completed with ${issueLabel}`,
+        summary: `${progress.completed}/${progress.total} sources · ${progress.published} published · ${issueLabel} · Successful publications remain published; held or failed items need review.`,
+        status: `Bulk job completed with ${issueLabel}. Successful publications remain published; held or failed items stayed out of the live result and need review.`,
+        state: 'warning',
+      };
+    }
+    return {
+      title: 'Bulk job completed successfully',
+      summary: `${progress.completed}/${progress.total} sources · ${progress.published} published · No held or failed items need review.`,
+      status: 'Bulk job completed successfully. Every processed source finished without held or failed items.',
+      state: 'ok',
+    };
+  }
+
   function renderTimeline(job) {
     const entries = [];
     for (const result of job?.results || []) entries.push({ state: 'done', title: result.title || result.experienceId, detail: `${result.published?.published || 0} published · ${result.manualReview || 0} manual · ${result.expired || 0} expired` });
@@ -1445,8 +1466,9 @@ ${filter}`;
       return;
     }
     const progress = progressSummary(job);
-    elements.bulkJobTitle.textContent = job.status === 'active' ? 'Bulk job ready to continue' : job.status === 'completed' ? 'Bulk job completed' : 'Bulk job canceled';
-    elements.bulkJobSummary.textContent = `${progress.completed}/${progress.total} sources · ${progress.scanned} scanned · ${progress.published} published · ${progress.held} held safely`;
+    const completion = bulkCompletionCopy(job);
+    elements.bulkJobTitle.textContent = completion?.title || (job.status === 'active' ? 'Bulk job ready to continue' : 'Bulk job canceled');
+    elements.bulkJobSummary.textContent = completion?.summary || `${progress.completed}/${progress.total} sources · ${progress.scanned} scanned · ${progress.published} published · ${progress.held} held safely`;
     elements.resumeBulk.hidden = job.status !== 'active';
     elements.cancelBulk.hidden = job.status !== 'active';
     elements.progressStage.textContent = job.status === 'active'
@@ -1486,10 +1508,9 @@ ${filter}`;
         renderJob(next);
         await new Promise((resolve) => setTimeout(resolve, 40));
       }
-      elements.bulkProgress.textContent = next?.status === 'completed'
-        ? 'Bulk job complete. Only durable guide content was published; replies, junk, expired picks, unresolved files, and unsafe links stayed private.'
-        : 'Bulk job canceled. Completed work was preserved and can be reversed below.';
-      elements.bulkProgress.dataset.state = next?.status === 'completed' && !next.failures?.length ? 'ok' : 'warning';
+      const completion = bulkCompletionCopy(next);
+      elements.bulkProgress.textContent = completion?.status || 'Bulk job canceled. Completed work was preserved and can be reversed below.';
+      elements.bulkProgress.dataset.state = completion?.state || (next?.status === 'canceled' ? 'warning' : 'ok');
       await Promise.all([loadDashboard({ discovery: false }), loadRecentActions()]);
     } catch (error) {
       elements.bulkProgress.textContent = `${error.message} Progress is saved; press Resume when the connection is stable.`;
