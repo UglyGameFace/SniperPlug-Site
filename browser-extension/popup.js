@@ -5,9 +5,11 @@ const elements = {
   pageMeta: document.getElementById('pageMeta'),
   pageDetail: document.getElementById('pageDetail'),
   openWhop: document.getElementById('openWhop'),
+  crawl: document.getElementById('crawl'),
   capture: document.getElementById('capture'),
   auto: document.getElementById('auto'),
   queueCount: document.getElementById('queueCount'),
+  crawlMeta: document.getElementById('crawlMeta'),
   queueTitles: document.getElementById('queueTitles'),
   clear: document.getElementById('clear'),
   rights: document.getElementById('rights'),
@@ -24,6 +26,13 @@ let state = {
   queuedTitles: [],
   whopTabCount: 0,
   usingRecentTab: false,
+  crawlEnabled: false,
+  crawlStatus: 'idle',
+  crawlDiscovered: 0,
+  crawlVisited: 0,
+  crawlCaptured: 0,
+  crawlRemaining: 0,
+  crawlError: '',
 };
 
 function setStatus(message, status = '') {
@@ -35,6 +44,20 @@ async function background(message) {
   const response = await chrome.runtime.sendMessage(message);
   if (!response?.ok) throw new Error(response?.error || 'The extension could not complete that action.');
   return response;
+}
+
+function crawlSummary() {
+  if (state.crawlStatus === 'idle') return '';
+  if (state.crawlStatus === 'starting') return 'Capture-all is reading the Better Content directory…';
+  if (state.crawlStatus === 'running') {
+    return `Capture-all: ${state.crawlCaptured} captured · ${state.crawlRemaining} remaining · ${state.crawlDiscovered} discovered`;
+  }
+  if (state.crawlStatus === 'complete') return `Capture-all complete: ${state.crawlCaptured} guide${state.crawlCaptured === 1 ? '' : 's'} captured.`;
+  if (state.crawlStatus === 'complete-empty') return 'Capture-all found no safe guide links to capture on this rendered page.';
+  if (state.crawlStatus === 'limit') return state.crawlError || 'Capture-all stopped at its safe traversal limit.';
+  if (state.crawlStatus === 'error') return state.crawlError || 'Capture-all stopped because the rendered app left its safe traversal scope.';
+  if (state.crawlStatus === 'stopped') return 'Capture-all stopped. Already queued pages were kept.';
+  return '';
 }
 
 function render() {
@@ -52,26 +75,29 @@ function render() {
   } else if (state.whopTabCount === 0) {
     elements.pageTitle.textContent = 'Whop is not open in Firefox';
     elements.pageMeta.textContent = 'The native Whop app is separate from Firefox.';
-    elements.pageDetail.textContent = 'Tap Open Whop in Firefox, sign in there, then open Hidden Files → Make Money Here → an individual guide.';
+    elements.pageDetail.textContent = 'Tap Open Whop in Firefox, sign in there, then open Hidden Files → Make Money Here.';
     elements.openWhop.hidden = false;
   } else {
-    elements.pageTitle.textContent = 'Whop is open, but no Better Content guide is rendered';
+    elements.pageTitle.textContent = 'Whop is open, but Better Content is not rendered yet';
     elements.pageMeta.textContent = `${state.whopTabCount} Whop tab${state.whopTabCount === 1 ? '' : 's'} found in Firefox.`;
-    elements.pageDetail.textContent = 'Switch to the Whop tab and open Hidden Files → Make Money Here → an individual guide. Then reopen this extension.';
+    elements.pageDetail.textContent = 'Switch to the Whop tab and open Hidden Files → Make Money Here, then reopen this extension.';
     elements.openWhop.hidden = false;
   }
 
-  elements.capture.disabled = !candidate?.experienceId;
-  elements.auto.disabled = !candidate;
-  elements.auto.textContent = `Auto-capture: ${state.autoEnabled ? 'on' : 'off'}`;
+  elements.crawl.disabled = !candidate?.experienceId;
+  elements.crawl.textContent = state.crawlEnabled ? 'Stop capture-all' : 'Capture all guides';
+  elements.capture.disabled = !candidate?.experienceId || state.crawlEnabled;
+  elements.auto.disabled = !candidate || state.crawlEnabled;
+  elements.auto.textContent = `Capture as I browse: ${state.autoEnabled ? 'on' : 'off'}`;
   elements.queueCount.textContent = `${state.queueCount} page${state.queueCount === 1 ? '' : 's'} queued`;
+  elements.crawlMeta.textContent = crawlSummary();
   elements.queueTitles.replaceChildren(...state.queuedTitles.map((title) => {
     const item = document.createElement('li');
     item.textContent = title;
     return item;
   }));
-  elements.clear.disabled = state.queueCount === 0;
-  elements.send.disabled = state.queueCount === 0 || !elements.rights.checked;
+  elements.clear.disabled = state.queueCount === 0 || state.crawlEnabled;
+  elements.send.disabled = state.queueCount === 0 || !elements.rights.checked || state.crawlEnabled;
   elements.send.textContent = state.queueCount
     ? `Send ${state.queueCount} page${state.queueCount === 1 ? '' : 's'} to SniperPlug`
     : 'Send queued pages to SniperPlug';
@@ -95,11 +121,32 @@ elements.openWhop.addEventListener('click', async () => {
   setStatus('Opening Whop inside Firefox Nightly…');
   try {
     await background({ type: 'sniperplug:open-whop' });
-    setStatus('Open Hidden Files → Make Money Here → an individual guide, then reopen SniperPlug Capture.', 'ok');
+    setStatus('Open Hidden Files → Make Money Here, then reopen SniperPlug Capture.', 'ok');
     setTimeout(() => window.close(), 600);
   } catch (error) {
     setStatus(error.message, 'error');
     elements.openWhop.disabled = false;
+  }
+});
+
+elements.crawl.addEventListener('click', async () => {
+  elements.crawl.disabled = true;
+  try {
+    if (state.crawlEnabled) {
+      const output = await background({ type: 'sniperplug:stop-traversal', tabId });
+      state = { ...state, ...output };
+      setStatus('Capture-all stopped. Pages already queued were kept.', 'ok');
+    } else {
+      const output = await background({ type: 'sniperplug:start-traversal', tabId });
+      if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
+      state = { ...state, ...output };
+      setStatus('Capture-all started. Keep the Whop tab open; SniperPlug will open the safe Better Content guide links for you.', 'ok');
+    }
+    render();
+    setTimeout(() => refresh().catch(() => null), 1200);
+  } catch (error) {
+    setStatus(error.message, 'error');
+    render();
   }
 });
 
@@ -125,8 +172,8 @@ elements.auto.addEventListener('click', async () => {
     if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
     state.autoEnabled = output.enabled;
     setStatus(state.autoEnabled
-      ? 'Auto-capture is on. Open each Better Content page you want; the extension will add each stable page to the queue.'
-      : 'Auto-capture is off.', 'ok');
+      ? 'Capture-as-I-browse is on. SniperPlug will queue each Better Content page you choose to open yourself.'
+      : 'Capture-as-I-browse is off.', 'ok');
     render();
   } catch (error) {
     setStatus(error.message, 'error');
