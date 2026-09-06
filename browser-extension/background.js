@@ -3,16 +3,21 @@
 const CANDIDATE_KEY = 'sniperplugCandidates';
 const QUEUE_KEY = 'sniperplugCaptureQueues';
 const AUTO_KEY = 'sniperplugAutoTabs';
+const TRAVERSAL_KEY = 'sniperplugTraversalTabs';
 const PENDING_KEY = 'sniperplugPendingCaptures';
-const MAX_QUEUE = 25;
+const MAX_QUEUE = 120;
+const MAX_QUEUE_BODY_CHARS = 4_000_000;
+const MAX_TRAVERSAL_VISITS = 240;
 const CANDIDATE_TTL_MS = 10 * 60_000;
 const APP_FRAME_SETTLE_MS = 4000;
 const APP_FRAME_POLL_MS = 100;
+const BLOCKED_TRAVERSAL_PATH = /\/(?:api|oauth|auth|login|logout|sign-?out|account|settings|admin|billing|checkout|purchase|support|contact)(?:\/|$)/i;
 const WHOP_TAB_PATTERNS = [
   'https://whop.com/*',
   'https://*.whop.com/*',
   'https://*.apps.whop.com/*',
 ];
+const traversalLocks = new Map();
 
 async function readState(key, fallback) {
   const stored = await chrome.storage.session.get(key);
@@ -25,6 +30,19 @@ async function writeState(key, value) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTraversalLock(tabId, task) {
+  const previous = traversalLocks.get(tabId) || Promise.resolve();
+  let next;
+  next = previous
+    .catch(() => null)
+    .then(task)
+    .finally(() => {
+      if (traversalLocks.get(tabId) === next) traversalLocks.delete(tabId);
+    });
+  traversalLocks.set(tabId, next);
+  return next;
 }
 
 function isWhopAppHost(hostname) {
@@ -43,6 +61,16 @@ function safeAppFrameUrl(value) {
   } catch {
     return null;
   }
+}
+
+function normalizedTraversalUrl(value, state) {
+  const url = safeAppFrameUrl(value);
+  if (!url || BLOCKED_TRAVERSAL_PATH.test(url.pathname)) return '';
+  if (state?.host && url.hostname.toLowerCase() !== String(state.host).toLowerCase()) return '';
+  const targetExperience = experienceIdFromUrl(url.pathname);
+  if (state?.experienceId && targetExperience && targetExperience !== state.experienceId) return '';
+  url.hash = '';
+  return url.toString();
 }
 
 function candidateKey(tabId, frameId) {
@@ -124,6 +152,18 @@ async function saveCandidate(sender, candidate) {
   const autoTabs = await readState(AUTO_KEY, {});
   if (autoTabs[String(tabId)] === true) {
     chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-auto', enabled: true }, { frameId }).catch(() => null);
+  }
+
+  const traversals = await readState(TRAVERSAL_KEY, {});
+  const traversal = traversals[String(tabId)];
+  if (traversal?.enabled === true
+    && (!traversal.host || traversal.host === normalized.host)
+    && (!traversal.experienceId || traversal.experienceId === normalized.experienceId)) {
+    traversal.frameId = frameId;
+    traversal.updatedAt = now;
+    traversals[String(tabId)] = traversal;
+    await writeState(TRAVERSAL_KEY, traversals);
+    chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);
   }
 }
 
@@ -296,15 +336,30 @@ function isSafeAppCapture(capture) {
     && Boolean(safeAppFrameUrl(capture?.pageUrl || capture?.frameUrl));
 }
 
+function captureBodyChars(capture) {
+  return String(capture?.bodyMarkdown || '').length;
+}
+
+function queueBodyChars(captures) {
+  return captures.reduce((sum, capture) => sum + captureBodyChars(capture), 0);
+}
+
 async function addCapture(tabId, capture) {
   if (!isSafeAppCapture(capture)) throw new Error('SniperPlug refused a capture that did not come from the rendered Better Content app frame.');
   const queues = await readState(QUEUE_KEY, {});
   const key = String(tabId);
   const current = Array.isArray(queues[key]) ? queues[key].filter(isSafeAppCapture) : [];
   const identity = captureIdentity(capture);
-  const next = current.filter((item) => captureIdentity(item) !== identity);
-  next.push(capture);
-  if (next.length > MAX_QUEUE) next.splice(0, next.length - MAX_QUEUE);
+  const existingIndex = current.findIndex((item) => captureIdentity(item) === identity);
+  const next = [...current];
+  if (existingIndex >= 0) next.splice(existingIndex, 1, capture);
+  else next.push(capture);
+  if (next.length > MAX_QUEUE) {
+    throw new Error(`Capture-all reached the safe ${MAX_QUEUE}-page extension queue limit. Send the queued pages to SniperPlug before capturing more.`);
+  }
+  if (queueBodyChars(next) > MAX_QUEUE_BODY_CHARS) {
+    throw new Error('Capture-all reached the safe extension storage limit. Send the queued pages to SniperPlug before capturing more.');
+  }
   queues[key] = next;
   await writeState(QUEUE_KEY, queues);
   return next;
@@ -348,6 +403,216 @@ async function setAutoCapture(tabId, enabled) {
     { frameId: item.frameId },
   )));
   return { enabled, targetTabId: sourceTabId };
+}
+
+function traversalPublicState(state) {
+  if (!state) return {
+    crawlEnabled: false,
+    crawlStatus: 'idle',
+    crawlDiscovered: 0,
+    crawlVisited: 0,
+    crawlCaptured: 0,
+    crawlRemaining: 0,
+    crawlError: '',
+  };
+  return {
+    crawlEnabled: state.enabled === true,
+    crawlStatus: String(state.status || 'idle'),
+    crawlDiscovered: Math.max(0, Number(state.discovered || 0)),
+    crawlVisited: Array.isArray(state.visited) ? state.visited.length : 0,
+    crawlCaptured: Math.max(0, Number(state.captured || 0)),
+    crawlRemaining: (Array.isArray(state.pending) ? state.pending.length : 0) + (state.currentTarget ? 1 : 0),
+    crawlError: String(state.error || ''),
+  };
+}
+
+async function traversalForTab(tabId) {
+  if (!Number.isInteger(tabId)) return null;
+  const traversals = await readState(TRAVERSAL_KEY, {});
+  return traversals[String(tabId)] || null;
+}
+
+async function saveTraversal(tabId, state) {
+  const traversals = await readState(TRAVERSAL_KEY, {});
+  if (state) traversals[String(tabId)] = state;
+  else delete traversals[String(tabId)];
+  await writeState(TRAVERSAL_KEY, traversals);
+}
+
+async function setTraversalFrame(tabId, frameId, enabled) {
+  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return false;
+  try {
+    const response = await chrome.tabs.sendMessage(
+      tabId,
+      { type: 'sniperplug:set-traversal', enabled: enabled === true },
+      { frameId },
+    );
+    return response?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function startTraversal(tabId) {
+  const openTabs = await whopTabs();
+  const resolved = await resolveCandidate(Number.isInteger(tabId) ? tabId : null, openTabs);
+  const candidate = resolved.candidate;
+  if (!candidate || !isCaptureCandidate(candidate) || !candidate.experienceId) {
+    throw new Error('Open Hidden Files → Make Money Here in Firefox Nightly so SniperPlug can see the Better Content directory before starting Capture all guides.');
+  }
+  const seed = safeAppFrameUrl(candidate.pageUrl);
+  if (!seed) throw new Error('The Better Content directory does not expose a safe app-frame URL yet.');
+  const sourceTabId = candidate.tabId;
+  const state = {
+    enabled: true,
+    status: 'starting',
+    error: '',
+    experienceId: candidate.experienceId,
+    host: String(candidate.host || '').toLowerCase(),
+    frameId: candidate.frameId,
+    seedUrl: seed.toString(),
+    currentTarget: null,
+    pending: [],
+    visited: [],
+    discovered: 0,
+    captured: 0,
+    skipped: 0,
+    lastSnapshotKey: '',
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  await saveTraversal(sourceTabId, state);
+  const attached = await setTraversalFrame(sourceTabId, candidate.frameId, true);
+  if (!attached) {
+    state.enabled = false;
+    state.status = 'error';
+    state.error = 'SniperPlug could not attach Capture all guides to the rendered Better Content frame.';
+    await saveTraversal(sourceTabId, state);
+    throw new Error(state.error);
+  }
+  return { targetTabId: sourceTabId, ...traversalPublicState(state) };
+}
+
+async function stopTraversal(tabId, status = 'stopped', error = '') {
+  const state = await traversalForTab(tabId);
+  if (!state) return { targetTabId: tabId, ...traversalPublicState(null) };
+  state.enabled = false;
+  state.status = status;
+  state.error = error;
+  state.currentTarget = null;
+  state.updatedAt = Date.now();
+  await saveTraversal(tabId, state);
+  const candidates = await candidatesForTab(tabId);
+  await Promise.allSettled(candidates.map((candidate) => setTraversalFrame(tabId, candidate.frameId, false)));
+  return { targetTabId: tabId, ...traversalPublicState(state) };
+}
+
+function mergeTraversalTargets(state, targets) {
+  const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
+  const known = new Set([
+    ...visited,
+    ...(Array.isArray(state.pending) ? state.pending.map((item) => item.url) : []),
+    state.currentTarget?.url || '',
+    state.seedUrl || '',
+  ].filter(Boolean));
+  const pending = Array.isArray(state.pending) ? [...state.pending] : [];
+  for (const raw of Array.isArray(targets) ? targets.slice(0, 300) : []) {
+    if (known.size >= MAX_TRAVERSAL_VISITS) break;
+    const url = normalizedTraversalUrl(raw?.url, state);
+    if (!url || known.has(url)) continue;
+    known.add(url);
+    pending.push({
+      url,
+      title: String(raw?.title || '').trim().slice(0, 180),
+    });
+  }
+  state.pending = pending;
+  state.discovered = Math.max(Number(state.discovered || 0), known.size - (state.seedUrl ? 1 : 0));
+}
+
+async function handleTraversalPage(sender, snapshot) {
+  const tabId = Number(sender?.tab?.id);
+  const frameId = Number(sender?.frameId ?? 0);
+  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return { ignored: true };
+  return withTraversalLock(tabId, async () => {
+    const state = await traversalForTab(tabId);
+    if (!state?.enabled) return { ignored: true, ...traversalPublicState(state) };
+    if (state.frameId !== frameId) state.frameId = frameId;
+    const snapshotExperience = String(snapshot?.experienceId || '').trim();
+    if (snapshotExperience && snapshotExperience !== state.experienceId) {
+      return stopTraversal(tabId, 'error', 'Capture-all stopped because Better Content navigated to a different Whop experience.');
+    }
+    const pageUrl = normalizedTraversalUrl(snapshot?.pageUrl, state);
+    if (!pageUrl) return stopTraversal(tabId, 'error', 'Capture-all stopped because Better Content left the verified app-frame scope.');
+
+    const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])
+      .slice(0, 300)
+      .map((target) => String(target?.url || ''))
+      .sort()
+      .join('|');
+    const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}`;
+    if (snapshotKey === state.lastSnapshotKey) return { ignored: true, ...traversalPublicState(state) };
+    state.lastSnapshotKey = snapshotKey;
+    state.updatedAt = Date.now();
+
+    const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
+    if (state.currentTarget?.url) visited.add(state.currentTarget.url);
+    visited.add(pageUrl);
+    state.visited = [...visited].slice(-MAX_TRAVERSAL_VISITS);
+
+    mergeTraversalTargets(state, snapshot?.targets);
+
+    if (snapshot?.capture && snapshot?.directoryLike !== true) {
+      try {
+        const before = await queueForTab(tabId);
+        const beforeIdentities = new Set(before.map(captureIdentity));
+        const queue = await addCapture(tabId, snapshot.capture);
+        if (!beforeIdentities.has(captureIdentity(snapshot.capture))) state.captured += 1;
+        state.queueCount = queue.length;
+      } catch (error) {
+        return stopTraversal(tabId, 'error', String(error?.message || error || 'Capture-all could not queue this page.'));
+      }
+    } else if (snapshot?.directoryLike === true) {
+      state.skipped += 1;
+    }
+
+    while (state.pending.length && visited.has(state.pending[0]?.url)) state.pending.shift();
+    if (state.visited.length >= MAX_TRAVERSAL_VISITS) {
+      return stopTraversal(tabId, 'limit', `Capture-all stopped at the safe ${MAX_TRAVERSAL_VISITS}-page traversal limit.`);
+    }
+    const nextTarget = state.pending.shift() || null;
+    if (!nextTarget) {
+      state.enabled = false;
+      state.status = state.captured > 0 ? 'complete' : 'complete-empty';
+      state.currentTarget = null;
+      state.updatedAt = Date.now();
+      await saveTraversal(tabId, state);
+      await setTraversalFrame(tabId, frameId, false);
+      return { complete: true, ...traversalPublicState(state) };
+    }
+
+    state.status = 'running';
+    state.currentTarget = nextTarget;
+    state.updatedAt = Date.now();
+    await saveTraversal(tabId, state);
+    try {
+      const response = await chrome.tabs.sendMessage(
+        tabId,
+        { type: 'sniperplug:traverse-navigate', url: nextTarget.url },
+        { frameId },
+      );
+      if (!response?.ok) throw new Error(response?.error || 'navigation refused');
+    } catch (error) {
+      visited.add(nextTarget.url);
+      state.visited = [...visited].slice(-MAX_TRAVERSAL_VISITS);
+      state.currentTarget = null;
+      state.lastSnapshotKey = '';
+      state.error = `Skipped “${nextTarget.title || nextTarget.url}” because the app frame could not navigate to it.`;
+      await saveTraversal(tabId, state);
+      chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);
+    }
+    return { complete: false, ...traversalPublicState(state) };
+  });
 }
 
 async function queueForTab(tabId) {
@@ -452,6 +717,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
       return { ok: false, ignored: true };
     }
+    if (message?.type === 'sniperplug:traversal-page') {
+      return { ok: true, ...(await handleTraversalPage(sender, message.snapshot || {})) };
+    }
     if (message?.type === 'sniperplug:popup-state') {
       const preferredTabId = Number(message.tabId);
       const [openWhopTabs, autoTabs] = await Promise.all([
@@ -465,6 +733,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const targetTabId = candidate?.tabId ?? (Number.isInteger(preferredTabId) ? preferredTabId : null);
       const queue = Number.isInteger(targetTabId) ? await queueForTab(targetTabId) : [];
       const candidates = Number.isInteger(targetTabId) ? await candidatesForTab(targetTabId) : [];
+      const traversal = Number.isInteger(targetTabId) ? await traversalForTab(targetTabId) : null;
       return {
         ok: true,
         candidate,
@@ -475,11 +744,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         queueCount: queue.length,
         queuedTitles: queue.slice(-5).map((item) => item.title),
         autoEnabled: Number.isInteger(targetTabId) && autoTabs[String(targetTabId)] === true,
+        ...traversalPublicState(traversal),
       };
     }
     if (message?.type === 'sniperplug:open-whop') return { ok: true, tabId: await openWhop() };
     if (message?.type === 'sniperplug:capture-current') return { ok: true, ...(await captureCurrent(Number(message.tabId))) };
     if (message?.type === 'sniperplug:set-auto-request') return { ok: true, ...(await setAutoCapture(Number(message.tabId), message.enabled === true)) };
+    if (message?.type === 'sniperplug:start-traversal') return { ok: true, ...(await startTraversal(Number(message.tabId))) };
+    if (message?.type === 'sniperplug:stop-traversal') return { ok: true, ...(await stopTraversal(Number(message.tabId))) };
     if (message?.type === 'sniperplug:clear-queue') {
       await clearQueue(Number(message.tabId));
       return { ok: true };
@@ -503,6 +775,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     readState(AUTO_KEY, {}).then((autoTabs) => {
       delete autoTabs[String(tabId)];
       return writeState(AUTO_KEY, autoTabs);
+    }),
+    readState(TRAVERSAL_KEY, {}).then((traversals) => {
+      delete traversals[String(tabId)];
+      return writeState(TRAVERSAL_KEY, traversals);
     }),
   ]).catch(() => null);
 });
