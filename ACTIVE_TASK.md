@@ -1,56 +1,51 @@
 # Active Task
 
-## Active task / outcome
-Add a true, visible Capture-all progress bar to the Better Content Firefox extension so a long recursive sync visibly proves that work is happening and shows how much of the currently known guide tree has been processed.
+## Current state
+COMPLETE AND MERGED — PR #69 added a true visible Capture-all progress bar to the Better Content Firefox extension. No implementation task is currently active.
 
-## Scope
-In scope:
-- progress UI inside the existing Capture-all card;
-- progress derived only from the crawler's authoritative visited/discovered/remaining counters;
-- an indeterminate discovery phase when no denominator exists yet;
-- a determinate percentage once known work exists, with honest handling of a growing recursive guide tree;
-- paused/error/complete states and accessible progress semantics;
-- extension patch-version/update metadata and directly affected regression coverage;
-- Firefox Android packaging, exact-head CI, final diff/review inspection, merge, post-merge validation, and delivery of the resulting XPI.
+## User-visible failure addressed
+A healthy long-running Capture-all sync could look frozen because the popup showed only dense crawler counters. There was no progress track, percentage, or visible discovery activity.
 
-Out of scope / backlog:
-- changing traversal behavior, Whop authorization, capture limits, retries, handoff policy, or content readers;
-- unrelated Control Center/importer changes.
+## Root cause
+- The crawler already exposed authoritative `crawlVisited`, `crawlDiscovered`, and `crawlRemaining` state through `sniperplug:popup-state`.
+- The popup never translated those counters into a visual progress control.
+- Recursive Better Content traversal can reveal more nested pages while scanning, so the final page count is not knowable at startup. A fixed denominator would have produced misleading progress.
 
-## Status
-IN PROGRESS — root cause and authoritative progress inputs are identified; implementation is being applied on `feature/capture-progress-bar`.
+## Execution path preserved
+1. Background traversal remains the sole owner of visited/pending/current/discovered state.
+2. `sniperplug:popup-state` exposes those existing counters.
+3. The popup polls that state while Capture-all is active.
+4. The progress renderer derives presentation-only state from those counters; no second crawler, retry path, authorization path, or duplicated traversal state was introduced.
 
-## Findings / root cause
-- PR #68 already exposes `crawlVisited`, `crawlDiscovered`, `crawlRemaining`, queue outcomes, retries, failures, and the current title to the popup.
-- The popup renders those values only as dense status text. There is no visual progress track, percentage, or discovery animation, so a healthy long-running crawl can look frozen.
-- Recursive discovery means the total number of pages is not known up front. A fake fixed denominator would be misleading. The correct denominator is the currently known work set, and it may grow as nested directories reveal more pages.
+## Changes merged
+- Added a visible progress track and percentage inside the existing Capture-all card.
+- Discovery is indeterminate only while no real known-work denominator exists.
+- Determinate progress uses completed visits versus the maximum of discovered pages and completed+remaining known work.
+- The UI says `X of Y known pages checked` so Y can honestly grow when nested directories reveal more guides.
+- A running crawl is capped visually at 99% and reaches 100% only after `complete` or `complete-empty`.
+- Stop/interruption/error states retain truthful partial progress instead of resetting.
+- Added ARIA progress semantics and reduced-motion behavior.
+- Extension version advanced from `0.2.0` to `0.2.1`; minimum compatible version remains `0.2.0`.
+- Added `tools/test-browser-progress-bar.mjs` and wired it into the repository audit chain; related traversal/frame-selection version regressions were updated.
+- PR #69 was squash-merged to `main` as `5795fe9e9ea8f31908ec6e9c7c0766e633030613`.
 
-## Execution path
-1. Background traversal owns and persists visited/pending/current/discovered state.
-2. `sniperplug:popup-state` exposes the derived crawler counters.
-3. The popup polls that state while Capture-all is enabled.
-4. The new progress renderer maps those existing counters into an accessible progress bar without adding a second crawler or duplicated traversal state.
+## Validation / results
+- Final PR head `03ed0ff403b1d2e5fa6c37ddb618ef02209c61bd`: **Verify SniperPlug #1090 passed**, including the full repository build/regression suite, Firefox Android XPI packaging, and artifact upload.
+- The same exact PR head passed **Verify affiliate-ready preview #137**, **Verify retired public deal routes #140**, and Cloudflare Pages deployment.
+- New progress regression verifies indeterminate discovery, determinate known-work percentage, recursive denominator expansion, the 99% running cap, paused partial progress, and 100% only for completed scans.
+- No inline review threads or submitted PR reviews were outstanding at merge.
+- Post-merge `main` commit `5795fe9e9ea8f31908ec6e9c7c0766e633030613`: **Verify SniperPlug #1091 passed**, including the full regression suite and Firefox Android package/upload.
+- The same merge commit also passed production affiliate readiness, production guide privacy, retired public deal routes, and Cloudflare Pages deployment.
+- Vercel preview/deployment statuses were rejected because the account exceeded its free daily deployment/build limit (`api-deployments-free-per-day` / `build-rate-limit`), not because of an application build or regression failure.
 
-## Planned implementation
-- Show an indeterminate animated bar while the crawler is starting/discovering and has no known total.
-- Once pages are known, calculate progress from completed visits versus the maximum of discovered pages and completed+remaining known work.
-- Keep running scans below 100% until the crawler reports a complete state.
-- Show the exact `X of Y known pages checked` readout beside the percentage so users understand that nested discovery can expand Y.
-- Freeze truthful partial progress for stop/interruption/error states and show 100% only for complete/complete-empty.
-- Preserve reduced-motion and ARIA behavior.
+## Cleanup / conflicts
+- Final implementation scope remained limited to the progress UI, extension patch-version metadata, directly affected regressions, audit wiring, and this task record.
+- No traversal, Whop authorization, capture limit, retry, content-reader, server handoff, or Control Center behavior was changed.
+- No cookie permission, token forwarding, private-API probing, debug code, conflict markers, secret-bearing changes, or unrelated redesign was introduced.
 
-## Validation required
-- Syntax/static regression checks for the popup progress implementation.
-- Existing recursive traversal, interruption recovery, security boundary, Firefox frame-selection, server roundtrip, and full repository audit suite.
-- Firefox Android XPI package/upload on the exact PR head.
-- Final changed-file and review-thread inspection before merge.
-- Post-merge main validation before completion is claimed.
-
-## Blockers / risks
-- The percentage can legitimately decrease if a later page reveals more nested guides. The UI must call the denominator “known pages” rather than pretending the final total was known at scan start.
-
-## Backlog
-None discovered for this task.
+## Remaining risks / limitations
+- The displayed percentage can decrease if a later directory reveals additional nested pages. This is intentional and truthful; the denominator is explicitly labeled as the currently **known** page count rather than a fabricated final total.
+- Vercel remains externally rate-limited until its account quota resets or plan changes; GitHub regression workflows and Cloudflare deployment are green.
 
 ## Next step
-Implement the progress UI and directly affected version/regression updates, then run the repository-native exact-head validation.
+No implementation work remains for PR #69. Use the validated Firefox Android `0.2.1` XPI for live testing; select any further implementation task separately.
