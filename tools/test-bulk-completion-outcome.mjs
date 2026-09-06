@@ -53,7 +53,8 @@ assert.ok(
 
 assert.ok(
   runtime.includes("job.outcome === 'completed-with-issues' || issueCount > 0")
-    && runtime.includes("title: `Bulk job completed with ${issueCount || 'review'} item")
+    && runtime.includes("const issueLabel = issueCount === 1 ? '1 review item'")
+    && runtime.includes('title: `Bulk job completed with ${issueLabel}`')
     && runtime.includes('Successful publications remain published; held or failed items need review.')
     && runtime.includes("title: 'Bulk job completed successfully'")
     && runtime.includes('No held or failed items need review.'),
@@ -67,7 +68,7 @@ assert.ok(
 );
 
 assert.ok(
-  runtime.includes("const completion = bulkCompletionCopy(next);")
+  runtime.includes('const completion = bulkCompletionCopy(next);')
     && runtime.includes("elements.bulkProgress.dataset.state = completion?.state || (next?.status === 'canceled' ? 'warning' : 'ok')"),
   'The final live status message must reuse the same canonical completion wording instead of guessing from failures alone.',
 );
