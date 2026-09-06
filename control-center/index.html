@@ -8,11 +8,11 @@
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/assets/css/styles.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center.css?v=20260730.14">
-  <link rel="stylesheet" href="/assets/css/control-center-journey.css?v=20260905.1">
+  <link rel="stylesheet" href="/assets/css/control-center-journey.css?v=20260906.1">
   <link rel="stylesheet" href="/assets/css/whop-discovery.css?v=20260730.14">
   <link rel="stylesheet" href="/assets/css/control-center-hardening.css?v=20260823.1">
   <link rel="stylesheet" href="/assets/css/bulk-history.css?v=20260730.14">
-  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260730.14">
+  <link rel="stylesheet" href="/assets/css/control-center-publishing.css?v=20260906.1">
   <link rel="stylesheet" href="/assets/css/whop-backups.css?v=20260803.1">
 </head>
 <body>
@@ -60,11 +60,11 @@
       </nav>
 
       <section class="control-panel" id="whop-importer">
-        <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
+        <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores only the encrypted connection needed to read content you approve.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
         <div class="button-row" data-owner-only><a class="btn primary" href="/api/whop/oauth/start" data-whop-connect>Connect Whop</a><button class="btn primary" type="button" data-whop-switch hidden>Switch Whop account</button><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect Whop</button></div>
         <div class="discovery-status" data-whop-switch-help data-owner-only hidden>
           <strong>Ready to use a different Whop account</strong>
-          <span>SniperPlug has removed its saved Whop token. Whop.com can still remember the account signed into this browser. Open Whop in another tab, sign out of the old account and sign into the account you want, then return here and continue.</span>
+          <span>SniperPlug removed its saved connection. If Whop still remembers the old browser account, sign out there first, then return and continue with the account you want.</span>
           <div class="button-row"><a class="btn ghost" href="https://whop.com/" target="_blank" rel="noopener">Open Whop to switch account</a><a class="btn primary" href="/api/whop/oauth/start" data-whop-switch-continue>Continue with Whop</a></div>
         </div>
         <p class="whop-connection-detail" data-whop-connection-detail data-state="idle">Checking the saved Whop connection…</p>
@@ -73,7 +73,7 @@
       </section>
 
       <section class="control-panel" id="whop-backups" data-whop-backup-panel>
-        <header class="panel-head"><div><span class="eyebrow">Backup & reset</span><h2>Keep every imported method recoverable</h2><p>Create signed recovery snapshots, clear stale importer state safely, and restore methods even after Whop access is gone.</p></div><button class="btn ghost panel-action" type="button" data-refresh-backups>Refresh backups</button></header>
+        <header class="panel-head"><div><span class="eyebrow">Backup & reset</span><h2>Keep imported work recoverable</h2><p>Create a recovery copy, restore earlier work, or safely clear stale importer state when you actually need to.</p></div><button class="btn ghost panel-action" type="button" data-refresh-backups>Refresh backups</button></header>
         <div class="whop-backup-tools">
           <label><span>Backup/reset scope</span><select data-backup-scope><option value="source" selected>One saved Whop source</option><option value="group">One saved Whop group</option><option value="all">Entire Whop importer</option></select></label>
           <label data-backup-source-field><span>Saved source</span><select data-backup-source><option value="">Loading saved sources…</option></select></label>
@@ -86,7 +86,7 @@
           <div class="button-row"><button class="btn ghost" type="button" data-create-whop-backup>Create verified backup</button><button class="decision disapprove" type="button" data-reset-whop-importer>Back up, clear & resync</button></div>
         </div>
         <p class="whop-backup-status" data-backup-status role="status" aria-live="polite" hidden></p>
-        <div class="whop-backup-history-head"><div><h3>Recovery history</h3><p>Server-held backups pin their R2 media. Download JSON for an offline copy.</p></div></div>
+        <div class="whop-backup-history-head"><div><h3>Recovery history</h3><p>Server-held backups keep their copied media available. Download JSON when you also want an offline copy.</p></div></div>
         <p class="whop-backup-empty" data-backup-empty>No verified Whop backups yet.</p>
         <div class="whop-backup-history" data-backup-history></div>
         <dialog class="whop-backup-dialog" data-backup-dialog>
@@ -101,14 +101,14 @@
       </section>
 
       <section class="control-panel" id="source-browser" data-discovery-panel>
-        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Active memberships and Whop-readable Forums, Courses, and Chat load automatically. Source lists stay collapsed until opened so every tap remains responsive.</p></div><button class="btn ghost panel-action" type="button" data-refresh-groups>Refresh sources</button></header>
+        <header class="panel-head"><div><span class="eyebrow">2 · Choose sources</span><h2>Your active Whop content</h2><p>Load the memberships and Whop-readable content you can access, then open only the group and source you want to review.</p></div><button class="btn ghost panel-action" type="button" data-refresh-groups>Refresh sources</button></header>
         <div class="discovery-status" data-discovery-status role="status" aria-live="polite"><strong data-discovery-summary>Connect Whop to load sources.</strong><span data-discovery-message></span></div>
         <div class="media-readiness-inline" data-media-readiness>
-          <div class="media-readiness-copy"><strong>Private media storage</strong><p>Checking permanent media-copy capability…</p></div>
+          <div class="media-readiness-copy"><strong>Private media storage</strong><p>Checking private media storage…</p></div>
           <div class="media-usage" data-media-usage hidden>
             <div class="media-usage-labels"><span data-media-usage-label>0 B of 8 GB used</span><span data-media-usage-objects>0 files</span></div>
-            <progress data-media-usage-progress max="100" value="0">0%</progress>
-            <span class="media-usage-operations" data-media-usage-operations>0 uncached reads today · 0 copy attempts today · 0 this month</span>
+            <progress data-media-usage-progress max="100" value="0" aria-label="Private media storage usage">0%</progress>
+            <details class="media-usage-details"><summary>Usage details</summary><span class="media-usage-operations" data-media-usage-operations>0 uncached reads today · 0 copy attempts today · 0 this month</span></details>
           </div>
         </div>
         <div class="source-browser-tools" data-source-browser-tools hidden>
@@ -194,13 +194,13 @@
       <section class="control-panel" id="guide-review">
         <header class="panel-head"><div><span class="eyebrow">4 · Review guides</span><h2>Review guides</h2><p>Open a guide and check the exact saved draft. Owners can publish approved guides to Private Guides; subscriber workspace drafts remain private.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready data-owner-only>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
-        <div class="publish-ready-visual" aria-hidden="true" data-owner-only>
-          <div class="publish-ready-track"><span></span></div>
+        <div class="publish-ready-visual" data-owner-only>
+          <div class="publish-ready-track" aria-hidden="true"><span></span></div>
           <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides were added to the private library and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener" data-owner-only>Open private guides</a></div>
         </div>
         <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published</option><option value="all">All guides</option></select></label></div>
         <div class="draft-layout">
-          <aside class="draft-list" data-draft-list></aside>
+          <aside class="draft-list" data-draft-list aria-label="Guide list"></aside>
           <div class="draft-empty" data-draft-empty><strong>No guide selected</strong><p>Choose a guide to review.</p></div>
           <form class="draft-editor" data-draft-editor hidden>
             <input type="hidden" name="id">
@@ -227,9 +227,9 @@
   </div>
 
   <script src="/assets/js/control-center-network-guard.js?v=20260823.1" defer></script>
-  <script src="/assets/js/control-center-subscriber.js?v=20260905.1" defer></script>
+  <script src="/assets/js/control-center-subscriber.js?v=20260906.1" defer></script>
   <script src="/assets/js/control-center-v2.js?v=20260823.1" defer></script>
-  <script src="/assets/js/control-center-lifecycle.js?v=20260905.3" defer></script>
+  <script src="/assets/js/control-center-lifecycle.js?v=20260906.1" defer></script>
   <script src="/assets/js/control-center-whop-backups.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-integrity-fix.js?v=20260905.3" defer></script>
 </body>
