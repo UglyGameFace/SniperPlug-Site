@@ -1,43 +1,60 @@
 # Active Task
 
 ## Current state
-COMPLETE AND MERGED — Whop account switching reliability hotfix shipped in PR #67. No implementation task is currently active.
+IN PROGRESS — Better Content automatic guide traversal and capture.
 
-## User-visible failure addressed
-Pressing **Switch Whop account** could appear to reconnect the exact same Whop account instead of moving to a different account.
+## User-visible failure
+SniperPlug can auto-capture only pages the user manually opens. On a Better Content directory such as **Hidden Files → Make Money Here**, the extension sees the list of guide cards but does not automatically open and capture the guide bodies behind them.
 
 ## Root cause
-- PR #65 already added the correct server-side same-account switch guard: a deliberate switch records the Whop user being left in a signed short-lived callback cookie, and the OAuth callback rejects/revokes that same user if Whop browser SSO returns it again.
-- `control-center/index.html` was still loading `control-center-v2.js?v=20260823.1`.
-- `functions/_middleware.js` serves versioned Control Center assets as `public, max-age=31536000, immutable`, so browsers could legally keep the August runtime for up to a year.
-- The first PR verification run then exposed a stale regression assertion in `tools/audit-control-mobile-flow.mjs` that incorrectly required the canonical runtime to remain on that August cache key.
+- `browser-extension/content-capture.js` is intentionally DOM-only and captures only the currently rendered `*.apps.whop.com` frame.
+- Existing auto-capture is passive: it watches DOM/URL changes after navigation but never initiates navigation itself.
+- `browser-extension/background.js` only queues captures reported by already-rendered pages and caps the queue at 25.
+- The server intentionally accepts at most 25 captures per request, so simply increasing the browser queue without chunked handoff would create another failure once a source has more than 25 guides.
 
-## Execution path preserved
-- The Control Center's **Switch Whop account** action calls the authenticated `/api/whop-switch` POST.
-- The switch endpoint disconnects the saved Whop identity and records the identity being left in the signed switch-intent callback cookie.
-- The subsequent OAuth callback rejects/revokes the connection if Whop browser SSO returns that same identity.
-- No guessed Whop account-picker parameter, retry loop, fallback auth path, or duplicate switch implementation was added.
+## Required behavior
+- Add an explicit **Capture all guides** action.
+- Discover only safe same-origin/same-experience Better Content links from the rendered app frame; do not use Whop cookies, browser credentials, undocumented private APIs, or cross-origin crawling.
+- Traverse discovered pages automatically, survive iframe reloads/navigation, deduplicate visited targets, skip directory/index shells, and stop cleanly when traversal is complete or bounded limits are reached.
+- Preserve manual Capture page and navigation-driven Auto-capture behavior.
+- Allow more than 25 queued pages while keeping storage bounded.
+- Send large queues to SniperPlug in server-safe chunks without weakening the server-side 25-page and byte limits.
 
-## Changes merged
-- `control-center/index.html` now loads `control-center-v2.js?v=20260906.2`, forcing browsers off the stale immutable runtime.
-- `tools/audit-control-mobile-flow.mjs` still pins the two unchanged group-recovery assets to `v=20260823.1`, while separately requiring the canonical runtime's account-switch-safe `v=20260906.2` key.
-- PR #67 was squash-merged to `main` as `9437681cd9453802a842fe8c0a9694fb66eb49aa`.
+## Execution path
+1. Popup requests automatic traversal from the background worker.
+2. Background resolves the verified `*.apps.whop.com` candidate for the current Whop experience and stores traversal state in extension session storage.
+3. Content script discovers safe navigable page links inside the rendered content root and reports stable traversal snapshots.
+4. Background serializes traversal state, queues real guide captures, and instructs the same verified frame to navigate to the next safe target.
+5. Candidate registration after iframe reload reattaches the traversal session and continues automatically.
+6. Sending to SniperPlug remains same-origin through the signed-in Control Center relay; the relay chunks the queue into existing server-safe browser-capture batches.
 
-## Validation
-- Initial PR head `a7a0dea55d5d668b06e6a503a0fbe42b2d55931d`: **Verify SniperPlug #1079 failed** because the stale mobile-flow assertion rejected the correct runtime cache bust.
-- Repaired implementation head `f51ba090f70f5f5e183b4dd879afb092a4a6bcd6`: **Verify SniperPlug #1081 passed**; Cloudflare Pages and Vercel Preview Comments also passed.
-- Final PR head `902e92a5f2892a2c731e926bbbf6359e7d9979f4`: **Verify SniperPlug #1082 passed** and Cloudflare Pages deployed successfully.
-- Post-merge `main` commit `9437681cd9453802a842fe8c0a9694fb66eb49aa`: **Verify SniperPlug #1083 passed**, **Verify production guide privacy #98 passed**, **Verify affiliate-ready production #94 passed**, and **Cloudflare Pages passed/deployed**.
-- PR #67 had no inline review threads or submitted reviews outstanding at merge.
+## Scope
+Expected affected area:
+- `browser-extension/content-capture.js`
+- `browser-extension/background.js`
+- `browser-extension/popup.html`
+- `browser-extension/popup.js`
+- `browser-extension/sniperplug-relay.js`
+- `browser-extension/manifest.json`
+- extension regression tests / package audit list
+- extension README
+- this task record
 
-## Cleanup and conflicts
-- Runtime implementation scope remained limited to the Control Center cache key and its directly conflicting regression assertion.
-- No temporary/debug code, unrelated redesign, compatibility shim, duplicate logic, or secret-bearing change was introduced.
-- The merged PR diff was rechecked before merge and contained only `control-center/index.html`, `tools/audit-control-mobile-flow.mjs`, and this task record.
+## Validation required
+- New traversal regression covering directory discovery → automatic navigation → guide capture → completion and unsafe-target rejection.
+- Existing Firefox frame-selection and candidate-retention regressions remain green.
+- Browser-capture security regression still proves the Whop content script is DOM-only and never calls private Whop APIs.
+- Full repository `npm run audit` / CI passes on the exact PR head.
+- Firefox Android extension packages successfully.
+- Final diff contains no unrelated changes, debug code, credential access, broad host permissions, or weakened server capture limits.
+
+## Cleanup / conflicts
+- Do not replace the canonical app-frame verification or same-origin relay path.
+- Do not add a second capture implementation when the existing extractor can be extended.
+- Do not silently drop older captures when the traversal queue fills.
 
 ## Blockers / risks
-- No known blocker remains for PR #67.
-- Live behavior still depends on Whop's own browser session/account selection, but SniperPlug now refuses the same Whop identity during a deliberate switch instead of silently accepting it again.
+- Better Content may render some controls without real links. The first implementation should automate actual same-frame navigable links safely; arbitrary button clicking is out of scope unless required by observed runtime evidence.
 
 ## Next step
-Select the next implementation task separately; do not mix unrelated work into this completed PR #67 record.
+Implement the smallest event-driven DOM traversal on `feature/whop-auto-guide-crawl`, add regressions, run exact-head CI, inspect the final diff, and only then merge.
