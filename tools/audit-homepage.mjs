@@ -34,8 +34,8 @@ for (const token of requiredHtml) {
   if (!html.includes(token)) fail(`missing required homepage token: ${token}`);
 }
 
-if (!html.includes('>Owner access</a>')) {
-  fail('the public homepage does not provide a clear owner entry point');
+if (!html.includes('href="/control-center/"')) {
+  fail('the public homepage does not provide a clear Control Center entry point');
 }
 
 if (html.includes('href="/guides/"')) {
@@ -107,15 +107,22 @@ if (!/@media\s*\(max-width\s*:\s*(?:6\d{2}|700)px\)/i.test(css)) fail('mobile br
 if (!css.includes('minmax(0,1fr)')) fail('responsive grid overflow protection is missing');
 if (/min-width\s*:\s*[7-9]\d{2,}px/i.test(css)) fail('large fixed min-width may cause horizontal overflow');
 
-const requiredMobileOwnerRuntime = [
-  'querySelector(\'a[href="/control-center/"]\')',
-  "matchMedia('(max-width: 620px)')",
-  "ownerLink.style.position = 'sticky'",
-  "ownerLink.style.left = '0'",
-  "ownerLink.dataset.mobilePinned = 'true'",
+const requiredNavigationRuntime = [
+  "querySelector('a[href=\"/control-center/\"]')",
+  "matchMedia('(max-width: 760px)')",
+  "toggle.setAttribute('aria-controls', nav.id)",
+  "toggle.setAttribute('aria-expanded', 'false')",
+  "event.key === 'Escape'",
+  "document.documentElement.dataset.siteNavEnhanced = 'true'",
 ];
-for (const token of requiredMobileOwnerRuntime) {
-  if (!runtime.includes(token)) fail(`mobile Owner access protection is missing: ${token}`);
+for (const token of requiredNavigationRuntime) {
+  if (!runtime.includes(token)) fail(`accessible mobile navigation is missing: ${token}`);
+}
+for (const obsolete of ['mobilePinned', "ownerLink.style.position = 'sticky'", "ownerLink.style.left = '0'"]) {
+  if (runtime.includes(obsolete)) fail(`obsolete pinned Owner access mobile hack remains: ${obsolete}`);
+}
+for (const token of ['.nav-toggle{', 'min-height:44px', ':focus-visible', 'html[data-site-nav-enhanced="true"] .nav[data-open="true"]']) {
+  if (!shellCss.includes(token)) fail(`shared accessible navigation styling is missing: ${token}`);
 }
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]);
