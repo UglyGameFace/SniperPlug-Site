@@ -23,8 +23,8 @@
 
   function setAccountKind(kind) {
     accountKind = kind === 'subscriber' ? 'subscriber' : kind === 'owner' ? 'owner' : '';
-    if (accountKind) document.documentElement.dataset.sniperplugAccountKind = accountKind;
-    else delete document.documentElement.dataset.sniperplugAccountKind;
+    if (accountKind) document.documentElement.setAttribute('data-sniperplug-account-kind', accountKind);
+    else document.documentElement.removeAttribute('data-sniperplug-account-kind');
     root.dataset.accountKind = accountKind;
   }
 
