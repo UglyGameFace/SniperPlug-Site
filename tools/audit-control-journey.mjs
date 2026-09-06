@@ -4,9 +4,11 @@ import { readFileSync } from 'node:fs';
 const read = (path) => readFileSync(path, 'utf8');
 const page = read('control-center/index.html');
 const css = read('assets/css/control-center-journey.css');
+const publishingCss = read('assets/css/control-center-publishing.css');
 const backups = read('assets/js/control-center-whop-backups.js');
 const runtime = read('assets/js/control-center-v2.js');
 const lifecycle = read('assets/js/control-center-lifecycle.js');
+const subscriber = read('assets/js/control-center-subscriber.js');
 
 assert.equal((page.match(/data-control-journey/g) || []).length, 1, 'Control Center has more than one primary workflow navigator.');
 assert.ok(page.includes('<h1>Control Center</h1>'), 'Authenticated Control Center still presents itself as a guide-only tool.');
@@ -36,6 +38,8 @@ assert.ok(page.includes('Open when ready to process selected sources'), 'Bulk wo
 assert.ok(page.includes('Owner workspaces publish only content that passes every safety check.'), 'Bulk flow does not keep owner publication separate from subscriber import work.');
 
 assert.equal((page.match(/control-center-journey\.css/g) || []).length, 1, 'Journey CSS is missing or loaded more than once.');
+assert.ok(page.includes('/assets/css/control-center-journey.css?v=20260906.1'), 'Final journey CSS is not cache-busted.');
+assert.ok(page.includes('/assets/css/control-center-publishing.css?v=20260906.1'), 'Final guide presentation CSS is not cache-busted.');
 for (const token of [
   '.control-journey{',
   'grid-template-columns:repeat(5,minmax(0,1fr))',
@@ -46,10 +50,13 @@ for (const token of [
   '@media(max-width:430px)',
   '@media(prefers-reduced-motion:reduce)',
   'scroll-margin-top:88px',
+  'html[data-sniperplug-account-kind="subscriber"] [data-owner-only]',
+  '.media-usage-details',
 ]) {
   assert.ok(css.includes(token), `Journey CSS is missing responsive/accessibility protection: ${token}`);
 }
 assert.ok(!css.includes('position:sticky'), 'Workflow navigator should not consume the mobile viewport as a sticky toolbar.');
+assert.ok(publishingCss.includes('height:min(28vh,320px)'), 'Phone guide editing can again dominate the viewport.');
 
 assert.ok(backups.includes('function structureRecoveryPanel()'), 'Recovery lost its canonical progressive-disclosure owner.');
 assert.ok(backups.includes('if (app instanceof HTMLElement) app.append(panel);'), 'Recovery is no longer moved after the primary importer workflow.');
@@ -57,13 +64,20 @@ assert.ok(backups.includes("workflow.className = 'whop-recovery-workflow'"), 'Re
 assert.ok(backups.includes("workflow.dataset.recoveryWorkflow = 'true'"), 'Recovery workflow identity is missing.');
 assert.ok(backups.includes("if (workflow.open && !state.loaded) loadOverview();"), 'Recovery history can load eagerly again.');
 
+assert.ok(page.includes('class="media-usage-details"') && page.includes('<summary>Usage details</summary>'), 'Technical media usage is dumped into the primary workflow instead of progressive details.');
+assert.ok(page.includes('aria-label="Guide list"'), 'Guide list is not named for assistive technology.');
+assert.ok(!/class="publish-ready-visual"[^>]*aria-hidden="true"/.test(page), 'A focusable publishing action is inside an aria-hidden container.');
+assert.ok(page.includes('class="publish-ready-track" aria-hidden="true"'), 'Decorative publishing progress is not hidden independently.');
+
 assert.equal((page.match(/control-center-v2\.js/g) || []).length, 1, 'Canonical Control Center runtime is loaded more than once.');
 assert.equal((page.match(/control-center-lifecycle\.js/g) || []).length, 1, 'Guide lifecycle runtime is loaded more than once.');
 assert.ok(!runtime.includes('data-control-journey') && !lifecycle.includes('data-control-journey'), 'Presentation-only journey navigation leaked into a second runtime state machine.');
+assert.ok(!lifecycle.includes("document.createElement('style')"), 'Guide lifecycle injects competing CSS.');
+assert.ok(!subscriber.includes("document.createElement('style')"), 'Subscriber presentation injects competing CSS.');
 
 console.log('\nCONTROL CENTER JOURNEY AUDIT PASSED\n');
 console.log('✓ One four-stage importer journey separates connection, sources, content, and guide review.');
 console.log('✓ Safety/recovery and optional category setup no longer compete with the primary task hierarchy.');
 console.log('✓ Owner publication language is separated from paid-subscriber private import work.');
-console.log('✓ Journey navigation is keyboard-visible, touch-sized, responsive, reduced-motion aware, and non-sticky on mobile.');
-console.log('✓ Existing canonical runtimes still own data, mutations, guide lifecycle, and progressive recovery behavior.');
+console.log('✓ Technical diagnostics are progressive while guide and publishing controls stay accessible.');
+console.log('✓ Runtime ownership remains singular and presentation CSS is static/canonical.');
