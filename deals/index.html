@@ -21,7 +21,7 @@
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a>
-      <nav class="nav" aria-label="Main navigation"><a href="/">Home</a><a href="/control-center/">Owner access</a><a class="active" href="/deals/">Deals</a><a href="/deals/walmart/">Walmart</a><a href="/deals/best-buy/">Best Buy</a><a href="/partners/">Partners</a></nav>
+      <nav class="nav" aria-label="Main navigation"><a href="/">Home</a><a href="/control-center/">Control Center</a><a class="active" href="/deals/">Deals</a><a href="/deals/walmart/">Walmart</a><a href="/deals/best-buy/">Best Buy</a><a href="/partners/">Partners</a></nav>
       <a class="header-cta" href="/contact/">Contact us</a>
     </div>
   </header>
@@ -31,7 +31,7 @@
         <span class="eyebrow">Verified deal board</span>
         <h1>Only confirmed offers belong here.</h1>
         <p>SniperPlug does not publish placeholder prices, invented discounts, or generic retailer searches as deal cards. A card appears only after the exact product and official destination are confirmed.</p>
-        <div class="store-strip">
+        <div class="store-strip" aria-label="Retailer coverage">
           <a class="store-chip" href="/deals/walmart/">Walmart coverage</a>
           <a class="store-chip" href="/deals/lowes/">Lowe’s coverage</a>
           <a class="store-chip" href="/deals/best-buy/">Best Buy coverage</a>
@@ -41,28 +41,30 @@
       </div>
     </section>
 
-    <section class="section">
-      <div class="container two-col">
-        <article class="info-card">
-          <span class="eyebrow">Current board status</span>
-          <h2>No verified public deal cards are active.</h2>
+    <section class="section" aria-labelledby="deal-board-status">
+      <div class="container">
+        <div class="status-card" data-state="warning">
+          <strong id="deal-board-status">No verified public deal cards are active.</strong>
           <p>The earlier demonstration cards were removed because their prices and destinations were not backed by a current exact-product record. This board will populate from verified SniperPlug data rather than examples.</p>
-        </article>
-        <article class="info-card">
-          <span class="eyebrow">Publication rule</span>
-          <h2>Exact destination or no card.</h2>
-          <p>Each future alert must identify the retailer, exact product or SKU, variant, visible price evidence, seller or fulfillment context when relevant, a verification time, and an official product-page destination.</p>
-        </article>
+          <div class="hero-actions"><a class="btn primary" href="#verification-standard">See the publication standard</a><a class="btn ghost" href="/about/">How SniperPlug verifies offers</a></div>
+        </div>
       </div>
     </section>
 
-    <section class="section section-soft">
+    <section class="section section-soft" id="verification-standard">
       <div class="container section-head"><div><span class="section-kicker">Deal verification standard</span><h2>What SniperPlug checks before publishing.</h2><p class="section-lead">The standard is intentionally stricter than posting a search result or repeating a headline.</p></div></div>
       <div class="container grid capability-grid">
         <article class="capability-card"><span>1</span><h3>Exact product</h3><p>The title, model, size, color, edition, pack, and other offer-defining variants must match the destination.</p></article>
         <article class="capability-card"><span>2</span><h3>Offer context</h3><p>Seller, fulfillment, pickup, account eligibility, coupons, rewards, and location sensitivity are labeled when they affect the final offer.</p></article>
-        <article class="capability-card"><span>3</span><h3>Official destination</h3><p>The action must lead to the relevant retailer product page or an approved exact deep link—not a broad search page.</p></article>
+        <article class="capability-card"><span>3</span><h3>Official destination</h3><p>The action must lead to the relevant retailer product page or an approved exact deep link, not a broad search page.</p></article>
         <article class="capability-card"><span>4</span><h3>Final verification</h3><p>Shoppers are reminded to confirm price, stock, terms, and checkout totals on the retailer’s site because retail conditions can change quickly.</p></article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container two-col">
+        <article class="info-card"><span class="eyebrow">Publication rule</span><h2>Exact destination or no card.</h2><p>Each future alert must identify the retailer, exact product or SKU, variant, visible price evidence, seller or fulfillment context when relevant, a verification time, and an official product-page destination.</p></article>
+        <article class="info-card"><span class="eyebrow">What you can browse now</span><h2>Retailer-specific coverage rules.</h2><p>Use the retailer pages above to see exactly which identity, seller, location, fulfillment, promotion, and condition details SniperPlug requires for each store.</p></article>
       </div>
     </section>
 
@@ -74,7 +76,7 @@
     <div class="container footer-grid">
       <div><a class="brand footer-brand" href="/"><span class="brand-mark">SP</span><span>SniperPlug</span></a><p>Retail deal discovery built around exact product context, transparent disclosures, and official retailer destinations.</p><p class="mini">SniperPlug is independent and is not endorsed by the retailers shown unless specifically stated.</p></div>
       <div><h4>Coverage</h4><a href="/deals/walmart/">Walmart</a><a href="/deals/lowes/">Lowe’s</a><a href="/deals/best-buy/">Best Buy</a><a href="/deals/home-depot/">Home Depot</a><a href="/deals/amazon/">Amazon</a></div>
-      <div><h4>Company</h4><a href="/about/">About</a><a href="/partners/">Retailer partners</a><a href="/contact/">Contact</a><a href="/control-center/">Owner access</a></div>
+      <div><h4>Company</h4><a href="/about/">About</a><a href="/partners/">Retailer partners</a><a href="/contact/">Contact</a><a href="/control-center/">Control Center</a></div>
       <div><h4>Legal</h4><a href="/affiliate-disclosure/">Affiliate disclosure</a><a href="/privacy/">Privacy policy</a><a href="/terms/">Terms of use</a></div>
     </div>
     <div class="container footer-bottom">© 2026 SniperPlug. Built for responsible deal discovery and official retailer click-throughs.</div>
