@@ -151,7 +151,9 @@ jobs:
           grep -Fq '.page-hero{position:relative' site-shell.css
           grep -Fq '.legal-card{max-width:980px' site-shell.css
           grep -Fq '.error-shell{' site-shell.css
-          grep -Fq '@media(max-width:700px)' site-shell.css
+          grep -Fq '@media(max-width:760px)' site-shell.css
+          grep -Fq '.nav-toggle{display:none;min-height:44px' site-shell.css
+          grep -Fq ':focus-visible' site-shell.css
 
           echo 'Checking marketing component layer.'
           curl --silent --show-error --max-time 25 "${pages}/assets/css/homepage.css?production=${COMMIT_SHA}" > marketing-theme.css
@@ -168,8 +170,11 @@ jobs:
           ! grep -Fq 'logoAsset' site-runtime.js
           ! grep -Fq "document.querySelectorAll('.brand-mark')" site-runtime.js
           ! grep -Fq 'mark.replaceChildren(logo)' site-runtime.js
-          grep -Fq "matchMedia('(max-width: 620px)')" site-runtime.js
-          grep -Fq "ownerLink.dataset.mobilePinned = 'true'" site-runtime.js
+          grep -Fq "matchMedia('(max-width: 760px)')" site-runtime.js
+          grep -Fq "toggle.setAttribute('aria-controls', nav.id)" site-runtime.js
+          grep -Fq "toggle.setAttribute('aria-expanded', 'false')" site-runtime.js
+          grep -Fq "event.key === 'Escape'" site-runtime.js
+          ! grep -Fq 'mobilePinned' site-runtime.js
           grep -Fq "document.querySelectorAll('.deal-card')" site-runtime.js
           grep -Fq 'requestAnimationFrame(apply)' site-runtime.js
 
