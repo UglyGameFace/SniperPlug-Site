@@ -52,9 +52,24 @@ assert.ok(
 );
 
 assert.ok(
-  runtime.includes("elements.bulkJobTitle.textContent = job.status === 'active'")
-    && runtime.includes('elements.bulkJobSummary.textContent = `${progress.completed}/${progress.total} sources'),
+  runtime.includes("job.outcome === 'completed-with-issues' || issueCount > 0")
+    && runtime.includes("title: `Bulk job completed with ${issueCount || 'review'} item")
+    && runtime.includes('Successful publications remain published; held or failed items need review.')
+    && runtime.includes("title: 'Bulk job completed successfully'")
+    && runtime.includes('No held or failed items need review.'),
+  'Canonical v2 must distinguish clean completion from completed-with-issues using the server outcome instead of a generic completed label.',
+);
+
+assert.ok(
+  runtime.includes("elements.bulkJobTitle.textContent = completion?.title || (job.status === 'active'")
+    && runtime.includes("elements.bulkJobSummary.textContent = completion?.summary || `${progress.completed}/${progress.total} sources"),
   'Existing Control Center runtime must remain the authoritative bulk progress/title renderer.',
+);
+
+assert.ok(
+  runtime.includes("const completion = bulkCompletionCopy(next);")
+    && runtime.includes("elements.bulkProgress.dataset.state = completion?.state || (next?.status === 'canceled' ? 'warning' : 'ok')"),
+  'The final live status message must reuse the same canonical completion wording instead of guessing from failures alone.',
 );
 
 assert.ok(!helper.includes('MutationObserver'), 'Bulk completion feedback must not add broad DOM observation.');
@@ -65,6 +80,6 @@ assert.ok(
 );
 
 console.log('Bulk completion outcome regression passed.');
-console.log('- Clean completion is explicit.');
-console.log('- Completed-with-issues preserves successful publications and exposes the server issue breakdown.');
-console.log('- v2 remains the authoritative bulk renderer and no duplicate state machine was added.');
+console.log('- Clean completion is explicit in the canonical v2 renderer.');
+console.log('- Completed-with-issues preserves successful publications and exposes review-needed wording without becoming a false clean success.');
+console.log('- The reset helper stays bounded and no duplicate bulk state machine was added.');
