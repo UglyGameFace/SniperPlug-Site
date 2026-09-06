@@ -5,6 +5,8 @@
   const pendingId = params.get('extensionCapture');
   if (!pendingId) return;
 
+  const MAX_CAPTURE_BATCH_COUNT = 25;
+  const MAX_CAPTURE_BATCH_BODY_BYTES = 2_200_000;
   let pending = null;
   let sending = false;
 
@@ -72,34 +74,66 @@
     try { return text ? JSON.parse(text) : {}; } catch { return { message: text || `Request failed (${response.status}).` }; }
   }
 
+  function captureBodyBytes(capture) {
+    return new TextEncoder().encode(String(capture?.bodyMarkdown || '')).byteLength;
+  }
+
+  function captureBatches(captures) {
+    const batches = [];
+    let current = [];
+    let currentBytes = 0;
+    for (const capture of Array.isArray(captures) ? captures : []) {
+      const bytes = captureBodyBytes(capture);
+      if (current.length && (current.length >= MAX_CAPTURE_BATCH_COUNT || currentBytes + bytes > MAX_CAPTURE_BATCH_BODY_BYTES)) {
+        batches.push(current);
+        current = [];
+        currentBytes = 0;
+      }
+      current.push(capture);
+      currentBytes += bytes;
+    }
+    if (current.length) batches.push(current);
+    return batches;
+  }
+
+  async function sendBatch(captures) {
+    const response = await fetch('/api/browser-capture', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rightsConfirmed: pending?.rightsConfirmed === true,
+        captures,
+      }),
+    });
+    const output = await responseJson(response);
+    if (!response.ok) {
+      const error = new Error(output?.message || output?.error || `SniperPlug rejected the browser capture (${response.status}).`);
+      error.status = response.status;
+      throw error;
+    }
+    return output;
+  }
+
   async function sendCapture() {
     if (sending) return;
     sending = true;
     retry.disabled = true;
-    setMessage(`Sending ${pending?.captures?.length || 0} rendered Better Content page${pending?.captures?.length === 1 ? '' : 's'} into the private SniperPlug draft queue…`);
+    const captures = pending?.captures || [];
+    const batches = captureBatches(captures);
+    setMessage(`Sending ${captures.length} rendered Better Content page${captures.length === 1 ? '' : 's'} into the private SniperPlug draft queue…`);
     try {
-      const response = await fetch('/api/browser-capture', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          rightsConfirmed: pending?.rightsConfirmed === true,
-          captures: pending?.captures || [],
-        }),
-      });
-      const output = await responseJson(response);
-      if (!response.ok) {
-        const error = new Error(output?.message || output?.error || `SniperPlug rejected the browser capture (${response.status}).`);
-        error.status = response.status;
-        throw error;
+      const totals = { created: 0, updated: 0, unchanged: 0, held: 0 };
+      for (let index = 0; index < batches.length; index += 1) {
+        if (batches.length > 1) {
+          setMessage(`Sending browser-capture batch ${index + 1} of ${batches.length} (${batches[index].length} pages)…`);
+        }
+        const output = await sendBatch(batches[index]);
+        for (const key of Object.keys(totals)) totals[key] += Number(output?.[key] || 0);
       }
 
       await extension({ type: 'sniperplug:clear-pending', pendingId, success: true });
-      const created = Number(output?.created || 0);
-      const updated = Number(output?.updated || 0);
-      const unchanged = Number(output?.unchanged || 0);
-      const held = Number(output?.held || 0);
-      setMessage(`${created} new draft${created === 1 ? '' : 's'} · ${updated} updated · ${unchanged} unchanged · ${held} held safely. Reloading the private review queue…`, 'ok');
+      setMessage(`${totals.created} new draft${totals.created === 1 ? '' : 's'} · ${totals.updated} updated · ${totals.unchanged} unchanged · ${totals.held} held safely. Reloading the private review queue…`, 'ok');
       const clean = new URL(location.href);
       clean.searchParams.delete('extensionCapture');
       clean.searchParams.set('browserCapture', 'success');
@@ -110,7 +144,7 @@
       } else if (Number(error?.status) === 403) {
         setMessage(`SniperPlug refused the handoff: ${error.message} Reconnect/verify Whop if needed, then retry.`, 'error');
       } else {
-        setMessage(`Capture was not saved: ${error?.message || error}. The extension kept the queued pages so you can retry without recapturing them.`, 'error');
+        setMessage(`Capture was not fully saved: ${error?.message || error}. The extension kept the entire queued set so retrying is safe; pages already imported will resolve as unchanged.`, 'error');
       }
     } finally {
       sending = false;
