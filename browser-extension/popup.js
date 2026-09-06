@@ -6,19 +6,25 @@ const elements = {
   pageDetail: document.getElementById('pageDetail'),
   openWhop: document.getElementById('openWhop'),
   crawl: document.getElementById('crawl'),
+  crawlScope: document.getElementById('crawlScope'),
+  crawlMeta: document.getElementById('crawlMeta'),
+  crawlDiagnostic: document.getElementById('crawlDiagnostic'),
+  crawlFailures: document.getElementById('crawlFailures'),
   capture: document.getElementById('capture'),
   auto: document.getElementById('auto'),
   queueCount: document.getElementById('queueCount'),
-  crawlMeta: document.getElementById('crawlMeta'),
   queueTitles: document.getElementById('queueTitles'),
   clear: document.getElementById('clear'),
   rights: document.getElementById('rights'),
+  sendWhenDone: document.getElementById('sendWhenDone'),
   send: document.getElementById('send'),
   status: document.getElementById('status'),
+  versionStatus: document.getElementById('versionStatus'),
 };
 
 let tabId = null;
 let preferredTabId = null;
+let pollTimer = 0;
 let state = {
   candidate: null,
   queueCount: 0,
@@ -32,7 +38,21 @@ let state = {
   crawlVisited: 0,
   crawlCaptured: 0,
   crawlRemaining: 0,
+  crawlCurrentTitle: '',
+  crawlRetries: 0,
+  crawlFailures: 0,
+  crawlSkipped: 0,
+  crawlNew: 0,
+  crawlChanged: 0,
+  crawlUnchanged: 0,
+  crawlDuplicates: 0,
   crawlError: '',
+  crawlDiagnostic: '',
+  crawlFailureTitles: [],
+  crawlScope: 'experience',
+  crawlCanResume: false,
+  crawlAutoSend: false,
+  extensionVersion: null,
 };
 
 function setStatus(message, status = '') {
@@ -47,17 +67,27 @@ async function background(message) {
 }
 
 function crawlSummary() {
-  if (state.crawlStatus === 'idle') return '';
-  if (state.crawlStatus === 'starting') return 'Capture-all is reading the Better Content directory…';
+  if (state.crawlStatus === 'idle') return 'Ready to scan the rendered directory.';
+  if (state.crawlStatus === 'starting') return 'Reading this Better Content directory…';
   if (state.crawlStatus === 'running') {
-    return `Capture-all: ${state.crawlCaptured} captured · ${state.crawlRemaining} remaining · ${state.crawlDiscovered} discovered`;
+    const current = state.crawlCurrentTitle ? ` · ${state.crawlCurrentTitle}` : '';
+    return `${state.crawlCaptured} queued · ${state.crawlRemaining} remaining · ${state.crawlDiscovered} discovered${current}\n${state.crawlNew} new · ${state.crawlChanged} changed · ${state.crawlUnchanged} unchanged · ${state.crawlDuplicates} duplicate · ${state.crawlRetries} retries`;
   }
-  if (state.crawlStatus === 'complete') return `Capture-all complete: ${state.crawlCaptured} guide${state.crawlCaptured === 1 ? '' : 's'} captured.`;
-  if (state.crawlStatus === 'complete-empty') return 'Capture-all found no safe guide links to capture on this rendered page.';
+  if (state.crawlStatus === 'complete') return `Sync scan complete: ${state.crawlNew} new · ${state.crawlChanged} changed · ${state.crawlUnchanged} unchanged · ${state.crawlDuplicates} duplicate.`;
+  if (state.crawlStatus === 'complete-empty') return 'Capture-all found no capturable guide pages in this scope.';
+  if (state.crawlStatus === 'interrupted') return 'Capture-all was interrupted. Reopen the same Whop experience to resume automatically, or press Resume.';
   if (state.crawlStatus === 'limit') return state.crawlError || 'Capture-all stopped at its safe traversal limit.';
-  if (state.crawlStatus === 'error') return state.crawlError || 'Capture-all stopped because the rendered app left its safe traversal scope.';
-  if (state.crawlStatus === 'stopped') return 'Capture-all stopped. Already queued pages were kept.';
+  if (state.crawlStatus === 'error') return state.crawlError || 'Capture-all stopped on an error. The captured queue was kept.';
+  if (state.crawlStatus === 'stopped') return 'Capture-all stopped. Already queued pages and traversal progress were kept.';
   return '';
+}
+
+function versionSummary() {
+  const version = state.extensionVersion;
+  if (!version?.installed) return '';
+  if (version.incompatible) return `Extension ${version.installed} is below the supported minimum ${version.minimum}. Update before relying on capture-all.`;
+  if (version.updateAvailable) return `Extension ${version.installed} installed · ${version.latest} available.`;
+  return `Extension ${version.installed}${version.latest ? ` · current ${version.latest}` : ''}`;
 }
 
 function render() {
@@ -84,13 +114,22 @@ function render() {
     elements.openWhop.hidden = false;
   }
 
+  const resume = state.crawlCanResume && !state.crawlEnabled;
   elements.crawl.disabled = !candidate?.experienceId;
-  elements.crawl.textContent = state.crawlEnabled ? 'Stop capture-all' : 'Capture all guides';
+  elements.crawl.textContent = state.crawlEnabled ? 'Stop capture-all' : resume ? 'Resume capture-all' : 'Capture all guides';
+  elements.crawlScope.disabled = state.crawlEnabled || resume;
+  if (state.crawlScope) elements.crawlScope.value = state.crawlScope;
   elements.capture.disabled = !candidate?.experienceId || state.crawlEnabled;
   elements.auto.disabled = !candidate || state.crawlEnabled;
   elements.auto.textContent = `Capture as I browse: ${state.autoEnabled ? 'on' : 'off'}`;
   elements.queueCount.textContent = `${state.queueCount} page${state.queueCount === 1 ? '' : 's'} queued`;
   elements.crawlMeta.textContent = crawlSummary();
+  elements.crawlDiagnostic.textContent = state.crawlDiagnostic || '';
+  elements.crawlFailures.replaceChildren(...(state.crawlFailureTitles || []).map((title) => {
+    const item = document.createElement('li');
+    item.textContent = `Skipped: ${title}`;
+    return item;
+  }));
   elements.queueTitles.replaceChildren(...state.queuedTitles.map((title) => {
     const item = document.createElement('li');
     item.textContent = title;
@@ -98,9 +137,17 @@ function render() {
   }));
   elements.clear.disabled = state.queueCount === 0 || state.crawlEnabled;
   elements.send.disabled = state.queueCount === 0 || !elements.rights.checked || state.crawlEnabled;
+  elements.sendWhenDone.disabled = state.crawlEnabled;
   elements.send.textContent = state.queueCount
     ? `Send ${state.queueCount} page${state.queueCount === 1 ? '' : 's'} to SniperPlug`
     : 'Send queued pages to SniperPlug';
+  elements.versionStatus.textContent = versionSummary();
+}
+
+function schedulePoll() {
+  clearTimeout(pollTimer);
+  if (!state.crawlEnabled) return;
+  pollTimer = setTimeout(() => refresh().catch(() => null), 900);
 }
 
 async function refresh() {
@@ -112,9 +159,16 @@ async function refresh() {
   tabId = Number.isInteger(resolvedTabId) ? resolvedTabId : preferredTabId;
   state = { ...state, ...output };
   render();
+  schedulePoll();
 }
 
 elements.rights.addEventListener('change', render);
+elements.sendWhenDone.addEventListener('change', () => {
+  if (elements.sendWhenDone.checked && !elements.rights.checked) {
+    setStatus('Automatic send requires the ownership/permission confirmation above.', 'error');
+  }
+  render();
+});
 
 elements.openWhop.addEventListener('click', async () => {
   elements.openWhop.disabled = true;
@@ -135,15 +189,27 @@ elements.crawl.addEventListener('click', async () => {
     if (state.crawlEnabled) {
       const output = await background({ type: 'sniperplug:stop-traversal', tabId });
       state = { ...state, ...output };
-      setStatus('Capture-all stopped. Pages already queued were kept.', 'ok');
+      setStatus('Capture-all stopped. Pages and traversal progress were kept for resume.', 'ok');
     } else {
-      const output = await background({ type: 'sniperplug:start-traversal', tabId });
+      if (elements.sendWhenDone.checked && !elements.rights.checked) {
+        throw new Error('Confirm that you own the content or have permission before enabling automatic send.');
+      }
+      const output = await background({
+        type: 'sniperplug:start-traversal',
+        tabId,
+        scope: elements.crawlScope.value,
+        autoSend: elements.sendWhenDone.checked,
+        rightsConfirmed: elements.rights.checked,
+        resume: state.crawlCanResume,
+      });
       if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
       state = { ...state, ...output };
-      setStatus('Capture-all started. Keep the Whop tab open; SniperPlug will open the safe Better Content guide links for you.', 'ok');
+      setStatus(state.crawlCanResume
+        ? 'Capture-all resumed from saved progress.'
+        : 'Capture-all started. Keep the Whop tab available; SniperPlug will walk the authorized rendered guide tree for you.', 'ok');
     }
     render();
-    setTimeout(() => refresh().catch(() => null), 1200);
+    schedulePoll();
   } catch (error) {
     setStatus(error.message, 'error');
     render();
@@ -152,7 +218,7 @@ elements.crawl.addEventListener('click', async () => {
 
 elements.capture.addEventListener('click', async () => {
   elements.capture.disabled = true;
-  setStatus('Reading the rendered Better Content page…');
+  setStatus('Preparing the rendered page, including lazy content and images…');
   try {
     const output = await background({ type: 'sniperplug:capture-current', tabId });
     if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
@@ -172,7 +238,7 @@ elements.auto.addEventListener('click', async () => {
     if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
     state.autoEnabled = output.enabled;
     setStatus(state.autoEnabled
-      ? 'Capture-as-I-browse is on. SniperPlug will queue each Better Content page you choose to open yourself.'
+      ? 'Capture-as-I-browse is on. SniperPlug will prepare and queue each Better Content page you open yourself.'
       : 'Capture-as-I-browse is off.', 'ok');
     render();
   } catch (error) {
@@ -193,7 +259,7 @@ elements.clear.addEventListener('click', async () => {
 
 elements.send.addEventListener('click', async () => {
   elements.send.disabled = true;
-  setStatus('Opening SniperPlug and handing off the captured pages…');
+  setStatus('Opening SniperPlug and handing off the changed/new pages…');
   try {
     const output = await background({
       type: 'sniperplug:prepare-send',
@@ -208,6 +274,7 @@ elements.send.addEventListener('click', async () => {
   }
 });
 
+window.addEventListener('unload', () => clearTimeout(pollTimer));
 refresh().catch((error) => {
   setStatus(error.message, 'error');
   render();

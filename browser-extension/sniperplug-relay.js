@@ -7,6 +7,7 @@
 
   const MAX_CAPTURE_BATCH_COUNT = 25;
   const MAX_CAPTURE_BATCH_BODY_BYTES = 2_200_000;
+  const MAX_TRANSIENT_RETRIES = 2;
   let pending = null;
   let sending = false;
 
@@ -57,6 +58,10 @@
   panel.append(title, message, retry);
   document.documentElement.append(panel);
 
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   function setMessage(value, state = 'working') {
     message.textContent = value;
     title.style.color = state === 'error' ? '#ffb8b8' : state === 'ok' ? '#8ff0b7' : '#eef7f4';
@@ -96,23 +101,31 @@
     return batches;
   }
 
-  async function sendBatch(captures) {
-    const response = await fetch('/api/browser-capture', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        rightsConfirmed: pending?.rightsConfirmed === true,
-        captures,
-      }),
-    });
-    const output = await responseJson(response);
-    if (!response.ok) {
+  async function sendBatch(captures, batchIndex, batchCount) {
+    let attempt = 0;
+    while (true) {
+      const response = await fetch('/api/browser-capture', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          rightsConfirmed: pending?.rightsConfirmed === true,
+          captures,
+        }),
+      });
+      const output = await responseJson(response);
+      if (response.ok) return output;
+      const transient = response.status === 429 || response.status >= 500;
+      if (transient && attempt < MAX_TRANSIENT_RETRIES) {
+        attempt += 1;
+        setMessage(`Batch ${batchIndex + 1}/${batchCount} hit a temporary ${response.status} response. Retrying ${attempt}/${MAX_TRANSIENT_RETRIES}…`);
+        await wait(700 * (2 ** (attempt - 1)));
+        continue;
+      }
       const error = new Error(output?.message || output?.error || `SniperPlug rejected the browser capture (${response.status}).`);
       error.status = response.status;
       throw error;
     }
-    return output;
   }
 
   async function sendCapture() {
@@ -121,19 +134,19 @@
     retry.disabled = true;
     const captures = pending?.captures || [];
     const batches = captureBatches(captures);
-    setMessage(`Sending ${captures.length} rendered Better Content page${captures.length === 1 ? '' : 's'} into the private SniperPlug draft queue…`);
+    setMessage(`Sending ${captures.length} changed/new rendered page${captures.length === 1 ? '' : 's'} into the private SniperPlug draft queue…`);
     try {
       const totals = { created: 0, updated: 0, unchanged: 0, held: 0 };
+      let sentPages = 0;
       for (let index = 0; index < batches.length; index += 1) {
-        if (batches.length > 1) {
-          setMessage(`Sending browser-capture batch ${index + 1} of ${batches.length} (${batches[index].length} pages)…`);
-        }
-        const output = await sendBatch(batches[index]);
+        setMessage(`Sending batch ${index + 1}/${batches.length} · ${sentPages}/${captures.length} pages complete…`);
+        const output = await sendBatch(batches[index], index, batches.length);
+        sentPages += batches[index].length;
         for (const key of Object.keys(totals)) totals[key] += Number(output?.[key] || 0);
       }
 
       await extension({ type: 'sniperplug:clear-pending', pendingId, success: true });
-      setMessage(`${totals.created} new draft${totals.created === 1 ? '' : 's'} · ${totals.updated} updated · ${totals.unchanged} unchanged · ${totals.held} held safely. Reloading the private review queue…`, 'ok');
+      setMessage(`${totals.created} new draft${totals.created === 1 ? '' : 's'} · ${totals.updated} updated · ${totals.unchanged} unchanged · ${totals.held} held safely. Sync history saved; reloading the private review queue…`, 'ok');
       const clean = new URL(location.href);
       clean.searchParams.delete('extensionCapture');
       clean.searchParams.set('browserCapture', 'success');
@@ -144,7 +157,7 @@
       } else if (Number(error?.status) === 403) {
         setMessage(`SniperPlug refused the handoff: ${error.message} Reconnect/verify Whop if needed, then retry.`, 'error');
       } else {
-        setMessage(`Capture was not fully saved: ${error?.message || error}. The extension kept the entire queued set so retrying is safe; pages already imported will resolve as unchanged.`, 'error');
+        setMessage(`Capture was not fully saved: ${error?.message || error}. The extension kept the entire queued set. Retrying is safe because already imported pages resolve as unchanged.`, 'error');
       }
     } finally {
       sending = false;
@@ -159,7 +172,7 @@
       const output = await extension({ type: 'sniperplug:get-pending', pendingId });
       pending = output.pending;
       if (!pending?.captures?.length) {
-        setMessage('This browser-capture handoff expired or was already completed. Capture the Better Content page again.', 'error');
+        setMessage('This browser-capture handoff expired or was already completed. Capture the Better Content pages again.', 'error');
         return;
       }
       await sendCapture();
