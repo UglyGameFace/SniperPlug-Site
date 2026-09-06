@@ -35,7 +35,11 @@ assert.ok(backups.includes("scope === 'group'") && backups.includes('Back up who
 assert.ok(!backups.includes('new MutationObserver'));
 assert.ok(css.includes('.whop-recovery-workflow'));
 assert.ok(css.includes('@media(max-width:720px)'));
-for (const asset of ['control-center-hardening.css', 'control-center-v2.js', 'control-center-whop-backups.js']) {
-  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260823.1`), `${asset} cache version was not bumped with the group recovery repair.`);
+for (const asset of ['control-center-hardening.css', 'control-center-whop-backups.js']) {
+  assert.ok(page.includes(`/assets/${asset.endsWith('.css') ? 'css' : 'js'}/${asset}?v=20260823.1`), `${asset} cache version drifted from the group recovery repair.`);
 }
+assert.ok(
+  page.includes('/assets/js/control-center-v2.js?v=20260906.2'),
+  'Control Center must load the account-switch-safe runtime with its current immutable cache key.',
+);
 console.log('CONTROL CENTER MOBILE FLOW AUDIT PASSED');
