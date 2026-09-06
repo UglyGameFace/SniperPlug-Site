@@ -22,6 +22,7 @@ const publishRoute = read('functions/api/publish-ready.js');
 const guard = read('assets/js/control-center-network-guard.js');
 const client = read('assets/js/control-center-v2.js');
 const subscriberUi = read('assets/js/control-center-subscriber.js');
+const journeyCss = read('assets/css/control-center-journey.css');
 const page = read('control-center/index.html');
 
 assert.ok(auth.includes("export const OWNER_PRINCIPAL_ID = 'sniperplug-owner'"));
@@ -116,8 +117,10 @@ assert.ok(client.includes("requestJson('/api/whop-switch', { method: 'POST'"));
 assert.ok(client.includes("requestJson('/api/whop-disconnect', { method: 'POST'"));
 assert.ok(client.includes("sessionStorage.setItem('sniperplug:whop-switch-ready', '1')"));
 assert.ok(page.includes('Open Whop to switch account') && page.includes('data-whop-switch-continue'));
-assert.ok(page.includes('/assets/js/control-center-subscriber.js?v=20260905.1'));
-assert.ok(subscriberUi.includes('data-sniperplug-account-kind="subscriber"') && subscriberUi.includes('[data-owner-only]'));
+assert.ok(page.includes('/assets/js/control-center-subscriber.js?v=20260906.1'));
+assert.ok(subscriberUi.includes('data-sniperplug-account-kind') && subscriberUi.includes('subscriberCopy'));
+assert.ok(!subscriberUi.includes("document.createElement('style')"), 'Subscriber account runtime injects presentation CSS.');
+assert.ok(journeyCss.includes('html[data-sniperplug-account-kind="subscriber"] [data-owner-only]'), 'Owner-only subscriber visibility is not defined in canonical Control Center CSS.');
 assert.ok(!subscriberUi.includes('MutationObserver'), 'Subscriber UI added a broad observer instead of using existing lifecycle events.');
 
 for (const file of [
@@ -147,3 +150,4 @@ console.log('✓ Subscriber access revalidates the exact Whop product entitlemen
 console.log('✓ Owner and subscriber OAuth flows use separate one-time callback cookies and ambiguous callbacks fail closed.');
 console.log('✓ Disconnect/reset remain principal-scoped while public publishing and shared categories remain owner-only.');
 console.log('✓ The Control Center stays fail-closed until a protected dashboard request succeeds.');
+console.log('✓ Subscriber presentation uses canonical CSS instead of runtime style injection.');

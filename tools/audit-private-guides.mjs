@@ -59,7 +59,7 @@ assert.ok(mediaRoute.includes('internalCacheResponse') && mediaRoute.includes('p
 assert.ok(mediaRoute.includes("headers.set('cache-control', 'private, no-store, max-age=0')"), 'Authenticated cached media can leak public cache headers to the browser.');
 assert.ok(!videoRoute.includes('javascript:location.reload()'), 'Course-video retry still conflicts with the strict CSP.');
 assert.ok(videoRoute.includes('courseVideoRecoveryKind'), 'Course video failures do not distinguish owner unlock from Whop reconnect.');
-assert.ok(videoRoute.includes('Open Owner access to unlock the private library'), 'Private guide auth failures do not point to Owner access.');
+assert.ok(videoRoute.includes('Open Owner access to unlock the private library'), 'Private guide auth failures do not point to the owner unlock path.');
 assert.ok(videoRoute.includes('Open the Control Center and reconnect Whop'), 'Actual Whop auth failures lost their reconnect path.');
 assert.ok(!videoRoute.includes('errorPage(message, status === 401 || status === 403)'), 'All 401/403 video failures are still mislabeled as Whop reconnect errors.');
 
@@ -80,8 +80,8 @@ assert.ok(staticHeaders.includes('X-Robots-Tag: noindex, nofollow, noarchive'), 
 assert.ok(!sitemap.includes("'/guides/'"), 'Private guide index remains in the public sitemap.');
 assert.ok(!sitemap.includes('publicGuides'), 'Private guide slugs are still queried for the public sitemap.');
 assert.ok(!homepage.includes('href="/guides/"'), 'The public homepage still links directly to the owner-only guide library.');
-assert.ok(homepage.includes('href="/control-center/"'), 'The homepage has no discoverable owner entry point.');
-assert.ok(homepage.includes('>Owner access</a>'), 'The owner entry point is not clearly labeled.');
+assert.ok(homepage.includes('href="/control-center/"'), 'The homepage has no discoverable account entry point.');
+assert.ok(homepage.includes('>Control Center</a>'), 'The shared account entry point is not clearly labeled.');
 assert.ok(controlCenter.includes('href="/guides/"'), 'The protected Control Center does not link to the private guide library.');
 assert.ok(controlCenter.includes('Open private guides'), 'The authenticated Control Center does not clearly expose the private guide library.');
 assert.ok(!siteClient.includes("document.createElement('a')"), 'Public JavaScript still injects a private Guides navigation link.');
@@ -93,6 +93,6 @@ console.log('\nSNIPERPLUG PRIVATE GUIDE ISOLATION AUDIT PASSED\n');
 console.log('✓ Guide list, details, copied media, and course videos require the owner Control Center session.');
 console.log('✓ The same password/login endpoint is reused; customer importer sessions are denied.');
 console.log('✓ The fallback login cannot leak the password into URLs, and video recovery points to the correct owner or Whop action.');
-console.log('✓ The homepage exposes only a normal Owner access entry, while direct guide URLs remain private and undiscoverable to crawlers.');
+console.log('✓ The homepage exposes the shared Control Center entry while direct guide URLs remain private and undiscoverable to crawlers.');
 console.log('✓ Owner-authenticated edge caching preserves the hard-free media budget without exposing guide content.');
 console.log('✓ Sitemap entries, crawler rules, indexing, and user-facing caches no longer expose guide content.');

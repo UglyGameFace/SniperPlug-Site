@@ -50,7 +50,13 @@ assert.ok(endpoint.includes('requireControlAccount') && endpoint.includes('requi
 assert.ok(page.includes('data-discovered-groups'), 'Active source browser is missing.');
 assert.ok(page.includes('data-approve-selected') && page.includes('data-disapprove-selected'), 'Source bulk controls are missing.');
 assert.ok(page.includes('Advanced fallback'), 'Manual experience-ID input is not contained as an advanced fallback.');
-assert.ok(page.includes('Forums, Courses, and Chat'), 'Supported content types are not explained in the UI.');
+assert.ok(
+  page.includes('Search group, course, forum, chat, or external app')
+    && page.includes('<option value="course">Courses</option>')
+    && page.includes('<option value="forum">Forums</option>')
+    && page.includes('<option value="chat">Chat</option>'),
+  'Supported content types are not explained in the source picker.',
+);
 assert.ok(client.includes("requestJson('/api/discover'"), 'Browser does not call automatic discovery.');
 assert.ok(page.includes('Select every Black Box and Hidden Files source'), 'Priority-group selection control is missing.');
 assert.ok(client.includes('Review content') && client.includes('scanCurrent'), 'Discovered sources cannot open their content.');

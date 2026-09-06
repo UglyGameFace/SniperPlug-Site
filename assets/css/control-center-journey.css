@@ -6,7 +6,21 @@
 .control-journey strong{align-self:end;font-size:.92rem;line-height:1.12}.control-journey small{align-self:start;color:var(--muted);font-size:.76rem;line-height:1.25;overflow-wrap:anywhere}
 .control-journey a[data-journey-safety]{border-style:dashed}.control-journey a[data-journey-safety] .journey-step{border-color:rgba(53,194,255,.3);background:rgba(53,194,255,.08);color:var(--brand2)}
 .control-panel[id]{scroll-margin-top:88px}.control-secondary-panel{border-color:rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,.012))}.control-secondary-panel>.panel-head .eyebrow{color:var(--muted2)}
+
+/* Account-specific presentation belongs in the existing Control Center stylesheet, not runtime-injected CSS. */
+html[data-sniperplug-account-kind="subscriber"] [data-owner-only]{display:none!important}
+html[data-sniperplug-account-kind="subscriber"] [data-subscriber-only]{display:initial}
+[data-subscriber-only]{display:none}
+.control-login>form,.subscriber-login-card{padding:1rem;border:1px solid rgba(255,255,255,.11);border-radius:18px;background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02))}
+.control-login>form{margin-top:1.5rem}.subscriber-login-card{margin-top:1rem;border-color:rgba(53,194,255,.2);background:linear-gradient(180deg,rgba(53,194,255,.07),rgba(255,255,255,.025))}
+.subscriber-login-card strong{font-size:1.05rem}.subscriber-login-card p{margin:.35rem 0 .75rem}.subscriber-login-card small{display:block;margin-top:.55rem;color:var(--muted);line-height:1.45}
+.control-status{border-color:rgba(53,194,255,.25);background:rgba(53,194,255,.07);color:#dff7ff}
+.control-status[data-type="ok"]{border-color:rgba(104,227,132,.35);background:rgba(104,227,132,.08);color:var(--brand)}
+.control-status[data-type="warning"]{border-color:rgba(255,209,102,.35);background:rgba(255,209,102,.08);color:#ffe39a}
+.control-status[data-type="error"]{border-color:rgba(255,105,97,.38);background:rgba(255,105,97,.08);color:#ffb0ab}
+.media-usage-details{border-top:1px solid rgba(255,255,255,.08);padding-top:.4rem}.media-usage-details summary{cursor:pointer;color:var(--muted);font-size:.74rem;font-weight:800}.media-usage-details[open] summary{margin-bottom:.35rem}.media-usage-details .media-usage-operations{display:block}
+
 @media(max-width:980px){.control-journey{grid-template-columns:repeat(2,minmax(0,1fr))}.control-journey a[data-journey-safety]{grid-column:1/-1}}
-@media(max-width:620px){.control-journey{gap:.5rem;padding:.55rem;border-radius:18px}.control-journey a{min-height:72px;padding:.65rem}.control-journey .journey-step{width:1.85rem;height:1.85rem}.control-panel[id]{scroll-margin-top:76px}}
+@media(max-width:620px){.control-journey{gap:.5rem;padding:.55rem;border-radius:18px}.control-journey a{min-height:72px;padding:.65rem}.control-journey .journey-step{width:1.85rem;height:1.85rem}.control-panel[id]{scroll-margin-top:76px}.control-login>form,.subscriber-login-card{padding:.85rem}}
 @media(max-width:430px){.control-journey{grid-template-columns:1fr}.control-journey a[data-journey-safety]{grid-column:auto}.control-journey a{grid-template-columns:2rem 1fr;min-height:62px}}
 @media(prefers-reduced-motion:reduce){.control-journey a{transition:none}.control-journey a:hover{transform:none}}
