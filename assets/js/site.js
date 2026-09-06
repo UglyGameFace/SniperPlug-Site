@@ -1,32 +1,59 @@
 document.addEventListener('DOMContentLoaded', () => {
   const nav = document.querySelector('.nav');
-  const ownerLink = nav?.querySelector('a[href="/control-center/"]');
-  const mobileNavigation = window.matchMedia('(max-width: 620px)');
-  const pinnedProperties = ['position', 'left', 'z-index', 'background', 'color', 'box-shadow'];
 
-  const syncOwnerAccess = () => {
-    if (!nav || !ownerLink) return;
+  if (nav) {
+    const headerInner = nav.closest('.header-inner');
+    const controlCenterLink = nav.querySelector('a[href="/control-center/"]');
+    const mobileNavigation = window.matchMedia('(max-width: 760px)');
 
-    if (mobileNavigation.matches) {
-      ownerLink.dataset.mobilePinned = 'true';
-      ownerLink.style.position = 'sticky';
-      ownerLink.style.left = '0';
-      ownerLink.style.zIndex = '2';
-      ownerLink.style.background = 'var(--brand)';
-      ownerLink.style.color = '#06100a';
-      ownerLink.style.boxShadow = '10px 0 18px rgba(11,15,23,.95)';
-      return;
+    if (controlCenterLink && controlCenterLink.textContent.trim().toLowerCase() === 'owner access') {
+      controlCenterLink.textContent = 'Control Center';
     }
 
-    delete ownerLink.dataset.mobilePinned;
-    for (const property of pinnedProperties) ownerLink.style.removeProperty(property);
-  };
+    if (headerInner && !headerInner.querySelector('.nav-toggle')) {
+      if (!nav.id) nav.id = 'site-primary-navigation';
 
-  syncOwnerAccess();
-  if (typeof mobileNavigation.addEventListener === 'function') {
-    mobileNavigation.addEventListener('change', syncOwnerAccess);
-  } else if (typeof mobileNavigation.addListener === 'function') {
-    mobileNavigation.addListener(syncOwnerAccess);
+      const toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'nav-toggle';
+      toggle.setAttribute('aria-controls', nav.id);
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-label', 'Open navigation');
+      toggle.textContent = 'Menu';
+      headerInner.insertBefore(toggle, nav);
+      document.documentElement.dataset.siteNavEnhanced = 'true';
+
+      const setOpen = (open) => {
+        const next = Boolean(open) && mobileNavigation.matches;
+        nav.dataset.open = next ? 'true' : 'false';
+        toggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+        toggle.setAttribute('aria-label', next ? 'Close navigation' : 'Open navigation');
+        toggle.textContent = next ? 'Close' : 'Menu';
+      };
+
+      toggle.addEventListener('click', () => {
+        setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+      });
+
+      nav.addEventListener('click', (event) => {
+        if (event.target.closest('a')) setOpen(false);
+      });
+
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+          setOpen(false);
+          toggle.focus();
+        }
+      });
+
+      const syncViewport = () => setOpen(false);
+      if (typeof mobileNavigation.addEventListener === 'function') {
+        mobileNavigation.addEventListener('change', syncViewport);
+      } else if (typeof mobileNavigation.addListener === 'function') {
+        mobileNavigation.addListener(syncViewport);
+      }
+      setOpen(false);
+    }
   }
 
   const cards = [...document.querySelectorAll('.deal-card')];
