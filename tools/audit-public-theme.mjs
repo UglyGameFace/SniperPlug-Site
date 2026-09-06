@@ -87,13 +87,21 @@ assert.doesNotMatch(baseCss, /sniperplug-logo-exact\.png/, 'Exact global brandin
 
 const shellCss = read('assets/css/site-shell.css');
 for (const requirement of [
+  /--surface:#111827/,
+  /--success:#68e384/,
+  /--info:#35c2ff/,
+  /--warning:#ffd166/,
+  /--error:#ff6b6b/,
+  /--control-height:44px/,
   /\.brand-mark\{[^}]*sniperplug-logo-exact\.png/s,
   /center\/contain no-repeat!important/,
   /aspect-ratio:1\/1/,
-  /body\{min-height:100vh;display:flex;flex-direction:column\}/,
+  /body\{min-height:100vh;display:flex;flex-direction:column/,
   /main\{flex:1;width:100%\}/,
   /\.page-hero\{position:relative/,
   /\.legal-card\{max-width:980px/,
+  /\.status-card,/,
+  /\.status-card\[data-state="warning"\]/,
   /\.error-shell\{/,
   /:focus-visible/,
   /\.nav-toggle\{display:none;min-height:44px/,
@@ -159,7 +167,7 @@ for (const token of ['class="error-shell"', 'class="error-card"', 'src="/assets/
 console.log('\nSNIPERPLUG FULL VISUAL CONSISTENCY AUDIT PASSED\n');
 console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, navigation enhancement, and global visual foundation.`);
 console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
-console.log('✓ Shared mobile navigation is keyboard-accessible, touch-sized, reduced-motion aware, and has a no-JavaScript wrapped fallback.');
+console.log('✓ Shared state colors, touch-target sizing, focus behavior, and responsive navigation come from one global shell.');
 console.log('✓ Ordered base, global shell, and page-specific layers cannot override one another accidentally.');
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
 console.log('✓ Exact approved PNG bytes, CSS-only proportional rendering, and revalidation headers are enforced.');
