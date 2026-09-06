@@ -1,75 +1,56 @@
 # Active Task
 
 ## Active task / outcome
-PR #68 — resilient authorized Better Content sync engine for Firefox, allowing an owner to open a rendered directory once and capture all accessible guides without manually opening every page.
+Add a true, visible Capture-all progress bar to the Better Content Firefox extension so a long recursive sync visibly proves that work is happening and shows how much of the currently known guide tree has been processed.
 
 ## Scope
-Completed in this task:
-- recursive rendered-directory/category/subcategory traversal;
-- safe same-origin/same-experience navigation and optional section scope;
-- lazy/collapsed/tabbed content preparation, bounded scrolling, and image settling;
-- persisted traversal/queue state with Firefox Android interruption recovery;
-- bounded per-page retries and visible failure diagnostics;
-- stable page/content fingerprinting, dedupe, and new/changed/unchanged detection;
-- live progress, safe stop/resume, and optional automatic handoff;
-- server-safe sequential batch handoff with transient retry;
-- extension version/update awareness;
-- regression coverage, Firefox Android packaging, final diff/review cleanup, merge, and post-merge validation.
+In scope:
+- progress UI inside the existing Capture-all card;
+- progress derived only from the crawler's authoritative visited/discovered/remaining counters;
+- an indeterminate discovery phase when no denominator exists yet;
+- a determinate percentage once known work exists, with honest handling of a growing recursive guide tree;
+- paused/error/complete states and accessible progress semantics;
+- extension patch-version/update metadata and directly affected regression coverage;
+- Firefox Android packaging, exact-head CI, final diff/review inspection, merge, post-merge validation, and delivery of the resulting XPI.
 
 Out of scope / backlog:
-- readers for unrelated Whop app families not already authorized by the reader registry;
-- scheduled/background rescans while no authorized rendered Whop session is open;
-- unrelated Control Center/importer redesigns.
+- changing traversal behavior, Whop authorization, capture limits, retries, handoff policy, or content readers;
+- unrelated Control Center/importer changes.
 
 ## Status
-COMPLETE AND MERGED — PR #68 was squash-merged into `main` as `5576d3bb4f289f9c516e2aa305df3fba4223bf2b` after the final PR head `b71307f0c2730c15e9a462d9c55a2d0857f313bf` passed the full merge gate.
+IN PROGRESS — root cause and authoritative progress inputs are identified; implementation is being applied on `feature/capture-progress-bar`.
 
-## Root cause / findings
-- The original fallback reader was deliberately DOM-only and passive, so it captured only a guide the user had already opened.
-- A complete sync path also required interruption recovery, slow/lazy render preparation, recursive traversal, bounded retries, repeat-scan change detection, diagnostics, and a safe large-queue handoff.
-- The server remains the authoritative browser-capture validator for account/Whop access, supported reader/origin verification, request/per-page/total-byte limits, private-draft import, and reviewed/published/rejected/removed protections. Those policies were not duplicated or weakened in the extension.
+## Findings / root cause
+- PR #68 already exposes `crawlVisited`, `crawlDiscovered`, `crawlRemaining`, queue outcomes, retries, failures, and the current title to the popup.
+- The popup renders those values only as dense status text. There is no visual progress track, percentage, or discovery animation, so a healthy long-running crawl can look frozen.
+- Recursive discovery means the total number of pages is not known up front. A fake fixed denominator would be misleading. The correct denominator is the currently known work set, and it may grow as nested directories reveal more pages.
 
 ## Execution path
-1. User opens an authorized Whop Better Content directory in Firefox.
-2. The real HTTPS `*.apps.whop.com` frame registers as the capture candidate; the Whop shell remains ineligible.
-3. Capture all suspends passive capture, prepares the rendered DOM, discovers safe links, and recursively traverses the selected scope.
-4. Background orchestration persists sanitized progress, retries bounded failures, fingerprints captures, and queues only new/changed pages.
-5. The signed-in SniperPlug Control Center relay sends the queue in server-safe batches.
-6. Fingerprint history is committed and the queue cleared only after the entire handoff succeeds.
+1. Background traversal owns and persists visited/pending/current/discovered state.
+2. `sniperplug:popup-state` exposes the derived crawler counters.
+3. The popup polls that state while Capture-all is enabled.
+4. The new progress renderer maps those existing counters into an accessible progress bar without adding a second crawler or duplicated traversal state.
 
-## Changes
-- Extension version: 0.2.0.
-- Safe render preparation for details/expanders, bounded lazy scrolling, visible-image settling, and bounded tab panels.
-- Exact app-origin/same-experience traversal confinement plus optional section subtree restriction.
-- Credential-bearing and auth/account/admin/billing/checkout/support routes rejected before navigation.
-- Persistent sanitized traversal/queue/pending/history state with Firefox Android tab replacement recovery.
-- At most three retries for slow/empty pages, with skipped-page reasons retained.
-- Stable page keys and content fingerprints classify new/changed/unchanged/duplicate captures; unchanged pages are not re-sent.
-- Live progress, diagnostics, stop/resume, section scope, optional auto-send, and installed/latest extension version UI.
-- Sequential large-queue relay with retries only for transient 429/5xx failures.
-- `browser-extension-version.json` version contract hosted on SniperPlug's own origin.
+## Planned implementation
+- Show an indeterminate animated bar while the crawler is starting/discovering and has no known total.
+- Once pages are known, calculate progress from completed visits versus the maximum of discovered pages and completed+remaining known work.
+- Keep running scans below 100% until the crawler reports a complete state.
+- Show the exact `X of Y known pages checked` readout beside the percentage so users understand that nested discovery can expand Y.
+- Freeze truthful partial progress for stop/interruption/error states and show 100% only for complete/complete-empty.
+- Preserve reduced-motion and ARIA behavior.
 
-## Validation / results
-- Final PR head `b71307f0c2730c15e9a462d9c55a2d0857f313bf`: **Verify SniperPlug #1087 passed**, including the full repository build/regression suite, Firefox Android XPI packaging, and artifact upload.
-- Final PR-head Firefox artifact `sniperplug-firefox-android-xpi` SHA-256: `2b552286412b75cc59ccb56436698997e5458be8f444246f812827c87a34dd33`.
-- Final PR head also passed **Verify affiliate-ready preview #136**, **Verify retired public deal routes #138**, Cloudflare Pages deployment, both Vercel project deployments, and Vercel Preview Comments with zero unresolved feedback.
-- Final PR review inspection found no inline review threads and no submitted reviews.
-- PR #68 squash merge commit: `5576d3bb4f289f9c516e2aa305df3fba4223bf2b`.
-- Post-merge `main`: **Verify SniperPlug #1088 passed**, **Verify production guide privacy #100 passed**, **Verify affiliate-ready production #96 passed**, and **Verify retired public deal routes #139 passed**.
-- Cloudflare Pages deployed merge commit `5576d3b` successfully.
-- The two post-merge Vercel deployment statuses were rejected by Vercel's account build-rate limit (`upgradeToPro=build-rate-limit`), not by an application build/test failure. The identical final PR content had already passed both Vercel deployments before merge.
-
-## Cleanup / conflicts
-- No cookie permission, `<all_urls>`, Whop token forwarding, Whop browser-storage credential read, or Better Content private-API probing was introduced.
-- No second crawler or alternate authorization path was introduced; the existing traversal path was completed and consolidated.
-- No server capture limit was weakened.
-- No debug code, conflict markers, secret-bearing changes, or unrelated redesigns were found in the final scoped diff.
+## Validation required
+- Syntax/static regression checks for the popup progress implementation.
+- Existing recursive traversal, interruption recovery, security boundary, Firefox frame-selection, server roundtrip, and full repository audit suite.
+- Firefox Android XPI package/upload on the exact PR head.
+- Final changed-file and review-thread inspection before merge.
+- Post-merge main validation before completion is claimed.
 
 ## Blockers / risks
-- No implementation blocker remains for PR #68.
-- Live Better Content markup can evolve, so traversal intentionally relies on semantic rendered links and bounded safe controls instead of undocumented private endpoints.
-- DOM-only capture cannot schedule rescans without an authorized rendered browser session; that remains backlog rather than a credential workaround.
-- A server-rejected capture remains queued for retry because pending/history cleanup happens only after complete successful handoff.
+- The percentage can legitimately decrease if a later page reveals more nested guides. The UI must call the denominator “known pages” rather than pretending the final total was known at scan start.
+
+## Backlog
+None discovered for this task.
 
 ## Next step
-No additional implementation work remains for PR #68. Select the next task separately so unrelated work does not leak into this completed scope.
+Implement the progress UI and directly affected version/regression updates, then run the repository-native exact-head validation.
