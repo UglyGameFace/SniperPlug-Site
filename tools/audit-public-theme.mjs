@@ -54,6 +54,7 @@ for (const path of staticShellPages) {
   for (const token of requiredShellTokens) {
     assert.ok(content.includes(token), `${path} is missing shared shell token: ${token}`);
   }
+  assert.ok(content.includes('src="/assets/js/site.js"'), `${path} does not load the shared navigation/runtime enhancement.`);
   assert.doesNotMatch(content, /<style(?:\s|>)/i, `${path} contains page-specific inline CSS that can drift from the shared theme.`);
 }
 
@@ -94,7 +95,11 @@ for (const requirement of [
   /\.page-hero\{position:relative/,
   /\.legal-card\{max-width:980px/,
   /\.error-shell\{/,
-  /@media\(max-width:700px\)/,
+  /:focus-visible/,
+  /\.nav-toggle\{display:none;min-height:44px/,
+  /@media\(max-width:760px\)/,
+  /html\[data-site-nav-enhanced="true"\] \.nav\[data-open="true"\]\{display:grid\}/,
+  /@media\(prefers-reduced-motion:reduce\)/,
 ]) {
   assert.match(shellCss, requirement, `Global visual shell is missing ${requirement}.`);
 }
@@ -152,8 +157,9 @@ for (const token of ['class="error-shell"', 'class="error-card"', 'src="/assets/
 }
 
 console.log('\nSNIPERPLUG FULL VISUAL CONSISTENCY AUDIT PASSED\n');
-console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, and global visual foundation.`);
+console.log(`✓ ${staticShellPages.length} static routes use the same header, footer, typography, logo, navigation enhancement, and global visual foundation.`);
 console.log(`✓ ${marketingPages.length} marketing routes load their richer component layer exactly once.`);
+console.log('✓ Shared mobile navigation is keyboard-accessible, touch-sized, reduced-motion aware, and has a no-JavaScript wrapped fallback.');
 console.log('✓ Ordered base, global shell, and page-specific layers cannot override one another accidentally.');
 console.log('✓ Legal, error, Control Center, generated guide, and locked guide shells are covered.');
 console.log('✓ Exact approved PNG bytes, CSS-only proportional rendering, and revalidation headers are enforced.');
