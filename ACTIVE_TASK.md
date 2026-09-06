@@ -1,49 +1,44 @@
 # Active Task
 
 ## Current state
-The full-site SniperPlug UX redesign is complete and merged. No implementation task is currently active.
+COMPLETE — Whop account switching reliability hotfix implemented and validated; PR #67 is ready for its final unchanged-head merge gate.
 
-## Completed redesign
-- PR #62 **Improve shared navigation foundation** merged as `42b92fdbe38896bd68dcc82d5f0cc6c828d43830`.
-  - Replaced the narrow-screen horizontal pill/sticky-owner workaround with one progressive mobile menu.
-  - Added visible keyboard focus, 44px touch targets, Escape-to-close, reduced-motion support, and a no-JavaScript wrapped fallback.
-- PR #63 **Clarify the Control Center journey** merged as `f80d7def8b811d60c05b93bf55d1f94f34e99e19`.
-  - Established Connect Whop → Choose sources → Review content → Review guides as the primary workflow.
-  - Separated Safety & recovery and optional category setup from the primary task hierarchy.
-  - Clarified owner versus subscriber publication boundaries without changing canonical data/mutation ownership.
-- PR #64 **Complete the full-site UX redesign** merged as `8861aabb8c6c611a6ed01d0b0ba2e2e3c9a4f5bd`.
-  - Added `docs/UX_ARCHITECTURE.md` as the route, journey, status-language, responsive, accessibility, and runtime-ownership map.
-  - Added shared semantic surface/status/touch tokens without creating another design-system layer.
-  - Reworked the homepage and Deal Board around truthful current-state messaging instead of live-looking placeholder content.
-  - Simplified Control Center copy and moved detailed media-operation counters behind progressive disclosure.
-  - Fixed publishing-evidence accessibility, added an accessible guide-list name, and tightened tablet/phone guide-editor bounds with safe-area-aware actions.
-  - Removed runtime-injected presentation CSS from the guide lifecycle and subscriber helper; canonical static Control Center styles now own those rules.
-  - Preserved tenant isolation, exact Whop entitlement checks, owner-only publication/shared categories/private-guide access, same-origin checks, versioned writes, no-blind-retry behavior, private-media rules, and fail-closed publication/recovery boundaries.
-  - Added `tools/audit-ux-completion.mjs` and extended existing regressions to prevent route/journey drift, duplicate presentation ownership, inaccessible publishing evidence, lost responsive bounds, or dishonest public empty states.
+## User-visible failure
+Pressing **Switch Whop account** could appear to reconnect the exact same Whop account instead of moving to a different account.
+
+## Root cause
+- PR #65 already added the correct server-side same-account switch guard: a deliberate switch records the Whop user being left in a signed short-lived callback cookie, and the OAuth callback rejects/revokes that same user if Whop browser SSO returns it again.
+- However, `control-center/index.html` was still loading `control-center-v2.js?v=20260823.1`.
+- `functions/_middleware.js` deliberately serves versioned Control Center assets as `public, max-age=31536000, immutable`.
+- Therefore browsers that had the August asset could legally keep executing the old Control Center runtime for up to a year even after the September switch fix was deployed.
+- The first PR verification run exposed a directly conflicting regression assertion: `tools/audit-control-mobile-flow.mjs` still required the canonical runtime to remain on the August cache key because it had historically been grouped with two recovery assets.
+
+## Execution path
+- The Control Center's **Switch Whop account** action calls the authenticated `/api/whop-switch` POST.
+- The switch endpoint disconnects the saved Whop identity and records the identity being left in the signed switch-intent callback cookie.
+- The subsequent OAuth callback checks that intent and rejects/revokes the connection if Whop browser SSO returns the same identity.
+- The browser must therefore execute the current `control-center-v2.js` runtime for the intended switch flow to reach that server-side protection.
+
+## Changes
+- Bumped the canonical Control Center runtime URL to `control-center-v2.js?v=20260906.2` so browsers must fetch the current runtime that works with the server-side switch guard.
+- Preserved the documented Whop OAuth PKCE/state/nonce flow and did not add guessed/undocumented Whop account-picker parameters.
+- Repaired `tools/audit-control-mobile-flow.mjs`: the two unchanged group-recovery assets remain pinned to `v=20260823.1`, while the canonical runtime is separately required to use the account-switch-safe `v=20260906.2` key.
 
 ## Validation
-Final PR head `4e432eccc7a6a39de4cec199836aabe92d2f0cc1` passed:
-- **Verify SniperPlug #1071**, including the full Node 22 regression suite and Firefox Android extension packaging/upload.
-- **Verify affiliate-ready preview #132**.
-- **Verify retired public deal routes #132**.
-- No inline review threads or submitted reviews were outstanding.
+- Initial PR head `a7a0dea55d5d668b06e6a503a0fbe42b2d55931d`: **Verify SniperPlug #1079 failed** in the full build/regression step because the mobile-flow audit still required the obsolete runtime cache key.
+- Repaired implementation head `f51ba090f70f5f5e183b4dd879afb092a4a6bcd6`: **Verify SniperPlug #1081 passed** the repository-native full Node 22 build/regression suite.
+- On that same repaired implementation head, **Cloudflare Pages passed** and deployed the preview, and **Vercel Preview Comments passed** with no unresolved feedback.
+- No inline review threads or submitted PR reviews are outstanding.
 
-Post-merge `main` commit `8861aabb8c6c611a6ed01d0b0ba2e2e3c9a4f5bd` passed:
-- **Verify SniperPlug #1072**.
-- **Verify production guide privacy #93**.
-- **Verify affiliate-ready production #89**.
-- **Verify retired public deal routes #133**.
+## Cleanup and conflicts
+- Final implementation diff is limited to `control-center/index.html`, `tools/audit-control-mobile-flow.mjs`, and this task record.
+- No fallback, retry, OAuth parameter guess, duplicate switch implementation, temporary/debug code, or compatibility shim was added.
+- The historical cache assertions for `control-center-hardening.css` and `control-center-whop-backups.js` remain intact.
+- The final task-record update does not change runtime behavior; the resulting exact head must still pass the repository-native merge gate before merge.
 
-## Preserved architecture
-- `control-center-v2.js` remains the canonical Control Center state/mutation/render runtime.
-- `control-center-network-guard.js` remains the canonical timeout/version/auth gate.
-- `control-center-lifecycle.js` remains the canonical guide-editor lifecycle and dirty/publish feedback owner.
-- `control-center-subscriber.js` remains bounded account-specific presentation logic and does not own authentication or inject a second stylesheet.
-- `control-center-whop-backups.js` remains the canonical backup/recovery workflow owner.
-- `control-center-integrity-fix.js` remains compatibility/media repair only and does not reclaim guide status mutation.
+## Blockers / risks
+- No known implementation blocker remains.
+- Merge only if the exact current head remains mergeable and all required exact-head checks are green.
 
-## Administrative backlog
-- `main` is still unprotected because the connected GitHub App does not have repository-administration write access required to configure mandatory branch checks. This is an administrative permission limitation, not an unfinished site implementation task.
-
-## Next task
-Select the next implementation task separately. Do not mix unrelated feature work into this completed redesign record.
+## Next step
+Merge PR #67 after the final exact-head verification completes green; do not add unrelated changes.
