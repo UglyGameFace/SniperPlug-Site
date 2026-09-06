@@ -1,8 +1,8 @@
-import { requireAdmin } from '../_lib/auth.js';
 import { enforceLiveWhopAccess } from '../_lib/access-truth.js';
 import { annotateWhopAppReaders } from '../_lib/whop-app-reader.js';
 import { discoverWhopSources, isTransientDiscoveryError, loadWhopMemberships } from '../_lib/discovery.js';
 import { HttpError, json, methodNotAllowed } from '../_lib/http.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import { requireWhopSession } from '../_lib/whop.js';
 
 function discoveryError(error) {
@@ -25,10 +25,10 @@ function discoveryError(error) {
 export async function onRequest(context) {
   try {
     if (context.request.method !== 'GET') return methodNotAllowed(['GET']);
-    const admin = await requireAdmin(context.request, context.env);
-    const session = await requireWhopSession(context.request, context.env, admin);
+    const account = await requireControlAccount(context.request, context.env);
+    const session = await requireWhopSession(context.request, context.env, account);
     const memberships = await loadWhopMemberships(session);
-    const discovered = await discoverWhopSources(session, context.env, admin, memberships);
+    const discovered = await discoverWhopSources(session, context.env, account, memberships);
     const accessVerified = await enforceLiveWhopAccess(session, discovered, memberships);
     return json(annotateWhopAppReaders(accessVerified));
   } catch (error) {

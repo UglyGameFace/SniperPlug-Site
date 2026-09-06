@@ -54,7 +54,7 @@ assert.ok(service.includes('new Blob([archive.archiveJson]') && service.includes
 assert.ok(service.includes('async function buildWhopBackupArchive') && service.includes('payloadBytes: archive.archiveBytes'), 'Preview and create do not share exact archive sizing.');
 assert.ok(service.includes('const archive = await buildWhopBackupArchive(env, snapshot, principalId)'), 'Backup archive identity is not bound to the stable account principal.');
 assert.ok(!service.includes('const estimatedBytes = byteLength(stableBackupJson(snapshot.entities))'));
-assert.ok(endpoint.includes("previewWhopReset(env, admin, body)"), 'Preview archive sizing is not bound to the same account principal as creation.');
+assert.ok(endpoint.includes("previewWhopReset(env, account, body)"), 'Preview archive sizing is not bound to the same account principal as creation.');
 assert.ok(service.includes('verifyValue(backupSignatureValue') && service.includes("row.owner_session_id || ''"));
 assert.ok(service.includes('principalId: principalId') || service.includes('principalId,'), 'Signed backup manifest does not carry account principal identity.');
 assert.ok(service.includes('This backup belongs to a different SniperPlug account'), 'Cross-account backup archives do not fail closed.');
@@ -74,24 +74,22 @@ assert.ok(deleteBody.includes('backupRow(db, principalId, backupId)'), 'Backup d
 assert.ok(!deleteBody.includes('const verified = await verifyBackup'));
 
 assert.ok(mediaStorage.includes('SELECT archive_key, manifest_json') && mediaStorage.includes('manifest?.mediaKeys'));
-assert.ok(endpoint.includes('requireAdmin') && endpoint.includes('requireSameOrigin'));
-assert.ok(endpoint.includes('exportWhopImportBackup(context.env, admin, id)') && endpoint.includes('exported.archiveJson') && endpoint.includes("new Response(String(archiveJson || '')"), 'Backup download is not account-scoped.');
-assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, admin, id, body)'));
+assert.ok(endpoint.includes('requireControlAccount') && endpoint.includes('requireSameOrigin'));
+assert.ok(endpoint.includes('exportWhopImportBackup(context.env, account, id)') && endpoint.includes('exported.archiveJson') && endpoint.includes("new Response(String(archiveJson || '')"), 'Backup download is not account-scoped.');
+assert.ok(endpoint.indexOf('retrieveExperience(whop, resetContext.experienceId)') < endpoint.indexOf('resetWhopImporter(env, account, id, body)'));
 assert.ok(endpoint.includes('The verified reset completed, but fresh Whop resync did not finish'));
 assert.ok(endpoint.includes("code: 'backup_restore_retry_safe'"));
-assert.ok(endpoint.includes('restoreWhopImportBackup(env, admin, id, body)') && endpoint.includes('deleteWhopImportBackup(env, admin,'), 'Restore or delete drops the authenticated account principal.');
-assert.ok(endpoint.includes('saveSourceDecision(env, admin, experience') && endpoint.includes('scanApprovedSource(env, admin, whop, experience)'), 'Post-reset resync can write into a different account workspace.');
+assert.ok(endpoint.includes('restoreWhopImportBackup(env, account, id, body)') && endpoint.includes('deleteWhopImportBackup(env, account,'), 'Restore or delete drops the authenticated account principal.');
+assert.ok(endpoint.includes('saveSourceDecision(env, account, experience') && endpoint.includes('scanApprovedSource(env, account, whop, experience)'), 'Post-reset resync can write into a different account workspace.');
 
-// Backup history must stay human-identifiable even when one group creates many child archives.
 assert.ok(endpoint.includes('async function enrichBackupIdentity(env, principalValue, backups, sources)'));
 assert.ok(endpoint.includes('owner_session_id = ?') && endpoint.includes('UPDATE whop_import_backups SET label = ?'), 'Backup label repair can mutate another account’s archive metadata.');
 assert.ok(endpoint.includes('displayLabel: effectiveLabel') && endpoint.includes('groupLabel: groupLabel(source?.groupKey)'));
-assert.ok(endpoint.includes("const result = await createWhopImportBackup(env, admin, body)") && endpoint.includes('const [backup] = await enrichBackupIdentity(env, admin, [result.backup], sources)'), 'New backups are not account-scoped and labeled before destructive reset can remove source metadata.');
+assert.ok(endpoint.includes("const result = await createWhopImportBackup(env, account, body)") && endpoint.includes('const [backup] = await enrichBackupIdentity(env, account, [result.backup], sources)'), 'New backups are not account-scoped and labeled before destructive reset can remove source metadata.');
 assert.ok(client.includes('backup.displayLabel || backup.label'));
 assert.ok(client.includes('Source ID …${sourceSuffix} · Backup ID …${backupSuffix}'));
 assert.ok(client.includes('Restore “${backup.displayLabel || backup.label}”?') && client.includes('Delete backup “${backup.displayLabel || backup.label}”?'));
 
-// A group backup is deliberately an orchestration of the existing exact-source archive path.
 assert.ok(sourcePolicy.includes('export const DEFAULT_WHOP_GROUPS'));
 assert.ok(endpoint.includes('DEFAULT_WHOP_GROUPS') && endpoint.includes('sourceCount'));
 assert.ok(endpoint.includes('groupKey: source.groupKey || null'));
@@ -134,7 +132,7 @@ for (const file of [
 
 console.log('\nSNIPERPLUG WHOP BACKUP / RESET / RESTORE AUDIT PASSED\n');
 console.log('✓ Complete signed backups live in bounded R2 archives, not one D1 query per method.');
-console.log('✓ Snapshots, backup metadata, download, reset, restore, delete, and resync stay inside one account principal.');
+console.log('✓ Snapshots, backup metadata, download, reset, restore, delete, and resync stay inside one currently entitled account principal.');
 console.log('✓ D1 stores the verified manifest and uses bounded JSON batches for restore.');
 console.log('✓ Reset requires a current verified archive and preserves published guides by default.');
 console.log('✓ Whole-group backup safely creates one independently verified archive per saved source.');

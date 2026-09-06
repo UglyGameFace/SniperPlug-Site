@@ -42,7 +42,7 @@ assert.ok(ownerSave.includes('restoreCourseVideos(env, id, videoSnapshot)'), 'Co
 assert.ok(ownerSave.includes("code: 'guide_save_rollback_failed'"), 'Incomplete rollback does not return a clear fatal state.');
 assert.ok(snapshots.includes('principal_id') && snapshots.includes('expectedUpdatedAt') && snapshots.includes("code: 'guide_rollback_stale'"), 'Snapshot restoration can cross an account boundary or overwrite a newer guide version.');
 assert.ok(safeEndpoint.includes("import { saveGuideDraft } from '../_lib/guides-owner-save.js'"), 'The safe endpoint bypasses the rollback service.');
-assert.ok(safeEndpoint.includes('const admin = await requireAdmin') && safeEndpoint.includes('saveGuideDraft(context.env, admin, id, body)'), 'Rollback-safe saves do not carry the authenticated account principal.');
+assert.ok(safeEndpoint.includes('const account = await requireControlAccount') && safeEndpoint.includes('saveGuideDraft(context.env, account, id, body)'), 'Rollback-safe saves do not carry the currently entitled account principal.');
 assert.ok(safeEndpoint.includes('runMediaStorageMaintenance') && safeEndpoint.includes('context.waitUntil'), 'Rollback-safe account saves no longer schedule deferred media maintenance.');
 const safeSaveIndex = safeEndpoint.indexOf('const guide = await saveGuideDraft');
 const maintenanceCallIndex = safeEndpoint.indexOf('scheduleMediaMaintenance(context);', safeSaveIndex);
@@ -55,6 +55,7 @@ assert.ok(control.includes("const reservation = await reserveGuideVersion(env, a
 assert.ok(control.indexOf('reserveGuideVersion(env, admin, id, body.expectedUpdatedAt, operation)') < control.indexOf("if (status === 'published') await assertGuidePublishable(env, admin, id)"), 'Publishing is audited before the exact account guide version is reserved.');
 assert.ok(control.includes('await restoreGuideVersion(env, reservation)'), 'Failed status changes leave a stale reservation behind.');
 assert.ok(control.includes("status === 'published' ? 'publish'") && control.includes("status === 'rejected' ? 'reject'"), 'Publish, reject, and return-to-draft conflicts are not labeled clearly.');
+assert.ok(control.includes("status === 'published') requireOwnerPrincipal"), 'Subscriber status changes can reserve a public-publish mutation before the owner boundary is checked.');
 
 for (const file of [
   'assets/js/control-center-network-guard.js',
@@ -75,4 +76,4 @@ console.log('✓ Old-tab draft saves fail closed instead of overwriting newer or
 console.log('✓ The save accepts its own attachment/video cleanup while rejecting real outside edits.');
 console.log('✓ Partial saves restore the complete account guide row and course-video mappings safely.');
 console.log('✓ Rollback-safe saves still schedule deferred media inventory and cleanup.');
-console.log('✓ Publish, reject, and return-to-draft reserve the account-scoped version before auditing or changing status.');
+console.log('✓ Public publish is owner-gated before version reservation; reject and return-to-draft remain tenant-scoped.');

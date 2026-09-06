@@ -1,4 +1,3 @@
-import { requireAdmin } from '../_lib/auth.js';
 import {
   handleError,
   HttpError,
@@ -9,11 +8,12 @@ import {
   requireSameOrigin,
 } from '../_lib/http.js';
 import { principalIdFrom } from '../_lib/importer-workspace.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 
 export async function onRequest(context) {
   try {
-    const admin = await requireAdmin(context.request, context.env);
-    const ownerKey = principalIdFrom(admin);
+    const account = await requireControlAccount(context.request, context.env);
+    const ownerKey = principalIdFrom(account);
     if (context.request.method !== 'POST') return methodNotAllowed(['POST']);
     requireSameOrigin(context.request);
     const input = await readJson(context.request, { maxBytes: 20_000 });

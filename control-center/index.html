@@ -19,34 +19,41 @@
   <header class="site-header">
     <div class="container header-inner">
       <a class="brand" href="/" aria-label="SniperPlug home"><span class="brand-mark">SP</span><span>SniperPlug</span></a>
-      <nav class="nav" aria-label="Control Center navigation"><a href="/guides/">Private guides</a><a href="/deals/">Deals</a><a class="active" href="/control-center/">Control Center</a></nav>
+      <nav class="nav" aria-label="Control Center navigation"><a href="/guides/" data-owner-only>Private guides</a><a href="/deals/">Deals</a><a class="active" href="/control-center/">Control Center</a></nav>
     </div>
   </header>
 
   <main id="main" class="control-shell" data-control-root>
     <section class="control-login container" data-login-panel>
-      <span class="eyebrow">🔒 Private publishing</span>
-      <h1>Unlock the Guide Control Center.</h1>
-      <p>Import authorized Whop forum posts, course lessons, chat messages, links, pictures, videos, audio, PDFs, and files. Review everything privately before publishing.</p>
+      <span class="eyebrow">🔒 Private importer access</span>
+      <h1>Open the Guide Control Center.</h1>
+      <p>Import authorized Whop forum posts, course lessons, chat messages, links, pictures, videos, audio, PDFs, and files into a private workspace.</p>
       <form data-login-form>
-        <label><span>Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
-        <button class="btn primary" type="submit">Unlock Control Center</button>
+        <label><span>Owner Control Center password</span><input type="password" name="password" autocomplete="current-password" required></label>
+        <button class="btn primary" type="submit">Unlock owner workspace</button>
       </form>
+      <div class="subscriber-login-card" data-subscriber-login-card>
+        <strong>Paid SniperPlug subscriber?</strong>
+        <p>Use the Whop account that owns your active SniperPlug importer access. No owner password is shared with subscribers.</p>
+        <a class="btn primary" href="/api/subscriber/oauth/start" data-subscriber-login>Sign in with Whop</a>
+        <small>SniperPlug verifies the current Whop product entitlement before opening an isolated subscriber workspace.</small>
+      </div>
       <p class="control-message" data-login-message role="alert" hidden></p>
     </section>
 
     <section class="control-app container" data-control-app hidden>
       <header class="control-hero">
         <div><span class="eyebrow">⚡ SniperPlug publishing</span><h1>Guide Control Center</h1><p>Approve exact Whop sources and guide-worthy content, import hidden drafts, then publish separately or run a resumable complete workflow.</p></div>
-        <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open private guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
+        <div class="control-actions"><a class="btn ghost" href="/guides/" target="_blank" rel="noopener" data-owner-only>Open private guides</a><button class="btn ghost" type="button" data-logout>Lock</button></div>
       </header>
 
       <div class="control-status" data-global-status role="status" aria-live="polite" hidden></div>
+      <div class="control-status" data-subscriber-workspace role="status" aria-live="polite" hidden></div>
 
       <section class="control-panel" id="whop-importer">
         <header class="panel-head"><div><span class="eyebrow">1 · Connect</span><h2>Whop connection</h2><p>Your Whop password stays with Whop. SniperPlug stores encrypted OAuth tokens in private D1 storage.</p></div><strong class="state-pill" data-whop-state data-state="disconnected">Not connected</strong></header>
-        <div class="button-row"><a class="btn primary" href="/api/whop/oauth/start" data-whop-connect>Connect Whop</a><button class="btn primary" type="button" data-whop-switch hidden>Switch Whop account</button><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect Whop</button></div>
-        <div class="discovery-status" data-whop-switch-help hidden>
+        <div class="button-row" data-owner-only><a class="btn primary" href="/api/whop/oauth/start" data-whop-connect>Connect Whop</a><button class="btn primary" type="button" data-whop-switch hidden>Switch Whop account</button><button class="btn ghost" type="button" data-whop-disconnect hidden>Disconnect Whop</button></div>
+        <div class="discovery-status" data-whop-switch-help data-owner-only hidden>
           <strong>Ready to use a different Whop account</strong>
           <span>SniperPlug has removed its saved Whop token. Whop.com can still remember the account signed into this browser. Open Whop in another tab, sign out of the old account and sign into the account you want, then return here and continue.</span>
           <div class="button-row"><a class="btn ghost" href="https://whop.com/" target="_blank" rel="noopener">Open Whop to switch account</a><a class="btn primary" href="/api/whop/oauth/start" data-whop-switch-continue>Continue with Whop</a></div>
@@ -65,7 +72,7 @@
         </div>
         <div class="whop-reset-options">
           <label class="rights-check"><input type="checkbox" data-reset-resync checked><span>After clearing one source, reconnect it and scan only the current Whop posts.</span></label>
-          <label class="rights-check"><input type="checkbox" data-reset-published><span>Also delete published guides in this scope. Leave this off to preserve the private library.</span></label>
+          <label class="rights-check"><input type="checkbox" data-reset-published data-owner-only><span>Also delete published guides in this scope. Leave this off to preserve the private library.</span></label>
           <label class="rights-check"><input type="checkbox" data-reset-disconnect><span>Disconnect Whop after an entire-importer reset.</span></label>
           <div class="button-row"><button class="btn ghost" type="button" data-create-whop-backup>Create verified backup</button><button class="decision disapprove" type="button" data-reset-whop-importer>Back up, clear & resync</button></div>
         </div>
@@ -152,8 +159,8 @@
         <div class="decision-counts"><span><strong data-count-approved>0</strong>Approved</span><span><strong data-count-disapproved>0</strong>Disapproved</span><span><strong data-count-pending>0</strong>Need decision</span><span><strong data-count-blocked>0</strong>Blocked</span></div>
         <div class="post-list" data-post-list></div>
         <div class="import-bar">
-          <div class="category-picker-row"><label><span>Category for approved content</span><select data-import-category></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="import">＋ Add category</button></div>
-          <form class="inline-category-form" data-inline-category-form hidden>
+          <div class="category-picker-row"><label><span>Category for approved content</span><select data-import-category></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="import" data-owner-only>＋ Add category</button></div>
+          <form class="inline-category-form" data-inline-category-form data-owner-only hidden>
             <label><span>New category</span><input name="label" maxlength="60" placeholder="Personal Freebies" required></label>
             <label><span>Description</span><input name="description" maxlength="220" placeholder="Free products, trials, credits, and samples."></label>
             <input type="hidden" name="sortOrder" value="100">
@@ -164,7 +171,7 @@
         </div>
       </section>
 
-      <section class="control-panel" id="category-registry">
+      <section class="control-panel" id="category-registry" data-owner-only>
         <header class="panel-head"><div><span class="eyebrow">Categories</span><h2>Guide categories</h2><p>Choose “Auto-fit each guide” during import or create a custom category instead of forcing unrelated content together.</p></div></header>
         <form class="category-form" data-category-form>
           <label><span>Label</span><input name="label" maxlength="60" placeholder="Reselling" required></label>
@@ -176,11 +183,11 @@
       </section>
 
       <section class="control-panel">
-        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Open a guide, check it, and publish it. If you change the content, save those changes first. Published guides stay inside the owner-only Private Guides library.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
+        <header class="panel-head"><div><span class="eyebrow">4 · Drafts</span><h2>Review and publish</h2><p>Open a guide, check it, and publish it. If you change the content, save those changes first. Published guides stay inside the owner-only Private Guides library.</p></div><div class="button-row"><button class="decision approve" type="button" data-publish-all-ready data-owner-only>Audit & publish ready drafts</button><button class="btn ghost" type="button" data-refresh-dashboard>Refresh</button></div></header>
         <p class="bulk-progress" data-publish-all-progress role="status" aria-live="polite"></p>
-        <div class="publish-ready-visual" aria-hidden="true">
+        <div class="publish-ready-visual" aria-hidden="true" data-owner-only>
           <div class="publish-ready-track"><span></span></div>
-          <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides were added to the private library and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener">Open private guides</a></div>
+          <div class="publish-ready-evidence"><div><strong>Publishing audit</strong><span>The result above shows exactly how many guides were added to the private library and how many were held for review.</span></div><a class="btn ghost" href="/guides/" target="_blank" rel="noopener" data-owner-only>Open private guides</a></div>
         </div>
         <div class="draft-tools"><label><span>Find a guide</span><input type="search" data-draft-search placeholder="Search title or category"></label><label><span>Status</span><select data-draft-status-filter><option value="draft" selected>Needs review</option><option value="published">Published</option><option value="all">All guides</option></select></label></div>
         <div class="draft-layout">
@@ -188,14 +195,14 @@
           <div class="draft-empty" data-draft-empty><strong>No guide selected</strong><p>Choose a guide to review.</p></div>
           <form class="draft-editor" data-draft-editor hidden>
             <input type="hidden" name="id">
-            <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" hidden>Open private guide</a></div>
+            <div class="editor-heading"><div><small data-editor-status>Draft</small><h3 data-editor-heading>Guide draft</h3></div><a class="btn ghost" data-open-public target="_blank" rel="noopener" data-owner-only hidden>Open private guide</a></div>
             <label><span>Title</span><input name="title" maxlength="140" required></label>
             <label><span>Card description</span><textarea name="description" rows="3" maxlength="260" required></textarea></label>
-            <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft">＋ Add category</button></div>
+            <div class="category-picker-row"><label><span>Category</span><select name="category" required></select></label><button class="btn ghost" type="button" data-open-inline-category data-category-target="draft" data-owner-only>＋ Add category</button></div>
             <label><span>Guide content</span><textarea name="body" rows="12" spellcheck="true" required></textarea></label>
             <label class="rights-check" data-attachment-resolution hidden><input type="checkbox" name="attachmentsResolved"><span>I replaced or removed every flagged private or expiring media file.</span></label>
-            <details class="guide-options"><summary>More options</summary><label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide</span></label></details>
-            <div class="editor-actions"><button class="btn ghost" type="submit">Save changes</button><button class="decision approve" type="button" data-publish-guide>Publish guide</button><button class="decision disapprove" type="button" data-reject-guide>Remove draft</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
+            <details class="guide-options" data-owner-only><summary>More options</summary><label class="rights-check"><input type="checkbox" name="featured"><span>Feature this guide</span></label></details>
+            <div class="editor-actions"><button class="btn ghost" type="submit">Save changes</button><button class="decision approve" type="button" data-publish-guide data-owner-only>Publish guide</button><button class="decision disapprove" type="button" data-reject-guide>Remove draft</button><button class="btn ghost" type="button" data-return-draft>Return to draft</button></div>
             <details class="exact-preview" hidden><summary>Raw Markdown</summary><pre data-markdown-preview></pre></details>
           </form>
         </div>
@@ -211,6 +218,7 @@
   </div>
 
   <script src="/assets/js/control-center-network-guard.js?v=20260823.1" defer></script>
+  <script src="/assets/js/control-center-subscriber.js?v=20260905.1" defer></script>
   <script src="/assets/js/control-center-v2.js?v=20260823.1" defer></script>
   <script src="/assets/js/control-center-lifecycle.js?v=20260905.3" defer></script>
   <script src="/assets/js/control-center-whop-backups.js?v=20260823.1" defer></script>

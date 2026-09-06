@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveWhopRedirectUri } from '../functions/_lib/whop.js';
+import { subscriberProductId } from '../functions/_lib/subscriber-auth.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
@@ -75,10 +76,23 @@ assert.ok(middleware.includes('missing,'), 'Runtime response does not include th
 assert.equal(vercel.ignoreCommand, 'node -e "process.exit(0)"', 'Duplicate Vercel projects can still build the Cloudflare-only site and report false deployment failures.');
 assert.ok(!('outputDirectory' in vercel), 'Vercel must not publish the repository root or expose source files as a fake static deployment.');
 
+assert.ok(example.includes('WHOP_IMPORTER_PRODUCT_ID=prod_'), 'Local configuration example does not document the exact paid subscriber product id.');
+assert.equal(subscriberProductId({ WHOP_IMPORTER_PRODUCT_ID: 'prod_config_test' }), 'prod_config_test');
+assert.throws(
+  () => subscriberProductId({}),
+  (error) => Number(error?.status) === 503 && error?.details?.code === 'subscriber_product_unconfigured',
+  'Paid subscriber access must fail closed when its product id is not configured.',
+);
+assert.ok(!middleware.includes("'WHOP_IMPORTER_PRODUCT_ID'"), 'Optional paid-subscriber configuration was made a global runtime preflight requirement and would break owner-only use.');
+for (const obsolete of ['DISCORD_BOT_TOKEN=', 'SNIPERPLUG_REQUIRED_DISCORD_GUILD_IDS=', 'WHOP_API_KEY=']) {
+  assert.ok(!example.includes(obsolete), `Obsolete paid-access configuration returned: ${obsolete}`);
+}
+
 console.log('\nSNIPERPLUG RUNTIME CONFIG AUDIT PASSED\n');
 console.log('✓ D1 and every required private secret are checked together.');
 console.log('✓ Forum, Course, Chat, and membership discovery scopes ship through Wrangler.');
 console.log('✓ Preview and Production OAuth callbacks are explicit and documented.');
 console.log('✓ Production OAuth ignores stale redirect overrides and unknown hosts fail before contacting Whop.');
 console.log('✓ Missing settings are reported in one redacted response.');
+console.log('✓ Paid subscriber product configuration is optional for owner use but fails subscriber access closed when absent.');
 console.log('✓ Cloudflare Pages remains the only deployment runtime; duplicate Vercel builds are ignored safely.');

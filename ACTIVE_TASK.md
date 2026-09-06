@@ -1,60 +1,63 @@
 # Active Task
 
 ## Active task / outcome
-Implement issue #25: make authorized Whop app-specific experiences, especially Content / Better Content, report their real reader capability and use a supported reader without inventing private endpoints.
+Implement issue #60: enable paid subscribers to sign in with Whop, prove current product entitlement, and receive their own tenant-isolated SniperPlug importer workspace without sharing the owner password.
 
 ## Scope lock
-- Active scope: Whop custom-app capability metadata, reader selection, the existing browser-capture reader for rendered Whop app content, discovery truth/UX copy, and targeted regressions directly coupled to issue #25.
-- Preserve existing native Course, Forum, and Chat readers and their OAuth scope requirements.
-- Preserve owner membership/access checks and tenant-scoped source approval before any app-specific content becomes an importable private draft.
-- Do not guess undocumented custom-app API paths. A custom app is readable only through an explicitly supported reader or a documented interface exposed by Whop/app metadata.
-- Do not weaken browser-capture origin validation, private-guide publication review, recovery, media policy, or billing gates.
+- Active scope: application account authentication for subscribers, subscriber Whop OAuth bootstrap/callback, exact paid-product entitlement verification, stable principal issuance, Control Center login/account-state UX, importer endpoint authorization, and targeted regressions directly coupled to paid onboarding.
+- Keep the existing owner password login and owner post-login Whop connection flow intact.
+- Reuse the tenant isolation already deployed for sources, posts, guides, browser capture, bulk jobs, recovery, history, and backups. Do not create a second workspace implementation.
+- Keep owner-global actions owner-only, including public-site publication and shared category management.
+- Do not resurrect the removed `customer-pending` authorization model, the deleted `paid-access.js` implementation, the deleted `/api/importer-login` route, global Whop-session adoption, or the old Discord-guild coupling.
+- Subscriber identity must come from verified Whop OIDC identity and exact product entitlement, never email, mutable membership ID, or browser-local state.
+- Fail closed on OAuth correlation failure, missing billing configuration, missing/expired entitlement, or temporary entitlement-verification failure.
+
+## Completed previous task
+- PR #59 **Add authorized Whop app-specific readers** merged into `main` as `4a560c20bcb79cbc3381a9470450b01d24263482`.
+- Exact PR head passed the full Node 22 suite and Firefox Android extension packaging/upload.
+- Post-merge `main` passed **Verify SniperPlug #1047**, Cloudflare production affiliate/visual verification, and production private-guide privacy verification.
+- Issue #25 closed automatically as completed.
 
 ## Starting state / root cause
-- Starting `main`: `23d1b6dbc9c21ac78b1a96a94f3b1efd02716475` after PR #58 passed post-merge Node 22, production visual/affiliate, guide-privacy, and retired-route checks.
-- Working branch: `feature/whop-authorized-app-readers`.
-- PR #59: **Add authorized Whop app-specific readers**.
-- Issue #25 is open: **Read authorized Whop Content / Better Content experiences**.
-- Discovery confirmed membership and preserved external app modules, but native reader resolution only classified Forum, Course, Chat, or unsupported.
-- Public Whop app metadata could expose origin, Experience path, OpenAPI path, and Skills path, but there was no canonical app-specific reader decision shared with discovery and capture authorization.
-- Better Content already had a real Android-proven rendered browser-capture path, but server authorization was hard-coded to its app ID and discovery still described all app-specific modules as reader-unavailable.
+- Starting `main`: `4a560c20bcb79cbc3381a9470450b01d24263482`.
+- Working branch: `feature/paid-subscriber-onboarding`.
+- Issue #60: **Enable paid subscriber Control Center onboarding**.
+- PR #47 already separated stable account `principalId` from per-browser `browserSid` and made Whop connections account-scoped.
+- PR #48 already tenant-scoped importer source/post/guide/bulk/recovery state and prevents subscriber workspaces from publishing into the owner's public guide catalog.
+- `auth.js` deliberately accepted only owner sessions because the earlier unsafe customer auth model was removed in PR #32.
+- `/api/control?action=login` was password-only, and importer API routes still called the owner-only `requireAdmin()` gate even though their underlying workspace operations were already principal-scoped.
+- Whop OAuth start required an existing owner application session. The callback correctly stored the OAuth connection under the principal recorded in the one-time state row, but could not bootstrap a previously unauthenticated paid subscriber because their stable principal is not known until Whop returns verified user identity.
+- Historical paid-access code mixed product access with Discord-guild requirements and used `customer-pending`; both were intentionally removed and were not restored.
 
-## Important compatibility finding
-- Whop can render a valid Better Content Experience under an instance-specific hostname such as `mfk8y74zmein6tne8o5e.apps.whop.com` while public app metadata advertises an origin such as `better-content.apps.whop.com`.
-- Therefore metadata-host equality is not a valid identity check and would break the real Android path.
-- The safe boundary is now: capture must remain in HTTPS `*.apps.whop.com`; if the rendered URL exposes an `exp_...` identity it must equal the selected Experience; the server independently re-fetches the exact Experience, verifies the canonical supported reader/app identity, verifies current membership, and preserves tenant-scoped source approval before writing a private draft.
-- Opaque Whop app routes that do not expose an `exp_...` segment remain compatible because the server-side Experience/app/membership verification is still authoritative.
+## Implementation / Definition of Done
+- [x] Introduce one canonical account-session reader that can validate both owner and paid-subscriber application sessions while retaining an explicit owner-only wrapper.
+- [x] Derive subscriber principal only from exact Whop user identity (`sub` / compatible verified user ID), with a stable principal namespace that remains the same across devices.
+- [x] Add a dedicated unauthenticated subscriber OAuth bootstrap using PKCE + server state + narrow SameSite=Lax callback correlation without treating pending OAuth as an authenticated app session.
+- [x] Verify current membership for the exact configured `WHOP_IMPORTER_PRODUCT_ID` before issuing a subscriber application cookie or moving OAuth tokens under the subscriber principal.
+- [x] Use the existing membership-status/access semantics consistently and fail closed on missing configuration, denied membership, or transient Whop failure.
+- [x] Keep owner OAuth start/callback behavior unchanged and keep owner Whop switching/disconnect principal-scoped.
+- [x] Persist the verified subscriber Whop connection under the stable subscriber principal so multiple signed-in devices share one account-scoped connection without sharing browser-session identity.
+- [x] Change only importer/workspace routes to accept authenticated subscriber accounts; owner-global routes/actions still require the owner principal.
+- [x] Update Control Center login UX so owner password unlock and paid-subscriber Whop sign-in are visibly distinct and do not masquerade as the same credential flow.
+- [x] Ensure subscriber logout clears only the browser application session; explicit Whop disconnect remains principal-scoped and cannot delete another principal's connection.
+- [x] Add executable regressions for state correlation, stable identity, product entitlement, denied/expired access, multi-device account sessions, cross-principal isolation, owner compatibility, and owner-only publishing/category enforcement.
+- [x] Update runtime configuration example for the exact paid product ID without exposing secrets.
+- [x] Exact-head **Verify SniperPlug #1055**, affiliate-ready preview #121, and retired public deal routes #122 passed on `1528e85ce3628748fb19c4808e4b7c39c9d2e17e` with no review threads or submitted reviews.
+- [ ] Mark PR #61 ready, merge, then require post-merge production validation before closing issue #60.
 
-## Branch-governance backlog result
-- `GET /repos/UglyGameFace/SniperPlug-Site/branches/main/protection` returned 403 `Resource not accessible by integration` through the active GitHub App.
-- Repository rulesets are readable and currently return an empty list.
-- The connector exposes no administration write for branch protection/rulesets, so required-check governance is blocked by connector administration capability rather than silently skipped or fabricated.
+## Validation evidence
+- Paid subscriber onboarding regression passes stable Whop identity, exact product entitlement, separate OAuth callback correlation, importer/capture/recovery/backup/bulk authorization, and owner-only public publishing.
+- Tenant workspace regression passes deterministic per-principal source/post/guide/browser-capture/bulk/history/backup/recovery isolation.
+- Existing Better Content capture, publish/unpublish, mobile Control Center, bulk completion, guide versioning, recovery ownership, backup/reset/restore, network safety, media, and site-integrity audits remain green on the exact PR head.
+- Affiliate-ready preview and retired public route checks are green on the exact PR head.
 
-## Definition of Done
-- [x] Added one canonical app-reader descriptor in `whop-app-reader.js` instead of a parallel reader registry elsewhere.
-- [x] Kept exact Better Content app ID `app_zv9yxan92U9fNy` as an explicitly supported rendered-app reader even when its public metadata lookup is temporarily unavailable.
-- [x] Other Content-family rendered readers require exact stable app ID resolution, Whop verification, a safe HTTPS `*.apps.whop.com` metadata origin, and a supported Content-family app name.
-- [x] Browser capture remains inside HTTPS Whop app frames; a different declared `exp_...` identity is rejected while real instance-specific Whop hosts remain valid.
-- [x] Server capture authorization independently re-fetches the exact Experience, resolves the canonical reader/app identity, checks current membership, and preserves tenant-scoped source approval.
-- [x] Discovery clearly distinguishes `Access confirmed · reader available`, documented OpenAPI/Skills contract advertised without an adapter, and `Access confirmed · reader unavailable` from access denial.
-- [x] Explicit unsupported behavior remains when no authorized readable interface exists.
-- [x] OpenAPI/Skills metadata is capability evidence only; arbitrary documented operations are not auto-executed or guessed.
-- [x] Targeted regressions cover exact Better Content selection, verified Content-family selection, lookalike/unverified rejection, randomized Whop frame hosts, cross-Experience rejection when the URL declares an Experience, metadata failure, documented-contract-only state, and unsupported fallback.
-- [x] Exact code head `fe68ea3854db0dda47373194f0e090cb98febad5` passed **Verify SniperPlug #1045**, including the full Node 22 audit/build suite and Firefox Android extension packaging/upload.
-- [x] PR #59 is mergeable and currently has no inline review threads.
-- [ ] Fresh exact-head validation after this task-record-only commit.
-- [ ] Merge PR #59 only if that final head remains green and review state stays clean.
-- [ ] Require post-merge Node 22 plus applicable Cloudflare production visual/affiliate, private-guide privacy, and retired-route checks before closing issue #25.
-
-## Validation notes
-- The first PR run exposed a stale legacy regression that expected Better-Content-only error wording. The implementation was kept generic and the compatibility-safe message now contains both the legacy Better Content phrase and the supported generic Whop app-frame meaning.
-- A later test-only assertion expected an outdated phrase after Experience-binding copy was strengthened. The production rule was not weakened; the wording and regression now agree on exact Experience matching.
-- No client-side custom API execution, guessed endpoint path, second importer state machine, or auto-publication path was added.
+## Branch-governance backlog
+- The repository currently reports `main` as unprotected and has no repository rulesets through the connected GitHub surface.
+- The GitHub App still does not expose the repository-administration write needed to configure required checks from this chat, so governance remains a separate blocked administrative item rather than a fabricated code fix.
 
 ## Backlog after this task
-- Paid-subscriber authentication/billing onboarding with tenant-scoped real subscriber identity.
 - Larger product/brand/UX redesign across the public site and Control Center.
-- Required branch-check governance remains blocked until repository administration writes are available through the connection or configured outside this integration.
+- Required branch-check governance when repository administration write access is available.
 
 ## Next step
-Require fresh CI on this exact task-record head. If it remains green and the PR diff/review state is clean, merge PR #59, verify the resulting Cloudflare production `main`, close issue #25, and move directly to paid-subscriber authentication/billing onboarding.
+Finish PR #61's merge gate, run the post-merge Cloudflare production checks, close issue #60 only after those pass, then transition the active task to the full-site UX/product redesign.

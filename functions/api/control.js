@@ -1,11 +1,10 @@
 import {
   OWNER_PRINCIPAL_ID,
   checkLoginThrottle,
-  clearAdminSession,
+  clearAccountSession,
   clearLoginFailures,
   createAdminSession,
   recordLoginFailure,
-  requireAdmin,
   verifyAdminPassword,
 } from '../_lib/auth.js';
 import {
@@ -44,6 +43,7 @@ import {
   saveSourceDecisions,
   sourceDecision,
 } from '../_lib/source-policy.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import { disconnectPrincipalWhop } from '../_lib/whop-connection.js';
 import {
   requireWhopSession,
@@ -89,9 +89,18 @@ function requestedSourceValues(body) {
 }
 
 function accountSummary(session) {
+  const subscriber = session?.kind === 'subscriber';
   return {
     principalId: String(session?.principalId || session?.sid || ''),
     kind: String(session?.kind || 'owner'),
+    ...(subscriber ? {
+      paidSubscriber: true,
+      entitlement: session.entitlement ? {
+        productId: session.entitlement.productId || null,
+        status: session.entitlement.status || null,
+        verifiedAt: session.entitlement.verifiedAt || null,
+      } : null,
+    } : { paidSubscriber: false }),
   };
 }
 
@@ -106,10 +115,19 @@ function requireOwnerPrincipal(session, actionLabel = 'change global SniperPlug 
 async function login(request, env) {
   if (request.method === 'GET') {
     try {
-      const session = await requireAdmin(request, env);
+      const session = await requireControlAccount(request, env);
       return json({ authenticated: true, expiresAt: session.expiresAt, account: accountSummary(session) });
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) return json({ authenticated: false }, 200);
+      if (error instanceof HttpError && [403, 503].includes(error.status)) {
+        return json({
+          authenticated: false,
+          subscriberBlocked: true,
+          error: error.message,
+          code: error.details?.code || 'SUBSCRIBER_ACCESS_BLOCKED',
+          retryable: error.status === 503,
+        }, 200);
+      }
       throw error;
     }
   }
@@ -127,7 +145,7 @@ async function login(request, env) {
   }
   if (request.method === 'DELETE') {
     requireSameOrigin(request);
-    return appendCookie(json({ authenticated: false }), clearAdminSession());
+    return appendCookie(json({ authenticated: false }), clearAccountSession());
   }
   return methodNotAllowed(['GET', 'POST', 'DELETE']);
 }
@@ -223,6 +241,7 @@ async function dashboard(request, env, admin, context) {
   ]);
   const visibleGuides = guides.filter((guide) => guide.status !== 'rejected' && guide.integrity?.quarantined !== true);
   if (mediaStorageUsage.inventoryDue || mediaStorageUsage.cleanupDue) scheduleMediaMaintenance(context, env);
+  const owner = String(admin?.principalId || admin?.sid || '') === OWNER_PRINCIPAL_ID;
   return json({
     account: accountSummary(admin),
     whop,
@@ -230,8 +249,9 @@ async function dashboard(request, env, admin, context) {
       mediaStorage: Boolean(env?.SNIPERPLUG_MEDIA),
       mediaStorageUsage,
       cleanup,
-      publicPublishing: String(admin?.principalId || admin?.sid || '') === OWNER_PRINCIPAL_ID,
-      categoryManagement: String(admin?.principalId || admin?.sid || '') === OWNER_PRINCIPAL_ID,
+      publicPublishing: owner,
+      categoryManagement: owner,
+      ownerAccount: owner,
     },
     sources,
     categories,
@@ -348,6 +368,7 @@ async function guideStatus(request, env, admin, context) {
   const id = Number.parseInt(body.id, 10);
   if (!Number.isFinite(id)) throw new HttpError(422, 'Choose a valid guide.');
   const status = String(body.status || '');
+  if (status === 'published') requireOwnerPrincipal(admin, 'publish guides to the public SniperPlug site');
   const operation = status === 'published' ? 'publish' : status === 'rejected' ? 'reject' : 'return-to-draft';
   const reservation = await reserveGuideVersion(env, admin, id, body.expectedUpdatedAt, operation);
   try {
@@ -365,7 +386,7 @@ export async function onRequest(context) {
   const currentAction = action(context.request);
   try {
     if (currentAction === 'session') return await login(context.request, context.env);
-    const admin = await requireAdmin(context.request, context.env);
+    const admin = await requireControlAccount(context.request, context.env);
     if (currentAction === 'dashboard') return await dashboard(context.request, context.env, admin, context);
     if (currentAction === 'source-check') return await sourceCheck(context.request, context.env, admin);
     if (currentAction === 'source-decision') return await sourceSave(context.request, context.env, admin);

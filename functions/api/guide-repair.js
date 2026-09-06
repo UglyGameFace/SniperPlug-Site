@@ -1,4 +1,3 @@
-import { requireAdmin } from '../_lib/auth.js';
 import { restoreCourseVideos, snapshotCourseVideos } from '../_lib/course-video.js';
 import { restoreGuideSnapshot } from '../_lib/guide-snapshots.js';
 import { adminGuide, importApprovedPosts } from '../_lib/guides-media.js';
@@ -11,6 +10,7 @@ import {
   renewRecoveryLease,
 } from '../_lib/recovery-leases.js';
 import { recoveryMediaState, whopRecoveryError } from '../_lib/recovery-media.js';
+import { requireControlAccount } from '../_lib/subscriber-auth.js';
 import { requireWhopSession, retrieveExperience } from '../_lib/whop.js';
 
 const PAGE_SIZE = 30;
@@ -239,16 +239,16 @@ async function repairGuide(request, env, admin) {
 
 export async function onRequest(context) {
   try {
-    const admin = await requireAdmin(context.request, context.env);
+    const account = await requireControlAccount(context.request, context.env);
     if (context.request.method === 'GET') {
       const offset = new URL(context.request.url).searchParams.get('offset');
-      return json(await rejectedImports(context.env, admin, offset));
+      return json(await rejectedImports(context.env, account, offset));
     }
     if (context.request.method === 'POST') {
       const clone = context.request.clone();
       const input = await readJson(clone, { maxBytes: 20_000 });
-      if (input?.action === 'discard') return discardRemoved(context.request, context.env, admin);
-      return repairGuide(context.request, context.env, admin);
+      if (input?.action === 'discard') return discardRemoved(context.request, context.env, account);
+      return repairGuide(context.request, context.env, account);
     }
     return methodNotAllowed(['GET', 'POST']);
   } catch (error) {
