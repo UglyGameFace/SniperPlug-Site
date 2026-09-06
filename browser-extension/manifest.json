@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "SniperPlug Better Content Capture",
-  "version": "0.1.6",
-  "description": "Capture Better Content pages you are already authorized to view in Whop and send the rendered guide content to SniperPlug for private review.",
+  "version": "0.2.0",
+  "description": "Safely sync Better Content pages you are already authorized to view in Whop into SniperPlug private review.",
   "permissions": ["scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": [
     "https://whop.com/*",
@@ -15,7 +15,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Capture Better Content",
+    "default_title": "Sync Better Content",
     "default_popup": "popup.html"
   },
   "content_scripts": [

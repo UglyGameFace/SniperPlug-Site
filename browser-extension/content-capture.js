@@ -12,17 +12,34 @@
 
   if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
     globalThis.__sniperplugBetterContentCapture.registerCandidate();
+    globalThis.__sniperplugBetterContentCapture.resumeTraversal?.();
     return;
   }
 
   const MESSAGE_PREFIX = 'sniperplug:';
   const MAX_CANDIDATES = 1200;
+  const MAX_TRAVERSAL_TARGETS_PER_PAGE = 260;
   const MIN_CAPTURE_CHARS = 80;
   const AUTO_CAPTURE_DELAY_MS = 1200;
+  const TRAVERSAL_SETTLE_MS = 900;
+  const MAX_EXPAND_CLICKS = 24;
+  const MAX_TAB_PANELS = 12;
+  const MAX_SCROLL_STEPS = 12;
   const SENSITIVE_QUERY_KEY = /(?:token|auth|jwt|session|signature|secret|password|code|state|key)/i;
+  const BLOCKED_TRAVERSAL_PATH = /\/(?:api|oauth|auth|login|logout|sign-?out|account|settings|admin|billing|checkout|purchase|support|contact)(?:\/|$)/i;
+  const SAFE_EXPAND_LABEL = /^(?:(?:show|view|read|load)\s+more|more|expand|continue(?:\s+reading)?|see\s+more)$/i;
+  const DANGEROUS_CONTROL_LABEL = /(?:delete|remove|purchase|checkout|buy|subscribe|sign\s*out|log\s*out|account|billing|settings|support|contact)/i;
   let autoEnabled = false;
   let autoTimer = 0;
   let lastAutoIdentity = '';
+  let traversalEnabled = false;
+  let traversalTimer = 0;
+  let lastTraversalIdentity = '';
+  let traversalBusy = false;
+
+  function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   function normalizeSpace(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
@@ -42,6 +59,15 @@
     return currentAppFrameFallbackUrl();
   }
 
+  function queryLooksSensitive(url) {
+    for (const key of [...url.searchParams.keys()]) {
+      const values = url.searchParams.getAll(key);
+      if (SENSITIVE_QUERY_KEY.test(key)) return true;
+      if (values.some((item) => /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(item) || String(item || '').length > 180)) return true;
+    }
+    return false;
+  }
+
   function safeHttpUrl(value) {
     const raw = String(value || '').trim();
     const currentFrameFallback = safeCurrentFrameUrl(raw);
@@ -52,13 +78,30 @@
       for (const key of [...url.searchParams.keys()]) {
         const values = url.searchParams.getAll(key);
         const sensitive = SENSITIVE_QUERY_KEY.test(key)
-          || values.some((item) => /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(item) || item.length > 180);
+          || values.some((item) => /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(item) || String(item || '').length > 180);
         if (sensitive) url.searchParams.delete(key);
       }
       url.searchParams.sort();
       return url.toString();
     } catch {
       return currentFrameFallback;
+    }
+  }
+
+  function safeTraversalUrl(value, experienceId = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+      const url = new URL(raw, location.href);
+      if (url.protocol !== 'https:' || url.origin !== location.origin || !isWhopAppHost(url.hostname)) return '';
+      if (BLOCKED_TRAVERSAL_PATH.test(url.pathname) || queryLooksSensitive(url)) return '';
+      const targetExperience = String(url.pathname || '').match(/\bexp_[A-Za-z0-9_-]+\b/)?.[0] || '';
+      if (experienceId && targetExperience && targetExperience !== experienceId) return '';
+      url.hash = '';
+      url.searchParams.sort();
+      return url.toString();
+    } catch {
+      return '';
     }
   }
 
@@ -79,6 +122,17 @@
     const marker = `${element.id || ''} ${element.className || ''}`.toLowerCase();
     if (/\b(?:sidebar|side-nav|navbar|navigation|toolbar|breadcrumb|footer|cookie-banner|modal|popover|tooltip)\b/.test(marker)) return true;
     return !elementVisible(element);
+  }
+
+  function traversalElementExcluded(element) {
+    if (!(element instanceof Element) || !elementVisible(element)) return true;
+    const excludedAncestor = element.closest('nav,aside,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="toolbar"],[role="dialog"],[role="alertdialog"]');
+    if (excludedAncestor) return true;
+    for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+      const marker = `${node.id || ''} ${node.className || ''}`.toLowerCase();
+      if (/\b(?:sidebar|side-nav|navbar|navigation|toolbar|breadcrumb|footer|cookie-banner|modal|popover|tooltip)\b/.test(marker)) return true;
+    }
+    return false;
   }
 
   function textLength(element) {
@@ -223,7 +277,7 @@
     }
     if (tag === 'li') return blockChildren(node, depth + 1);
     if (tag === 'table') return renderTable(node, depth + 1);
-    if (['p', 'section', 'article', 'main', 'div', 'header'].includes(tag)) return blockChildren(node, depth + 1);
+    if (['p', 'section', 'article', 'main', 'div', 'header', 'details'].includes(tag)) return blockChildren(node, depth + 1);
     return inlineChildren(node, depth + 1);
   }
 
@@ -283,13 +337,14 @@
     return images;
   }
 
-  function buildCapture() {
+  function buildCapture(extraMarkdown = '', diagnostics = {}) {
     const root = selectContentRoot();
     const title = pageTitle(root);
-    const bodyMarkdown = cleanMarkdown(renderNode(root));
+    const mainMarkdown = cleanMarkdown(renderNode(root));
+    const bodyMarkdown = cleanMarkdown([mainMarkdown, extraMarkdown].filter(Boolean).join('\n\n'));
     const experienceId = findExperienceId();
-    if (!experienceId) throw new Error('This Better Content frame does not expose its Whop experience ID yet. Keep the guide visible and reopen the extension.');
-    if (bodyMarkdown.length < MIN_CAPTURE_CHARS) throw new Error('The rendered page is too small to capture. Open an individual Better Content guide first.');
+    if (!experienceId) throw new Error('This Better Content frame does not expose its Whop experience ID yet. Keep the content visible and retry.');
+    if (bodyMarkdown.length < MIN_CAPTURE_CHARS) throw new Error('The rendered page is too small to capture.');
     const pageUrl = safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
     if (!pageUrl) throw new Error('The rendered Better Content page does not have a safe HTTPS app-frame URL.');
     return {
@@ -304,6 +359,217 @@
       images: collectImages(root),
       capturedAt: new Date().toISOString(),
       textLength: normalizeSpace(root.innerText || '').length,
+      diagnostics,
+    };
+  }
+
+  function safeExpandableControls(root) {
+    const controls = [...root.querySelectorAll('button,[role="button"]')];
+    return controls.filter((control) => {
+      if (traversalElementExcluded(control) || control.hasAttribute('disabled')) return false;
+      if (control.closest('form') && String(control.getAttribute('type') || '').toLowerCase() === 'submit') return false;
+      if (control.getAttribute('aria-haspopup') === 'dialog') return false;
+      const label = normalizeSpace(control.getAttribute('aria-label') || control.getAttribute('title') || control.innerText || control.textContent);
+      if (!label || DANGEROUS_CONTROL_LABEL.test(label)) return false;
+      return SAFE_EXPAND_LABEL.test(label);
+    }).slice(0, MAX_EXPAND_CLICKS);
+  }
+
+  async function expandLazyContent(root) {
+    let detailsOpened = 0;
+    for (const detail of [...root.querySelectorAll('details')].slice(0, 60)) {
+      if (!detail.open && elementVisible(detail)) {
+        detail.open = true;
+        detailsOpened += 1;
+      }
+    }
+
+    let controlsClicked = 0;
+    for (let pass = 0; pass < 3; pass += 1) {
+      const controls = safeExpandableControls(root).slice(0, MAX_EXPAND_CLICKS - controlsClicked);
+      if (!controls.length) break;
+      for (const control of controls) {
+        if (controlsClicked >= MAX_EXPAND_CLICKS) break;
+        try {
+          control.click();
+          controlsClicked += 1;
+          await wait(90);
+        } catch { /* Keep reading the page even when one optional expander misbehaves. */ }
+      }
+      await wait(220);
+    }
+    return { detailsOpened, controlsClicked };
+  }
+
+  async function scrollForLazyRender() {
+    const scrolling = document.scrollingElement || document.documentElement;
+    if (!scrolling || typeof globalThis.scrollTo !== 'function') return { scrollSteps: 0 };
+    const startX = globalThis.scrollX || 0;
+    const startY = globalThis.scrollY || 0;
+    let steps = 0;
+    let lastHeight = 0;
+    for (let index = 0; index < MAX_SCROLL_STEPS; index += 1) {
+      const height = Math.max(scrolling.scrollHeight || 0, document.body?.scrollHeight || 0);
+      if (height <= (globalThis.innerHeight || 0) + 20) break;
+      const targetY = Math.min(height, Math.round((index + 1) * Math.max(360, (globalThis.innerHeight || 720) * 0.78)));
+      globalThis.scrollTo(0, targetY);
+      steps += 1;
+      await wait(150);
+      if (targetY + (globalThis.innerHeight || 0) >= height - 20 && height === lastHeight) break;
+      lastHeight = height;
+    }
+    globalThis.scrollTo(startX, startY);
+    await wait(100);
+    return { scrollSteps: steps };
+  }
+
+  async function waitForImages(root) {
+    const pending = [...root.querySelectorAll('img')].filter((image) => elementVisible(image) && !image.complete).slice(0, 30);
+    if (!pending.length) return { imagesWaited: 0, imagesStillPending: 0 };
+    await Promise.race([
+      Promise.allSettled(pending.map((image) => new Promise((resolve) => {
+        const done = () => resolve();
+        image.addEventListener('load', done, { once: true });
+        image.addEventListener('error', done, { once: true });
+      }))),
+      wait(1600),
+    ]);
+    return {
+      imagesWaited: pending.length,
+      imagesStillPending: pending.filter((image) => !image.complete).length,
+    };
+  }
+
+  async function collectTabPanels(root) {
+    const tabs = [...root.querySelectorAll('[role="tab"][aria-controls]')]
+      .filter((tab) => !traversalElementExcluded(tab) && !DANGEROUS_CONTROL_LABEL.test(normalizeSpace(tab.innerText || tab.textContent)))
+      .slice(0, MAX_TAB_PANELS);
+    if (tabs.length < 2) return { markdown: '', tabPanels: 0, discoveredTargets: [] };
+    const initiallySelected = tabs.find((tab) => tab.getAttribute('aria-selected') === 'true') || null;
+    const sections = [];
+    const discoveredTargets = [];
+    const targetSeen = new Set();
+    const seen = new Set();
+    for (const tab of tabs) {
+      const panelId = String(tab.getAttribute('aria-controls') || '').trim();
+      if (!panelId) continue;
+      try {
+        tab.click();
+        await wait(180);
+      } catch { continue; }
+      const panel = document.getElementById(panelId);
+      if (!(panel instanceof Element) || !elementVisible(panel)) continue;
+      for (const target of discoverTraversalTargets(panel)) {
+        if (!targetSeen.has(target.url)) {
+          targetSeen.add(target.url);
+          discoveredTargets.push(target);
+        }
+      }
+      const body = cleanMarkdown(renderNode(panel));
+      if (body.length < 30 || seen.has(body)) continue;
+      seen.add(body);
+      const label = normalizeSpace(tab.getAttribute('aria-label') || tab.innerText || tab.textContent || 'Tab').slice(0, 100);
+      sections.push(`## ${label}\n\n${body}`);
+    }
+    if (initiallySelected) {
+      try { initiallySelected.click(); } catch { /* No-op. */ }
+    }
+    return { markdown: sections.join('\n\n'), tabPanels: sections.length, discoveredTargets };
+  }
+
+  async function prepareRenderedPage({ includeTabs = true } = {}) {
+    const root = selectContentRoot();
+    const expanded = await expandLazyContent(root);
+    const scrolled = await scrollForLazyRender();
+    const images = await waitForImages(root);
+    const tabs = includeTabs ? await collectTabPanels(root) : { markdown: '', tabPanels: 0, discoveredTargets: [] };
+    await wait(120);
+    return {
+      extraMarkdown: tabs.markdown,
+      discoveredTargets: tabs.discoveredTargets || [],
+      diagnostics: {
+        ...expanded,
+        ...scrolled,
+        ...images,
+        tabPanels: tabs.tabPanels,
+      },
+    };
+  }
+
+  async function buildPreparedCapture(options = {}) {
+    const prepared = await prepareRenderedPage(options);
+    return buildCapture(prepared.extraMarkdown, prepared.diagnostics);
+  }
+
+  function discoverTraversalTargets(root = selectContentRoot()) {
+    const experienceId = findExperienceId();
+    const currentUrl = safeTraversalUrl(location.href, experienceId) || safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
+    const seen = new Set();
+    const candidates = [];
+    const elements = [...root.querySelectorAll('a[href],[role="link"][href],[data-href],[data-url]')];
+    for (const element of elements) {
+      if (candidates.length >= MAX_TRAVERSAL_TARGETS_PER_PAGE || traversalElementExcluded(element)) continue;
+      const raw = element.getAttribute('href') || element.getAttribute('data-href') || element.getAttribute('data-url') || '';
+      const url = safeTraversalUrl(raw, experienceId);
+      if (!url || url === currentUrl || seen.has(url)) continue;
+      const label = normalizeSpace(
+        element.getAttribute('aria-label')
+        || element.getAttribute('title')
+        || element.innerText
+        || element.textContent,
+      ).slice(0, 180);
+      if (!label || /^(?:home|account|settings|support|contact support|sign out|log out)$/i.test(label)) continue;
+      seen.add(url);
+      candidates.push({ url, title: label });
+    }
+
+    const expPath = experienceId ? `/experiences/${experienceId}/` : '';
+    const scoped = expPath ? candidates.filter((target) => {
+      try { return new URL(target.url).pathname.includes(expPath); } catch { return false; }
+    }) : [];
+    return scoped.length ? scoped : candidates;
+  }
+
+  function classifyRenderedPage(root, targets, capture) {
+    const paragraphChars = [...root.querySelectorAll('p')]
+      .reduce((sum, paragraph) => sum + normalizeSpace(paragraph.innerText || paragraph.textContent).length, 0);
+    const richBlocks = root.querySelectorAll('pre,table,blockquote').length;
+    const cardLike = root.querySelectorAll('a[href],[role="link"],[data-href],[data-url]').length;
+    const pathname = String(location.pathname || '');
+    const pathLooksDirectory = /\/(?:pages|content|guides|library)\/?$/i.test(pathname);
+    const proseLight = paragraphChars < 520 && richBlocks === 0;
+    const linkDense = targets.length >= 2 && cardLike >= Math.max(3, targets.length);
+    const bodyShort = !capture || String(capture.bodyMarkdown || '').length < 1500;
+    return {
+      directoryLike: Boolean((pathLooksDirectory && targets.length) || (linkDense && proseLight && bodyShort)),
+      paragraphChars,
+      richBlocks,
+      linkCount: targets.length,
+    };
+  }
+
+  async function traversalSnapshot() {
+    const prepared = await prepareRenderedPage({ includeTabs: true });
+    const root = selectContentRoot();
+    const targets = [];
+    const targetSeen = new Set();
+    for (const target of [...discoverTraversalTargets(root), ...(prepared.discoveredTargets || [])]) {
+      if (!targetSeen.has(target.url)) {
+        targetSeen.add(target.url);
+        targets.push(target);
+      }
+    }
+    let capture = null;
+    try { capture = buildCapture(prepared.extraMarkdown, prepared.diagnostics); } catch { /* Transition/directory shells may not be capturable. */ }
+    const classification = classifyRenderedPage(root, targets, capture);
+    return {
+      experienceId: findExperienceId(),
+      pageUrl: safeHttpUrl(location.href) || currentAppFrameFallbackUrl(),
+      title: pageTitle(root),
+      ...classification,
+      targets,
+      capture,
+      diagnostics: prepared.diagnostics,
     };
   }
 
@@ -328,11 +594,12 @@
   }
 
   function scheduleAutoCapture() {
-    if (!autoEnabled) return;
+    if (!autoEnabled || traversalEnabled) return;
     clearTimeout(autoTimer);
-    autoTimer = setTimeout(() => {
+    autoTimer = setTimeout(async () => {
+      if (!autoEnabled || traversalEnabled) return;
       try {
-        const capture = buildCapture();
+        const capture = await buildPreparedCapture({ includeTabs: true });
         const identity = `${capture.experienceId}|${capture.pageIdentity}|${capture.bodyMarkdown.length}`;
         if (identity === lastAutoIdentity) return;
         lastAutoIdentity = identity;
@@ -343,20 +610,65 @@
     }, AUTO_CAPTURE_DELAY_MS);
   }
 
+  function scheduleTraversalSnapshot() {
+    if (!traversalEnabled || traversalBusy) return;
+    clearTimeout(traversalTimer);
+    traversalTimer = setTimeout(async () => {
+      if (!traversalEnabled || traversalBusy) return;
+      traversalBusy = true;
+      try {
+        const snapshot = await traversalSnapshot();
+        const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;
+        if (identity === lastTraversalIdentity) return;
+        lastTraversalIdentity = identity;
+        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);
+      } catch {
+        // Wait for the next stable render instead of navigating from a transition shell.
+      } finally {
+        traversalBusy = false;
+      }
+    }, TRAVERSAL_SETTLE_MS);
+  }
+
+  function resumeTraversal() {
+    if (traversalEnabled) scheduleTraversalSnapshot();
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === `${MESSAGE_PREFIX}capture-now`) {
-      try {
-        sendResponse({ ok: true, capture: buildCapture() });
-      } catch (error) {
-        sendResponse({ ok: false, error: String(error?.message || error || 'Capture failed.') });
-      }
-      return false;
+      buildPreparedCapture({ includeTabs: true })
+        .then((capture) => sendResponse({ ok: true, capture }))
+        .catch((error) => sendResponse({ ok: false, error: String(error?.message || error || 'Capture failed.') }));
+      return true;
     }
     if (message?.type === `${MESSAGE_PREFIX}set-auto`) {
       autoEnabled = message.enabled === true;
-      if (autoEnabled) scheduleAutoCapture();
+      if (autoEnabled && !traversalEnabled) scheduleAutoCapture();
       else clearTimeout(autoTimer);
       sendResponse({ ok: true, enabled: autoEnabled });
+      return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
+      traversalEnabled = message.enabled === true;
+      lastTraversalIdentity = '';
+      if (traversalEnabled) {
+        clearTimeout(autoTimer);
+        scheduleTraversalSnapshot();
+      } else {
+        clearTimeout(traversalTimer);
+        if (autoEnabled) scheduleAutoCapture();
+      }
+      sendResponse({ ok: true, enabled: traversalEnabled });
+      return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {
+      const target = safeTraversalUrl(message.url, findExperienceId());
+      if (!target) {
+        sendResponse({ ok: false, error: 'SniperPlug refused an unsafe, credential-bearing, cross-origin, or cross-experience traversal target.' });
+        return false;
+      }
+      sendResponse({ ok: true, navigating: target });
+      setTimeout(() => location.assign(target), 0);
       return false;
     }
     if (message?.type === `${MESSAGE_PREFIX}probe-now`) {
@@ -370,6 +682,7 @@
   const observer = new MutationObserver(() => {
     registerCandidate();
     scheduleAutoCapture();
+    scheduleTraversalSnapshot();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
@@ -377,12 +690,18 @@
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      lastTraversalIdentity = '';
       registerCandidate();
       scheduleAutoCapture();
+      scheduleTraversalSnapshot();
     }
   }, 700);
 
-  globalThis.__sniperplugBetterContentCapture = { registerCandidate, candidateSummary };
+  globalThis.__sniperplugBetterContentCapture = {
+    registerCandidate,
+    candidateSummary,
+    resumeTraversal,
+  };
   registerCandidate();
   setTimeout(registerCandidate, 900);
   setTimeout(registerCandidate, 2200);

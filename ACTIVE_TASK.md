@@ -1,43 +1,77 @@
 # Active Task
 
-## Current state
-COMPLETE AND MERGED — Whop account switching reliability hotfix shipped in PR #67. No implementation task is currently active.
+## Active task / outcome
+PR #68 — turn the Better Content Firefox extension into a resilient authorized content-sync engine so an owner can open a rendered directory once and capture all accessible guides without manually opening every page.
 
-## User-visible failure addressed
-Pressing **Switch Whop account** could appear to reconnect the exact same Whop account instead of moving to a different account.
+## Scope
+In scope for this task:
+- recursive rendered-directory/category/subcategory traversal;
+- safe same-origin/same-experience navigation and section scope;
+- lazy/collapsed/tabbed content preparation, bounded scrolling, and image settling;
+- persisted queue/traversal state with Firefox Android interruption recovery;
+- bounded per-page retries and exact failure diagnostics;
+- stable page/content fingerprinting, dedupe, and new/changed/unchanged detection;
+- live progress, safe stop/resume, and one-click automatic handoff;
+- server-safe sequential batch handoff with transient retry;
+- extension version/update awareness;
+- regression coverage, packaging, final diff/review cleanup, merge, and post-merge validation.
 
-## Root cause
-- PR #65 already added the correct server-side same-account switch guard: a deliberate switch records the Whop user being left in a signed short-lived callback cookie, and the OAuth callback rejects/revokes that same user if Whop browser SSO returns it again.
-- `control-center/index.html` was still loading `control-center-v2.js?v=20260823.1`.
-- `functions/_middleware.js` serves versioned Control Center assets as `public, max-age=31536000, immutable`, so browsers could legally keep the August runtime for up to a year.
-- The first PR verification run then exposed a stale regression assertion in `tools/audit-control-mobile-flow.mjs` that incorrectly required the canonical runtime to remain on that August cache key.
+Out of scope / backlog:
+- readers for unrelated Whop app families that are not already authorized by the existing reader registry;
+- scheduled/background rescans while no authorized rendered Whop session is open;
+- unrelated Control Center/importer redesigns.
 
-## Execution path preserved
-- The Control Center's **Switch Whop account** action calls the authenticated `/api/whop-switch` POST.
-- The switch endpoint disconnects the saved Whop identity and records the identity being left in the signed switch-intent callback cookie.
-- The subsequent OAuth callback rejects/revokes the connection if Whop browser SSO returns that same identity.
-- No guessed Whop account-picker parameter, retry loop, fallback auth path, or duplicate switch implementation was added.
+## Status
+READY FOR FINAL MERGE GATE — implementation scope is complete and the expanded implementation head `73e2f8ecd11c53c5b6897cd72a33d178e8766baf` passed its full exact-head validation. This task-record update is bookkeeping only; its resulting exact head must repeat the required checks before merge.
 
-## Changes merged
-- `control-center/index.html` now loads `control-center-v2.js?v=20260906.2`, forcing browsers off the stale immutable runtime.
-- `tools/audit-control-mobile-flow.mjs` still pins the two unchanged group-recovery assets to `v=20260823.1`, while separately requiring the canonical runtime's account-switch-safe `v=20260906.2` key.
-- PR #67 was squash-merged to `main` as `9437681cd9453802a842fe8c0a9694fb66eb49aa`.
+## Root cause / findings
+- The original fallback reader was deliberately DOM-only and passive: it captured only a guide the user had already opened.
+- The first PR #68 implementation added safe automatic traversal, but final review showed more was required for a complete sync path: passive auto-capture could race traversal, session-only state could not survive browser restart, slow/lazy pages had no robust retry/preparation, and a repeat scan could not distinguish changed content from unchanged content.
+- The server remains the authoritative browser-capture validator for current account/Whop access, supported reader/origin verification, the 25-page request limit, per-page and total-byte limits, private-draft import, and protection for reviewed/published/rejected/removed work. The extension deliberately does not duplicate those server policy limits.
 
-## Validation
-- Initial PR head `a7a0dea55d5d668b06e6a503a0fbe42b2d55931d`: **Verify SniperPlug #1079 failed** because the stale mobile-flow assertion rejected the correct runtime cache bust.
-- Repaired implementation head `f51ba090f70f5f5e183b4dd879afb092a4a6bcd6`: **Verify SniperPlug #1081 passed**; Cloudflare Pages and Vercel Preview Comments also passed.
-- Final PR head `902e92a5f2892a2c731e926bbbf6359e7d9979f4`: **Verify SniperPlug #1082 passed** and Cloudflare Pages deployed successfully.
-- Post-merge `main` commit `9437681cd9453802a842fe8c0a9694fb66eb49aa`: **Verify SniperPlug #1083 passed**, **Verify production guide privacy #98 passed**, **Verify affiliate-ready production #94 passed**, and **Cloudflare Pages passed/deployed**.
-- PR #67 had no inline review threads or submitted reviews outstanding at merge.
+## Execution path
+1. User opens the authorized Whop Better Content directory in Firefox.
+2. The real HTTPS `*.apps.whop.com` frame registers as the only capture candidate; the top-level Whop shell remains ineligible.
+3. Capture all disables passive capture, prepares the rendered DOM, discovers safe links, and recursively traverses the selected scope.
+4. Background orchestration persists sanitized traversal/queue state, retries bounded failures, fingerprints captures, and queues only new/changed pages.
+5. Successful handoff opens the signed-in SniperPlug Control Center; the relay sends the queue in unchanged server-safe batches.
+6. Only after every batch succeeds does the extension commit sync fingerprints and clear the queue.
 
-## Cleanup and conflicts
-- Runtime implementation scope remained limited to the Control Center cache key and its directly conflicting regression assertion.
-- No temporary/debug code, unrelated redesign, compatibility shim, duplicate logic, or secret-bearing change was introduced.
-- The merged PR diff was rechecked before merge and contained only `control-center/index.html`, `tools/audit-control-mobile-flow.mjs`, and this task record.
+## Changes
+- Extension version: 0.2.0.
+- Render preparation opens safe details/expanders, scrolls boundedly for lazy rendering, waits for visible images, and captures bounded tab-panel content/links.
+- Traversal rejects credential-bearing URLs instead of rewriting and navigating them.
+- Recursive links remain confined to the exact app origin, Whop experience, and optional section path.
+- Capture-all suspends Capture-as-I-browse to prevent directory-shell races.
+- Traversal/queue/pending/history data uses extension local storage with session fallback for compatibility and stores no Whop credentials.
+- Interrupted tabs preserve progress for automatic reattachment to the same authorized experience.
+- Slow/empty pages get at most three retries; skipped pages/reasons remain visible.
+- Stable capture keys + content fingerprints classify new/changed/unchanged/duplicate pages; unchanged pages are not re-sent.
+- Sync history is committed only after the entire handoff succeeds.
+- Popup exposes scope, live progress, retries/failures, stop/resume, automatic handoff, and installed/latest extension version.
+- Relay preserves the server's 25-page authority, sends larger queues sequentially, and retries only transient 429/5xx responses.
+- `browser-extension-version.json` provides the current/minimum compatible extension version from SniperPlug's own origin.
+
+## Validation / results
+- Earlier first-generation traversal head `476ecd75822278534e031d99c439753bf9383a5c`: Verify SniperPlug #1085 passed its repository suite and Firefox Android packaging, while its two Vercel deployment statuses failed only because Vercel hit its build-rate limit.
+- Expanded implementation head `73e2f8ecd11c53c5b6897cd72a33d178e8766baf`: **Verify SniperPlug #1086 passed**, including the full repository build/regression suite, Firefox Android XPI packaging, and artifact upload.
+- Exact-head Firefox artifact `sniperplug-firefox-android-xpi` was uploaded successfully with SHA-256 `f2bbceca802f3a63a1823d0d6106fe8ce958ad63613e18b67312b32b3e8d0c6f`.
+- **Verify affiliate-ready preview #135 passed** and **Verify retired public deal routes #137 passed** on the expanded exact head.
+- Cloudflare Pages deployed the expanded exact head successfully.
+- Both Vercel project deployments passed on the expanded exact head, and Vercel Preview Comments reported zero unresolved feedback.
+- Final review inspection found no inline review threads and no submitted reviews.
+- Final changed-file scope is limited to the extension, its version contract/documentation/regressions, `package.json` audit wiring, and this active-task record. No server capture limit was weakened.
+
+## Cleanup / conflicts
+- No cookie permission, `<all_urls>`, Whop token forwarding, Whop browser-storage credential read, or Better Content private-API probing was introduced.
+- No second crawler or alternate authorization path was introduced; the existing PR #68 traversal path was completed and consolidated.
+- The server remains authoritative for capture-size/request validation, avoiding a second drift-prone policy implementation in the extension.
+- No debug code, conflict markers, secret-bearing changes, or unrelated application redesigns were found in the final scoped diff inspection.
 
 ## Blockers / risks
-- No known blocker remains for PR #67.
-- Live behavior still depends on Whop's own browser session/account selection, but SniperPlug now refuses the same Whop identity during a deliberate switch instead of silently accepting it again.
+- Live Better Content markup can evolve. Traversal therefore relies on semantic rendered links and bounded safe controls rather than undocumented private endpoints.
+- DOM-only capture cannot perform a scheduled rescan while the authorized content is not rendered in an open browser session; that remains backlog rather than a credential workaround.
+- A server-rejected capture (for example an oversized single page) remains in the extension queue for retry because pending/history cleanup occurs only after complete successful handoff.
 
 ## Next step
-Select the next implementation task separately; do not mix unrelated work into this completed PR #67 record.
+Require the bookkeeping-only exact head created by this update to repeat the repository-native build/regression suite, Firefox Android package/upload, preview/deployment checks, and final review-thread/diff gate. If green, squash-merge PR #68 using the exact head SHA, then verify the resulting `main` commit before declaring the task complete.

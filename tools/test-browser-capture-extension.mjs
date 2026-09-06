@@ -41,22 +41,29 @@ assert.ok(!/\bfetch\s*\(/.test(captureScript), 'The Whop content script must rem
 assert.ok(captureScript.includes('bodyMarkdown') && captureScript.includes('MutationObserver'), 'Rendered DOM extraction or navigation-aware capture is missing.');
 assert.ok(captureScript.includes('function safeCurrentFrameUrl') && captureScript.includes("location.protocol !== 'https:'"), 'Firefox current-frame HTTPS fallback moved outside the extractor or lost its scheme check.');
 assert.ok(captureScript.includes('__sniperplugBetterContentCapture') && captureScript.includes('registerCandidate'), 'Dynamic reinjection can create duplicate capture observers instead of reprobeing the existing frame.');
+assert.ok(captureScript.includes('function safeTraversalUrl') && captureScript.includes("url.origin !== location.origin"), 'Capture-all navigation escaped the same rendered app origin.');
+assert.ok(captureScript.includes('discoverTraversalTargets') && captureScript.includes('location.assign(target)'), 'Capture-all no longer discovers and opens rendered guide links.');
 assert.ok(!captureScript.includes('Object.defineProperty(globalThis, \'URL\'') && !captureScript.includes('SniperPlugURL'), 'The global URL constructor is being monkeypatched again.');
 
-assert.ok(background.includes('MAX_QUEUE = 25') && background.includes('sniperplug:auto-capture'), 'Bounded multi-page capture queue is missing.');
+assert.ok(background.includes('MAX_QUEUE = 120') && background.includes('MAX_QUEUE_BODY_CHARS = 4_000_000'), 'Bounded multi-page capture queue is missing or too small for automatic traversal.');
+assert.ok(background.includes("TRAVERSAL_KEY = 'sniperplugTraversalTabs'") && background.includes('MAX_TRAVERSAL_VISITS = 240'), 'Automatic traversal is not bounded and resumable across frame navigation.');
 assert.ok(background.includes('bestCandidateAcrossTabs') && background.includes('WHOP_TAB_PATTERNS'), 'Mobile capture still depends only on the tab where the extension popup was opened.');
 assert.ok(background.includes('verifyCandidate') && background.includes("type: 'sniperplug:probe-now'"), 'Known-good Firefox candidates are not actively verified before reuse.');
 assert.ok(!background.includes('await clearCandidatesForTab(tab.id);'), 'Popup recovery still deletes a working candidate before probing it.');
 assert.ok(background.includes('chrome.webNavigation?.getAllFrames') && background.includes('frameIds: [frameId]'), 'Firefox does not inventory and target the exact app frame before broad fallback.');
 assert.ok(background.includes('APP_FRAME_SETTLE_MS = 4000'), 'Firefox Android app-frame recovery is still using the brittle short settle window.');
 assert.ok(background.includes('target: { tabId, allFrames: true }'), 'Last-resort all-frame recovery was removed instead of remaining as a bounded fallback.');
+assert.ok(background.includes("message?.type === 'sniperplug:start-traversal'") && background.includes("message?.type === 'sniperplug:traversal-page'"), 'Background no longer orchestrates automatic rendered-page traversal.');
 assert.ok(background.includes("message?.type === 'sniperplug:open-whop'") && popup.includes("type: 'sniperplug:open-whop'"), 'Mobile UI cannot open/focus Whop inside Firefox when no browser tab is available.');
 assert.ok(popupHtml.includes('id="openWhop"') && popup.includes('native Whop app is separate from Firefox'), 'The mobile popup does not clearly distinguish Firefox-rendered Whop from the native Whop app.');
+assert.ok(popupHtml.includes('id="crawl"') && popup.includes("type: 'sniperplug:start-traversal'"), 'The popup no longer exposes Capture all guides.');
 assert.ok(relay.includes("fetch('/api/browser-capture'") && relay.includes("credentials: 'same-origin'"), 'Captured content is not handed off through the signed-in SniperPlug page.');
+assert.ok(relay.includes('MAX_CAPTURE_BATCH_COUNT = 25') && relay.includes('captureBatches'), 'Large extension queues are not split into server-safe browser capture requests.');
 assert.ok(!relay.includes('api.whop.com') && !background.includes('api.whop.com'), 'The extension must not impersonate the SniperPlug OAuth client or call Whop APIs directly.');
 assert.ok(endpoint.includes('requireControlAccount') && endpoint.includes('requireWhopSession') && endpoint.includes('requireSameOrigin'), 'Browser capture endpoint is not protected by current account entitlement, Whop, and same-origin checks.');
 assert.ok(endpoint.includes('importBrowserCaptures(context.env, account, whop, body)'), 'Browser capture drops the authenticated tenant principal before persistence.');
 assert.ok(endpoint.includes('requireWhopAppFrameCaptures'), 'Server preflight no longer rejects captures outside HTTPS Whop app frames.');
+assert.ok(service.includes('const MAX_CAPTURES_PER_BATCH = 25'), 'Server browser-capture limit was weakened instead of keeping chunking in the relay.');
 assert.ok(service.includes('inspectWhopApp') && service.includes('browserCaptureMatchesReader'), 'Server no longer binds rendered captures to the canonical app-reader decision and Whop app-frame boundary.');
 assert.ok(service.includes("captureMethod: 'extension-dom'") && service.includes("status = 'draft'"), 'Browser capture is not constrained to the private draft path.');
 assert.ok(service.includes('changed-published-held') && service.includes('changed-reviewed-held') && service.includes('removed-held'), 'A later browser capture can still overwrite published, reviewed, or removed work.');
@@ -91,6 +98,11 @@ assert.throws(
   'The browser bridge lost the existing republishing-rights confirmation gate.',
 );
 assert.equal(validateBrowserCaptureBatch({ rightsConfirmed: true, captures: [normalized] }).length, 1);
+assert.throws(
+  () => validateBrowserCaptureBatch({ rightsConfirmed: true, captures: Array.from({ length: 26 }, () => normalized) }),
+  /at most 25 captured pages/i,
+  'Server browser-capture batch limit was weakened instead of relying on client-side chunking.',
+);
 
 const betterMetadata = {
   id: BETTER_CONTENT_APP_ID,
@@ -149,9 +161,11 @@ await assert.rejects(
 
 console.log('\nAUTHORIZED WHOP APP BROWSER CAPTURE REGRESSION PASSED\n');
 console.log('✓ Extension remains rendered-DOM only and requests no cookie or blanket-host permission.');
+console.log('✓ Capture-all stays same-origin/same-experience and never probes Better Content private APIs.');
 console.log('✓ Firefox preserves and verifies working candidates instead of deleting them during popup recovery.');
 console.log('✓ Server resolves the exact app reader and constrains each capture to Whop’s HTTPS app-frame boundary.');
 console.log('✓ Real instance-specific Better Content hosts remain valid while exact Experience/app identity is reverified separately.');
 console.log('✓ Verified Content-family apps can use the same safe rendered reader; lookalike/unverified apps fail closed.');
+console.log('✓ Large extension queues are chunked while the server keeps its 25-page safety limit.');
 console.log('✓ Captures remain private drafts with reviewed/published/removed work protected.');
 console.log('✓ Sensitive query credentials are removed from stored capture URLs and image metadata.');
