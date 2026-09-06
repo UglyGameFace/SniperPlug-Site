@@ -15,34 +15,6 @@
   const actions = editor.querySelector('.editor-actions');
   const heading = editor.querySelector('.editor-heading');
 
-  const style = document.createElement('style');
-  style.dataset.sniperplugPublishFeedback = '';
-  style.textContent = `
-    .editor-publish-state{display:flex;align-items:center;justify-content:space-between;gap:.9rem;padding:.75rem .85rem;border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(255,255,255,.035)}
-    .editor-publish-state>div{display:grid;gap:.12rem;min-width:0}.editor-publish-state strong{font-size:1rem;color:var(--text)}.editor-publish-state span{color:var(--muted);font-size:.92rem;line-height:1.35}
-    .editor-publish-state[data-state="draft"]{border-color:rgba(255,209,102,.28);background:rgba(255,209,102,.055)}
-    .editor-publish-state[data-state="published"]{border-color:rgba(104,227,132,.42);background:rgba(104,227,132,.08)}
-    .editor-publish-state[data-state="published"] strong{color:var(--brand)}
-    .editor-publish-state[data-state="rejected"]{border-color:rgba(255,105,97,.34);background:rgba(255,105,97,.065)}
-    .editor-action-status{margin:.15rem 0;padding:.68rem .8rem}
-    .editor-heading [data-editor-status]{display:inline-flex;align-items:center;min-height:1.8rem;padding:.3rem .58rem;border:1px solid rgba(255,255,255,.13);border-radius:999px;background:rgba(255,255,255,.045);font-weight:900;letter-spacing:.02em}
-    .draft-editor textarea[name="body"]{height:min(36vh,420px);min-height:260px;max-height:54vh;resize:vertical}
-    .draft-editor .editor-actions{align-items:center}
-    .draft-editor .guide-options{border:1px solid rgba(255,255,255,.1);border-radius:14px;background:#0d1421;overflow:hidden}
-    .draft-editor .guide-options>summary{padding:.75rem .85rem;cursor:pointer;font-weight:800;color:var(--muted)}
-    .draft-editor .guide-options>.rights-check{margin:.65rem;border:0;background:rgba(255,255,255,.025)}
-    .draft-editor[data-guide-status="published"] input:disabled,.draft-editor[data-guide-status="published"] textarea:disabled,.draft-editor[data-guide-status="published"] select:disabled{opacity:.62;cursor:not-allowed;background:rgba(13,20,33,.6);border-color:rgba(104,227,132,.16)}
-    .draft-editor[data-guide-status="rejected"] input:disabled,.draft-editor[data-guide-status="rejected"] textarea:disabled,.draft-editor[data-guide-status="rejected"] select:disabled{opacity:.56;cursor:not-allowed}
-    .draft-editor[data-guide-status="published"] .exact-preview{opacity:.82}
-    @media(max-width:1000px),(pointer:coarse){
-      .draft-editor textarea[name="body"]{height:min(34vh,400px);min-height:250px;max-height:48vh}
-      .draft-editor .editor-actions{position:sticky;bottom:max(.55rem,env(safe-area-inset-bottom));z-index:12;padding:.65rem;border:1px solid rgba(255,255,255,.11);border-radius:16px;background:#0b111c;box-shadow:0 10px 28px rgba(0,0,0,.34)}
-      .draft-editor .editor-actions>*{min-height:48px;flex:1 1 145px}
-    }
-    @media(max-width:620px){.editor-publish-state{display:grid}.editor-publish-state .btn{width:100%;text-align:center}}
-  `;
-  document.head.append(style);
-
   const statePanel = document.createElement('section');
   statePanel.className = 'editor-publish-state';
   statePanel.dataset.editorPublishState = '';
@@ -60,7 +32,7 @@
   actionStatus.className = 'control-status editor-action-status';
   actionStatus.dataset.editorActionStatus = '';
   actionStatus.setAttribute('role', 'status');
-  actionStatus.setAttribute('aria-live', 'assertive');
+  actionStatus.setAttribute('aria-live', 'polite');
   actionStatus.hidden = true;
   actions?.before(actionStatus);
 
@@ -83,6 +55,7 @@
   function setActionStatus(text, type = 'ok') {
     actionStatus.textContent = String(text || '');
     actionStatus.dataset.type = type;
+    actionStatus.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
     actionStatus.hidden = !text;
     if (!/^(Publishing|Saving)\b/.test(actionStatus.textContent.trim())) stopActionWatch();
   }
@@ -98,7 +71,7 @@
         return;
       }
       if (Date.now() - startedAt >= 125_000) {
-        setActionStatus('SniperPlug did not receive a confirmed result. Refresh the saved guide status before retrying so the action is not submitted twice.', 'error');
+        setActionStatus('No result was confirmed. Refresh this guide before trying again so the same change is not submitted twice.', 'error');
         return;
       }
       actionWatchTimer = setTimeout(poll, 250);
@@ -260,7 +233,7 @@
       if (dirty) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        setActionStatus('Not published. Save your current changes first so the version you reviewed is exactly the version that goes live.', 'warning');
+        setActionStatus('Not published. Save your changes first so the reviewed version is the version that goes live.', 'warning');
         if (saveButton instanceof HTMLButtonElement) saveButton.focus({ preventScroll: true });
         return;
       }
@@ -293,13 +266,13 @@
       const current = currentStatus();
       if (mode === 'saved') {
         markClean();
-        setActionStatus('Draft saved. It is still private and has not been published yet.', 'ok');
+        setActionStatus('Draft saved. It remains private.', 'ok');
       } else if (mode === 'status') {
         dirty = false;
         clearRecovery();
         markClean({ clearBackup: false });
         if (current === 'published') {
-          setActionStatus('Published successfully. SniperPlug confirmed the guide is now available in Private Guides.', 'ok');
+          setActionStatus('Published. The guide is now available in Private Guides.', 'ok');
           if (statusFilter instanceof HTMLSelectElement && statusFilter.value !== 'published') {
             statusFilter.value = 'published';
             statusFilter.dispatchEvent(new Event('change', { bubbles: true }));
