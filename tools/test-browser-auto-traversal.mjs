@@ -13,7 +13,7 @@ const popupHtml = readFileSync(join(root, 'browser-extension/popup.html'), 'utf8
 const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
 const versionContract = JSON.parse(readFileSync(join(root, 'browser-extension-version.json'), 'utf8'));
 
-assert.equal(manifest.version, '0.2.0', 'Authorized content-sync extension version was not bumped.');
+assert.equal(manifest.version, '0.2.1', 'Authorized content-sync extension version was not bumped.');
 assert.equal(versionContract.latest, manifest.version, 'Published extension-version contract drifted from the packaged manifest.');
 assert.ok(captureScript.includes('function discoverTraversalTargets') && captureScript.includes('function safeTraversalUrl'), 'The DOM reader does not discover bounded safe traversal targets.');
 assert.ok(captureScript.includes("url.origin !== location.origin") && captureScript.includes('targetExperience !== experienceId'), 'Traversal lost same-origin or same-experience confinement.');
@@ -29,6 +29,9 @@ assert.ok(background.includes('MAX_QUEUE = 120') && background.includes('MAX_QUE
 assert.ok(background.includes("message?.type === 'sniperplug:start-traversal'") && background.includes("message?.type === 'sniperplug:traversal-page'"), 'Background traversal orchestration messages are missing.');
 assert.ok(popupHtml.includes('id="crawl"') && popupHtml.includes('id="crawlScope"') && popupHtml.includes('id="sendWhenDone"'), 'Firefox popup is missing capture-all scope or one-click handoff controls.');
 assert.ok(popup.includes("type: 'sniperplug:start-traversal'") && popup.includes('crawlCanResume'), 'Firefox popup does not start/resume Capture all guides.');
+assert.ok(popupHtml.includes('role="progressbar"') && popupHtml.includes('id="crawlProgressBar"') && popupHtml.includes('id="crawlProgressPercent"'), 'Firefox popup is missing the visible Capture-all progress bar or percentage readout.');
+assert.ok(popup.includes('function crawlProgressState') && popup.includes('Math.max(discovered, finished + remaining)') && popup.includes("status === 'running' ? 99 : 100"), 'Capture-all progress is not derived from authoritative known crawler work or can claim 100% before completion.');
+assert.ok(popup.includes("removeAttribute('aria-valuenow')") && popup.includes("setAttribute('aria-valuenow'") && popupHtml.includes('prefers-reduced-motion'), 'Progress accessibility or reduced-motion behavior regressed.');
 assert.ok(relay.includes('MAX_CAPTURE_BATCH_COUNT = 25') && relay.includes('captureBatches') && relay.includes('MAX_TRANSIENT_RETRIES = 2'), 'Large queues are not split/retried in server-safe browser-capture batches.');
 
 const storageState = Object.create(null);
@@ -107,7 +110,7 @@ const context = {
       },
     },
     runtime: {
-      getManifest: () => ({ version: '0.2.0' }),
+      getManifest: () => ({ version: '0.2.1' }),
       onMessage: { addListener: (listener) => { runtimeListener = listener; } },
     },
     tabs: {
@@ -299,4 +302,4 @@ console.log('✓ Recursive capture stays same-origin, same-experience, sensitive
 console.log('✓ Empty/slow pages receive bounded retries instead of silent loss.');
 console.log('✓ Traversal/queue progress survives an interrupted Firefox Android tab and resumes on the replacement tab.');
 console.log('✓ Successful imports commit content fingerprints so unchanged pages are skipped on later syncs.');
-console.log('✓ Lazy-render preparation, progress diagnostics, one-click handoff, and server-safe batching remain wired in.');
+console.log('✓ True visible progress, lazy-render preparation, diagnostics, one-click handoff, and server-safe batching remain wired in.');
