@@ -30,15 +30,17 @@
     <section class="card">
       <strong id="pageTitle">Looking for Better Content…</strong>
       <span class="meta" id="pageMeta"></span>
-      <p id="pageDetail">Open an individual Better Content guide inside Whop in Firefox Nightly.</p>
+      <p id="pageDetail">Open the Better Content directory or an individual guide inside Whop in Firefox Nightly.</p>
       <button id="openWhop" type="button" hidden>Open Whop in Firefox</button>
     </section>
+    <button id="crawl" class="primary" type="button">Capture all guides</button>
     <div class="row">
-      <button id="capture" class="primary" type="button">Capture page</button>
-      <button id="auto" type="button">Auto-capture: off</button>
+      <button id="capture" type="button">Capture page</button>
+      <button id="auto" type="button">Capture as I browse: off</button>
     </div>
     <section class="card">
       <strong id="queueCount">0 pages queued</strong>
+      <span class="meta" id="crawlMeta"></span>
       <ul id="queueTitles"></ul>
       <button id="clear" type="button">Clear queue</button>
     </section>
