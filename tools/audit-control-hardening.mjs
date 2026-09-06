@@ -21,6 +21,8 @@ const runtime = read('assets/js/control-center-v2.js');
 const subscriberUi = read('assets/js/control-center-subscriber.js');
 const html = read('control-center/index.html');
 const controlCss = read('assets/css/control-center.css');
+const journeyCss = read('assets/css/control-center-journey.css');
+const publishingCss = read('assets/css/control-center-publishing.css');
 const hardeningCss = read('assets/css/control-center-hardening.css');
 const discoveryCss = read('assets/css/whop-discovery.css');
 const historyCss = read('assets/css/bulk-history.css');
@@ -76,9 +78,13 @@ assert.ok(publish.includes('publishHoldReason'), 'Quarantined or expired imports
 assert.ok(lifecycle.includes('beforeunload'), 'Unsaved edits are not protected during navigation.');
 assert.ok(lifecycle.includes('localStorage') && lifecycle.includes('draft-recovery'), 'Draft recovery copies are not stored locally.');
 assert.ok(lifecycle.includes('confirmDiscard') && lifecycle.includes('.draft-item'), 'Switching guides can bypass the unsaved-change confirmation.');
-assert.ok(html.includes('/assets/js/control-center-lifecycle.js'), 'Draft safety script is not loaded.');
-assert.ok(html.includes('/assets/js/control-center-subscriber.js?v=20260905.1'), 'Subscriber account presentation is not loaded.');
-assert.ok(subscriberUi.includes('[data-owner-only]') && !subscriberUi.includes('MutationObserver'), 'Subscriber UI does not enforce owner-only presentation through bounded lifecycle events.');
+assert.ok(html.includes('/assets/js/control-center-lifecycle.js?v=20260906.1'), 'Draft safety script is not cache-busted with the final UX pass.');
+assert.ok(html.includes('/assets/js/control-center-subscriber.js?v=20260906.1'), 'Subscriber account presentation is not cache-busted with the final UX pass.');
+assert.ok(!lifecycle.includes("document.createElement('style')"), 'Lifecycle runtime injects presentation CSS.');
+assert.ok(!subscriberUi.includes("document.createElement('style')"), 'Subscriber runtime injects presentation CSS.');
+assert.ok(journeyCss.includes('html[data-sniperplug-account-kind="subscriber"] [data-owner-only]'), 'Subscriber owner-only visibility is not owned by canonical CSS.');
+assert.ok(publishingCss.includes('.editor-publish-state') && publishingCss.includes('.draft-editor textarea[name="body"]'), 'Guide lifecycle presentation is not owned by canonical publishing CSS.');
+assert.ok(subscriberUi.includes('subscriberCopy') && !subscriberUi.includes('MutationObserver'), 'Subscriber UI does not enforce owner-only presentation through bounded lifecycle events.');
 
 assert.ok(html.includes('data-source-search') && html.includes('data-source-filter'), 'Source search and filtering controls are missing.');
 assert.ok(runtime.includes('setGroupExpanded') && runtime.includes("dataset.action = 'group-toggle'"), 'Large source groups cannot be collapsed.');
@@ -86,6 +92,9 @@ assert.ok(html.includes('data-draft-search') && html.includes('data-draft-status
 assert.ok(html.includes('data-bulk-job-panel') && html.includes('data-resume-bulk-job'), 'Resumable job status controls are missing.');
 assert.ok(html.includes('data-progress-bar') && html.includes('data-progress-timeline'), 'Interactive progress details are missing.');
 assert.ok(html.includes('data-undo-selected-actions') && html.includes('data-undo-all-actions'), 'Recent-action recovery controls are missing.');
+assert.ok(html.includes('class="media-usage-details"') && html.includes('<summary>Usage details</summary>'), 'Technical media counters are not progressively disclosed.');
+assert.ok(html.includes('aria-label="Guide list"'), 'Guide list lacks an accessible name.');
+assert.ok(!/class="publish-ready-visual"[^>]*aria-hidden="true"/.test(html), 'Publishing evidence hides a focusable link from assistive technology.');
 
 assert.ok(html.includes('class="source-summary"') && html.includes('/assets/js/control-center-v2.js'), 'Compact source decision summary is not loaded.');
 assert.ok(runtime.includes('renderSourceSummary') && runtime.includes('Manage sources'), 'The connection panel still repeats every source decision.');
@@ -145,7 +154,6 @@ console.log('✓ Optional cleanup cannot block the Control Center.');
 console.log('✓ Bulk source work persists in D1 and resumes after refreshes, logins, or dropped connections.');
 console.log('✓ Manual and bulk publishing block internal, temporary, expired, quarantined, and unverified content.');
 console.log('✓ Unsaved draft edits warn before destructive actions and keep a local recovery copy.');
-console.log('✓ One delegated runtime handles collapsed source groups and cached source and draft filtering.');
+console.log('✓ Canonical static CSS owns account and guide lifecycle presentation.');
 console.log('✓ Dynamic Control Center modules stay in normal document flow at every viewport.');
-console.log('✓ Interactive progress and 48-hour undo controls stack cleanly on narrow screens.');
-console.log('✓ Public guides support search, category filters, result counts, and pagination.');
+console.log('✓ Progressive diagnostics and guide list semantics stay accessible.');
