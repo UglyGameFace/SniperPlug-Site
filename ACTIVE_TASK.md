@@ -1,17 +1,17 @@
 # Active Task
 
 ## Active task / outcome
-Make the Better Content Firefox extension popup open and become usable quickly instead of blocking on slow candidate recovery, navigation recovery, or extension-version network work.
+PR #70 — make the Better Content Firefox extension popup open and become usable quickly instead of blocking on slow candidate recovery, navigation recovery, or extension-version network work.
 
 ## Scope
 Completed in this task:
 - traced the popup open path from `popup.js` through `sniperplug:popup-state`;
 - removed deep candidate recovery, version-network refresh, and stale traversal retry/backoff from the popup-state critical path;
-- preserved the existing reliable Firefox Android candidate recovery path for actions that actually need a verified frame;
+- preserved the reliable Firefox Android candidate recovery path for actions that actually need a verified frame;
 - added visible background-recovery status plus short popup repolling while a cold candidate is being found;
 - added a hard latency regression plus updated cached/cold candidate recovery coverage;
 - bumped the Firefox extension to `0.2.2` and updated the version contract;
-- ran repository-native regression/build, Firefox Android packaging, preview workflows, deployment checks, and PR review inspection on the implementation head.
+- completed exact-head PR validation, merge, and post-merge `main` validation.
 
 Out of scope / backlog:
 - changing Better Content traversal/capture behavior;
@@ -19,7 +19,7 @@ Out of scope / backlog:
 - unrelated Control Center/importer work.
 
 ## Status
-VALIDATED — implementation head `88b233a5e5363eef08b6e963817e153f17057c57` passed the full merge gate. This task-record-only commit must also pass the repository checks before merge so the final PR head is validated exactly.
+COMPLETE AND MERGED — PR #70 was squash-merged into `main` as `804ece13741c5d40c14b1afa6b3f7302ace32608` after final PR head `c046593cbd3a713c53c693e36b4edeceab6e5e2c` passed the merge gate. Post-merge `main` validation also passed.
 
 ## Findings / root cause
 - `popup.js` waits for `sniperplug:popup-state` before its first dynamic render.
@@ -46,38 +46,44 @@ VALIDATED — implementation head `88b233a5e5363eef08b6e963817e153f17057c57` pas
 - Popup state uses cached candidate metadata only when its tab is still present among current Whop tabs.
 - Added `candidateRecoveryPending` to popup state.
 - Popup displays immediate recovery feedback and repolls at 300 ms while recovery is active; normal crawl polling remains 900 ms.
-- Preserved `APP_FRAME_SETTLE_MS = 4000` and the existing exact-frame-then-broad-fallback recovery path rather than weakening Firefox Android reliability to make a benchmark look prettier.
+- Preserved `APP_FRAME_SETTLE_MS = 4000` and the existing exact-frame-then-broad-fallback recovery path instead of weakening Firefox Android reliability.
 - Extension version advanced from `0.2.1` to `0.2.2`; minimum compatible version remains `0.2.0`.
 - Added `tools/test-browser-popup-latency.mjs` and wired it into the normal audit/build chain.
-- Candidate-retention regression now proves opening with cached state does not synchronously probe/frame-inventory, while capture actions still verify before use.
-- Exact-frame selection regression now proves cold recovery is asynchronous and becomes visible on the next popup state poll.
+- Candidate-retention regression proves opening with cached state does not synchronously probe/frame-inventory, while capture actions still verify before use.
+- Exact-frame selection regression proves cold recovery is asynchronous and becomes visible on the next popup state poll.
 
 ## Validation / results
-Implementation head `88b233a5e5363eef08b6e963817e153f17057c57`:
-- **Verify SniperPlug #1093 passed**, including the full repository audit/regression suite.
-- Firefox Android extension packaging and artifact upload passed in the same workflow.
-- New popup latency regression is part of the full audit chain. It intentionally leaves both Firefox frame inventory and the extension-version fetch unresolved; popup-state must still return from cached/local state within its 250 ms regression ceiling.
-- **Verify affiliate-ready preview #138 passed**.
-- **Verify retired public deal routes #142 passed**.
+Final PR head `c046593cbd3a713c53c693e36b4edeceab6e5e2c`:
+- **Verify SniperPlug #1094 passed**, including the complete repository audit/regression suite, Firefox Android XPI packaging, and artifact upload.
+- **Verify affiliate-ready preview #139 passed**.
+- **Verify retired public deal routes #143 passed**.
 - Cloudflare Pages preview deployment passed.
-- Firefox Android artifact `sniperplug-firefox-android-xpi` was produced on the exact implementation head; artifact ZIP digest: `sha256:8465020e92606e5c538234122cf6749c9f6616a1f172ac3d138788bc5b80737e`.
-- No inline PR review threads and no submitted PR reviews are outstanding.
-- The two Vercel statuses are account quota failures (`api-deployments-free-per-day` / `build-rate-limit`), not application build or regression failures.
+- No inline PR review threads and no submitted reviews were outstanding.
+- The immediately preceding implementation head `88b233a5e5363eef08b6e963817e153f17057c57` independently passed **Verify SniperPlug #1093**, preview/route smoke workflows, and Cloudflare Pages.
+
+Post-merge `main` commit `804ece13741c5d40c14b1afa6b3f7302ace32608`:
+- **Verify SniperPlug #1095 passed**, including the full repository audit/regression suite and Firefox Android packaging/upload.
+- **Verify production guide privacy #104 passed**.
+- **Verify affiliate-ready production #100 passed**.
+- **Verify retired public deal routes #144 passed**.
+- Post-merge Firefox Android artifact `sniperplug-firefox-android-xpi` ZIP digest: `sha256:c58637b9af19559bcea6b1a3571cc28e750d414a32446ea426a391c7a9cdd1f7`.
+- The two Vercel deployments remain rejected by the account's daily/free build quota, not by application build or regression failures.
 
 ## Cleanup / conflicts
-- Final changed-file set is limited to the active-task record, extension popup/background implementation, patch-version metadata, audit wiring, and directly affected regressions.
+- Final code change set is limited to the extension popup/background path, patch-version metadata, audit wiring, and directly affected regressions.
 - No second crawler, candidate store, authorization path, retry implementation, or compatibility shim was introduced.
 - Existing command-time candidate verification remains authoritative.
 - Existing traversal limits, retry limits, capture limits, Whop authorization boundaries, content readers, and server handoff policy are unchanged.
 - No cookie permission, token forwarding, private-API probing, debug bypass, conflict marker, secret-bearing behavior, or unrelated Control Center/importer redesign was introduced.
 
 ## Blockers / risks
+- No implementation blocker remains for PR #70.
 - A cold popup may briefly show `Finding Better Content…` while the real frame is recovered, but the popup itself no longer waits for that slow work before becoming visible/usable.
 - Cached candidate metadata can be briefly optimistic. Correctness is still enforced by authoritative command-time verification before capture/traversal/auto actions.
-- Vercel remains externally rate-limited until the account quota resets or plan changes. GitHub regression workflows and Cloudflare deployment are green.
+- Vercel remains externally rate-limited until the account quota resets or plan changes; GitHub regression workflows and Cloudflare deployment are green.
 
 ## Backlog
 None discovered for this task.
 
 ## Next step
-Wait for repository-native checks on this final task-record head. If they pass with no new review findings, merge PR #70 and run post-merge main validation before declaring the task complete.
+No additional implementation work remains for PR #70. Install the new Firefox Android `0.2.2` XPI for runtime confirmation on the user's device; any unrelated request is a separate task.
