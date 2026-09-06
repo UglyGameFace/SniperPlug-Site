@@ -10,25 +10,14 @@
   const bulkSummary = root.querySelector('[data-bulk-workflow-summary]');
   const bulkButton = root.querySelector('[data-bulk-publish]');
   const draftStatus = root.querySelector('[data-draft-status-filter]');
-  const accountStyle = document.createElement('style');
   let accountKind = '';
   let syncPromise = null;
-
-  accountStyle.dataset.sniperplugSubscriberUi = '';
-  accountStyle.textContent = `
-    html[data-sniperplug-account-kind="subscriber"] [data-owner-only] { display: none !important; }
-    html[data-sniperplug-account-kind="subscriber"] [data-subscriber-only] { display: initial; }
-    [data-subscriber-only] { display: none; }
-    .subscriber-login-card { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border, rgba(255,255,255,.12)); }
-    .subscriber-login-card p { margin: .35rem 0 .75rem; }
-    .subscriber-login-card small { display: block; margin-top: .55rem; opacity: .78; line-height: 1.45; }
-  `;
-  document.head.append(accountStyle);
 
   function setMessage(element, message, type = 'ok') {
     if (!(element instanceof HTMLElement)) return;
     element.textContent = String(message || '');
     element.dataset.type = type;
+    element.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
     element.hidden = !message;
   }
 
@@ -45,7 +34,7 @@
     if (subscriberStatus instanceof HTMLElement) {
       subscriberStatus.hidden = false;
       subscriberStatus.dataset.type = 'ok';
-      subscriberStatus.textContent = 'Paid subscriber workspace · Whop access verified · imports and drafts are isolated to this account. Public SniperPlug publishing remains owner-only.';
+      subscriberStatus.textContent = 'Subscriber workspace · Whop access verified · your imports and drafts are isolated to this account. Publishing stays owner-only.';
     }
 
     const heroEyebrow = root.querySelector('.control-hero .eyebrow');
