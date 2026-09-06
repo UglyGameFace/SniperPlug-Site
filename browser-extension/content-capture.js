@@ -12,17 +12,24 @@
 
   if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
     globalThis.__sniperplugBetterContentCapture.registerCandidate();
+    globalThis.__sniperplugBetterContentCapture.resumeTraversal?.();
     return;
   }
 
   const MESSAGE_PREFIX = 'sniperplug:';
   const MAX_CANDIDATES = 1200;
+  const MAX_TRAVERSAL_TARGETS_PER_PAGE = 220;
   const MIN_CAPTURE_CHARS = 80;
   const AUTO_CAPTURE_DELAY_MS = 1200;
+  const TRAVERSAL_SETTLE_MS = 950;
   const SENSITIVE_QUERY_KEY = /(?:token|auth|jwt|session|signature|secret|password|code|state|key)/i;
+  const BLOCKED_TRAVERSAL_PATH = /\/(?:api|oauth|auth|login|logout|sign-?out|account|settings|admin|billing|checkout|purchase|support|contact)(?:\/|$)/i;
   let autoEnabled = false;
   let autoTimer = 0;
   let lastAutoIdentity = '';
+  let traversalEnabled = false;
+  let traversalTimer = 0;
+  let lastTraversalIdentity = '';
 
   function normalizeSpace(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
@@ -62,6 +69,21 @@
     }
   }
 
+  function safeTraversalUrl(value, experienceId = '') {
+    const safe = safeHttpUrl(value);
+    if (!safe) return '';
+    try {
+      const url = new URL(safe);
+      if (url.protocol !== 'https:' || url.origin !== location.origin || !isWhopAppHost(url.hostname)) return '';
+      if (BLOCKED_TRAVERSAL_PATH.test(url.pathname)) return '';
+      const targetExperience = String(url.pathname || '').match(/\bexp_[A-Za-z0-9_-]+\b/)?.[0] || '';
+      if (experienceId && targetExperience && targetExperience !== experienceId) return '';
+      return url.toString();
+    } catch {
+      return '';
+    }
+  }
+
   function elementVisible(element) {
     if (!(element instanceof Element)) return true;
     if (element.hidden || element.getAttribute('aria-hidden') === 'true') return false;
@@ -79,6 +101,17 @@
     const marker = `${element.id || ''} ${element.className || ''}`.toLowerCase();
     if (/\b(?:sidebar|side-nav|navbar|navigation|toolbar|breadcrumb|footer|cookie-banner|modal|popover|tooltip)\b/.test(marker)) return true;
     return !elementVisible(element);
+  }
+
+  function traversalElementExcluded(element) {
+    if (!(element instanceof Element) || !elementVisible(element)) return true;
+    const excludedAncestor = element.closest('nav,aside,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="toolbar"],[role="dialog"],[role="alertdialog"]');
+    if (excludedAncestor) return true;
+    for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
+      const marker = `${node.id || ''} ${node.className || ''}`.toLowerCase();
+      if (/\b(?:sidebar|side-nav|navbar|navigation|toolbar|breadcrumb|footer|cookie-banner|modal|popover|tooltip)\b/.test(marker)) return true;
+    }
+    return false;
   }
 
   function textLength(element) {
@@ -307,6 +340,54 @@
     };
   }
 
+  function discoverTraversalTargets(root = selectContentRoot()) {
+    const experienceId = findExperienceId();
+    const currentUrl = safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
+    const seen = new Set();
+    const candidates = [];
+    const elements = [...root.querySelectorAll('a[href],[role="link"][href],[data-href],[data-url]')];
+    for (const element of elements) {
+      if (candidates.length >= MAX_TRAVERSAL_TARGETS_PER_PAGE || traversalElementExcluded(element)) continue;
+      const raw = element.getAttribute('href') || element.getAttribute('data-href') || element.getAttribute('data-url') || '';
+      const url = safeTraversalUrl(raw, experienceId);
+      if (!url || url === currentUrl || seen.has(url)) continue;
+      const label = normalizeSpace(
+        element.getAttribute('aria-label')
+        || element.getAttribute('title')
+        || element.innerText
+        || element.textContent,
+      ).slice(0, 180);
+      if (!label || /^(?:home|account|settings|support|contact support|sign out|log out)$/i.test(label)) continue;
+      seen.add(url);
+      candidates.push({ url, title: label });
+    }
+
+    const expPath = experienceId ? `/experiences/${experienceId}/` : '';
+    const scoped = expPath ? candidates.filter((target) => {
+      try { return new URL(target.url).pathname.includes(expPath); } catch { return false; }
+    }) : [];
+    return scoped.length ? scoped : candidates;
+  }
+
+  function traversalSnapshot() {
+    const root = selectContentRoot();
+    const targets = discoverTraversalTargets(root);
+    const paragraphChars = [...root.querySelectorAll('p')]
+      .reduce((sum, paragraph) => sum + normalizeSpace(paragraph.innerText || paragraph.textContent).length, 0);
+    const richBlocks = root.querySelectorAll('pre,table,blockquote').length;
+    const directoryLike = targets.length >= 3 && paragraphChars < 420 && richBlocks === 0;
+    let capture = null;
+    try { capture = buildCapture(); } catch { /* Directory and transition shells are allowed during traversal. */ }
+    return {
+      experienceId: findExperienceId(),
+      pageUrl: safeHttpUrl(location.href) || currentAppFrameFallbackUrl(),
+      title: pageTitle(root),
+      directoryLike,
+      targets,
+      capture,
+    };
+  }
+
   function candidateSummary() {
     const root = selectContentRoot();
     return {
@@ -343,6 +424,26 @@
     }, AUTO_CAPTURE_DELAY_MS);
   }
 
+  function scheduleTraversalSnapshot() {
+    if (!traversalEnabled) return;
+    clearTimeout(traversalTimer);
+    traversalTimer = setTimeout(() => {
+      try {
+        const snapshot = traversalSnapshot();
+        const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}`;
+        if (identity === lastTraversalIdentity) return;
+        lastTraversalIdentity = identity;
+        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);
+      } catch {
+        // Wait for the next stable render instead of navigating from a transition shell.
+      }
+    }, TRAVERSAL_SETTLE_MS);
+  }
+
+  function resumeTraversal() {
+    if (traversalEnabled) scheduleTraversalSnapshot();
+  }
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === `${MESSAGE_PREFIX}capture-now`) {
       try {
@@ -359,6 +460,24 @@
       sendResponse({ ok: true, enabled: autoEnabled });
       return false;
     }
+    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
+      traversalEnabled = message.enabled === true;
+      lastTraversalIdentity = '';
+      if (traversalEnabled) scheduleTraversalSnapshot();
+      else clearTimeout(traversalTimer);
+      sendResponse({ ok: true, enabled: traversalEnabled });
+      return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {
+      const target = safeTraversalUrl(message.url, findExperienceId());
+      if (!target) {
+        sendResponse({ ok: false, error: 'SniperPlug refused an unsafe or cross-experience traversal target.' });
+        return false;
+      }
+      sendResponse({ ok: true, navigating: target });
+      setTimeout(() => location.assign(target), 0);
+      return false;
+    }
     if (message?.type === `${MESSAGE_PREFIX}probe-now`) {
       registerCandidate();
       sendResponse({ ok: true });
@@ -370,6 +489,7 @@
   const observer = new MutationObserver(() => {
     registerCandidate();
     scheduleAutoCapture();
+    scheduleTraversalSnapshot();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 
@@ -377,12 +497,18 @@
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      lastTraversalIdentity = '';
       registerCandidate();
       scheduleAutoCapture();
+      scheduleTraversalSnapshot();
     }
   }, 700);
 
-  globalThis.__sniperplugBetterContentCapture = { registerCandidate, candidateSummary };
+  globalThis.__sniperplugBetterContentCapture = {
+    registerCandidate,
+    candidateSummary,
+    resumeTraversal,
+  };
   registerCandidate();
   setTimeout(registerCandidate, 900);
   setTimeout(registerCandidate, 2200);
