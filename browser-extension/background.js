@@ -18,6 +18,7 @@ const CANDIDATE_TTL_MS = 10 * 60_000;
 const APP_FRAME_SETTLE_MS = 4000;
 const APP_FRAME_POLL_MS = 100;
 const VERSION_CACHE_MS = 6 * 60 * 60_000;
+const POPUP_RECOVERY_COOLDOWN_MS = 5000;
 const SENSITIVE_QUERY_KEY = /(?:token|auth|jwt|session|signature|secret|password|code|state|key)/i;
 const BLOCKED_TRAVERSAL_PATH = /\/(?:api|oauth|auth|login|logout|sign-?out|account|settings|admin|billing|checkout|purchase|support|contact)(?:\/|$)/i;
 const PRESENTATION_QUERY_KEY = /^(?:view|theme|embed|ref|from|source)$/i;
@@ -28,6 +29,10 @@ const WHOP_TAB_PATTERNS = [
 ];
 const traversalLocks = new Map();
 const traversalTimers = new Map();
+const popupRecoveryJobs = new Map();
+const popupRecoveryLastAttempt = new Map();
+const staleTraversalRepairJobs = new Map();
+let versionRefreshJob = null;
 
 function sessionStore() {
   return chrome.storage?.session;
@@ -475,6 +480,26 @@ async function resolveCandidate(preferredTabId = null, openTabs = null) {
     };
   }
   return { candidate: null, usingRecentTab: false };
+}
+
+function popupRecoveryKey(preferredTabId) {
+  return Number.isInteger(preferredTabId) ? String(preferredTabId) : 'any';
+}
+
+function scheduleCandidateRecovery(openTabs, preferredTabId) {
+  const key = popupRecoveryKey(preferredTabId);
+  if (popupRecoveryJobs.has(key)) return true;
+  const lastAttempt = Math.max(0, Number(popupRecoveryLastAttempt.get(key) || 0));
+  if (lastAttempt && Date.now() - lastAttempt < POPUP_RECOVERY_COOLDOWN_MS) return false;
+  let job;
+  job = resolveCandidate(preferredTabId, openTabs)
+    .catch(() => null)
+    .finally(() => {
+      if (popupRecoveryJobs.get(key) === job) popupRecoveryJobs.delete(key);
+      popupRecoveryLastAttempt.set(key, Date.now());
+    });
+  popupRecoveryJobs.set(key, job);
+  return true;
 }
 
 function captureIdentity(capture) {
@@ -1106,8 +1131,24 @@ function compareVersions(left, right) {
   return 0;
 }
 
+function installedExtensionVersion() {
+  return String(chrome.runtime?.getManifest?.()?.version || 'unknown');
+}
+
+async function cachedExtensionVersionState() {
+  const installed = installedExtensionVersion();
+  const cached = await readSession(VERSION_KEY, null);
+  const fresh = Boolean(cached?.checkedAt && Date.now() - Number(cached.checkedAt) < VERSION_CACHE_MS);
+  return {
+    value: cached
+      ? { installed, ...cached }
+      : { installed, updateAvailable: false, incompatible: false, latest: '', minimum: '', notes: '', checkedAt: 0 },
+    stale: !fresh,
+  };
+}
+
 async function extensionVersionState() {
-  const installed = String(chrome.runtime?.getManifest?.()?.version || 'unknown');
+  const installed = installedExtensionVersion();
   const cached = await readSession(VERSION_KEY, null);
   if (cached?.checkedAt && Date.now() - Number(cached.checkedAt) < VERSION_CACHE_MS) return { installed, ...cached };
   if (typeof fetch !== 'function') return { installed, updateAvailable: false, latest: '', minimum: '', checkedAt: 0 };
@@ -1132,6 +1173,40 @@ async function extensionVersionState() {
   }
 }
 
+function scheduleExtensionVersionRefresh() {
+  if (versionRefreshJob) return;
+  let job;
+  job = extensionVersionState()
+    .catch(() => null)
+    .finally(() => {
+      if (versionRefreshJob === job) versionRefreshJob = null;
+    });
+  versionRefreshJob = job;
+}
+
+function scheduleStaleTraversalRepair(targetTabId, candidate, traversal) {
+  if (!Number.isInteger(targetTabId)
+    || !traversal?.enabled
+    || !traversal.currentTarget?.startedAt
+    || Date.now() - Number(traversal.currentTarget.startedAt) <= TRAVERSAL_NAV_TIMEOUT_MS) return false;
+  if (staleTraversalRepairJobs.has(targetTabId)) return true;
+  let job;
+  job = withTraversalLock(targetTabId, async () => {
+    const latest = await traversalForTab(targetTabId, candidate);
+    if (latest?.enabled
+      && latest.currentTarget?.startedAt
+      && Date.now() - Number(latest.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS) {
+      await retryOrSkipCurrent(latest, 'Recovered a stale in-progress navigation while reopening the extension.');
+    }
+  })
+    .catch(() => null)
+    .finally(() => {
+      if (staleTraversalRepairJobs.get(targetTabId) === job) staleTraversalRepairJobs.delete(targetTabId);
+    });
+  staleTraversalRepairJobs.set(targetTabId, job);
+  return true;
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const run = async () => {
     if (message?.type === 'sniperplug:candidate') {
@@ -1153,16 +1228,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message?.type === 'sniperplug:popup-state') {
       const preferredTabId = Number(message.tabId);
-      const [openWhopTabs, autoTabs, version] = await Promise.all([
+      const normalizedPreferredTabId = Number.isInteger(preferredTabId) ? preferredTabId : null;
+      const [openWhopTabs, autoTabs, versionSnapshot, cachedResolved] = await Promise.all([
         whopTabs(),
         readSession(AUTO_KEY, {}),
-        extensionVersionState(),
+        cachedExtensionVersionState(),
+        bestCandidateAcrossTabs(normalizedPreferredTabId),
       ]);
-      const { candidate, usingRecentTab } = await resolveCandidate(
-        Number.isInteger(preferredTabId) ? preferredTabId : null,
-        openWhopTabs,
-      );
-      const targetTabId = candidate?.tabId ?? (Number.isInteger(preferredTabId) ? preferredTabId : null);
+      if (versionSnapshot.stale) scheduleExtensionVersionRefresh();
+
+      const openWhopTabIds = new Set(openWhopTabs.map((tab) => Number(tab?.id)).filter(Number.isInteger));
+      const cachedCandidate = cachedResolved.candidate;
+      const candidate = cachedCandidate && openWhopTabIds.has(Number(cachedCandidate.tabId)) ? cachedCandidate : null;
+      const usingRecentTab = Boolean(candidate && Number.isInteger(normalizedPreferredTabId) && candidate.tabId !== normalizedPreferredTabId);
+      const candidateRecoveryPending = !candidate && openWhopTabs.length > 0
+        ? scheduleCandidateRecovery(openWhopTabs, normalizedPreferredTabId)
+        : false;
+      const targetTabId = candidate?.tabId ?? normalizedPreferredTabId;
       const traversal = Number.isInteger(targetTabId) ? await traversalForTab(targetTabId, candidate) : null;
       if (candidate && traversal && traversal.tabId !== targetTabId) {
         const oldTabId = Number(traversal.tabId);
@@ -1171,14 +1253,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         await saveTraversal(traversal);
         if (Number.isInteger(oldTabId)) await migrateQueue(oldTabId, targetTabId);
       }
-      if (traversal?.enabled && traversal.currentTarget?.startedAt && Date.now() - Number(traversal.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS) {
-        await retryOrSkipCurrent(traversal, 'Recovered a stale in-progress navigation while reopening the extension.');
-      }
-      const queue = Number.isInteger(targetTabId) ? await queueForTab(targetTabId) : [];
-      const candidates = Number.isInteger(targetTabId) ? await candidatesForTab(targetTabId) : [];
+      scheduleStaleTraversalRepair(targetTabId, candidate, traversal);
+      const [queue, candidates] = Number.isInteger(targetTabId)
+        ? await Promise.all([queueForTab(targetTabId), candidatesForTab(targetTabId)])
+        : [[], []];
       return {
         ok: true,
         candidate,
+        candidateRecoveryPending,
         candidateCount: candidates.length,
         targetTabId,
         usingRecentTab,
@@ -1186,7 +1268,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         queueCount: queue.length,
         queuedTitles: queue.slice(-8).map((item) => item.title),
         autoEnabled: Number.isInteger(targetTabId) && autoTabs[String(targetTabId)] === true && !traversal?.enabled,
-        extensionVersion: version,
+        extensionVersion: versionSnapshot.value,
         ...traversalPublicState(traversal),
       };
     }
@@ -1218,6 +1300,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  popupRecoveryJobs.delete(String(tabId));
+  popupRecoveryLastAttempt.delete(String(tabId));
+  staleTraversalRepairJobs.delete(tabId);
   Promise.all([
     clearCandidatesForTab(tabId),
     readSession(AUTO_KEY, {}).then((autoTabs) => {
@@ -1246,6 +1331,7 @@ if (chrome.webNavigation?.onCommitted?.addListener) {
     const tabId = Number(details?.tabId);
     const frameId = Number(details?.frameId);
     if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return;
+    popupRecoveryLastAttempt.delete(String(tabId));
     if (frameId === 0) clearCandidatesForTab(tabId).catch(() => null);
     else removeCandidate(tabId, frameId).catch(() => null);
   });

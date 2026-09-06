@@ -31,6 +31,7 @@ let preferredTabId = null;
 let pollTimer = 0;
 let state = {
   candidate: null,
+  candidateRecoveryPending: false,
   queueCount: 0,
   autoEnabled: false,
   queuedTitles: [],
@@ -160,6 +161,11 @@ function render() {
     elements.pageMeta.textContent = 'The native Whop app is separate from Firefox.';
     elements.pageDetail.textContent = 'Tap Open Whop in Firefox, sign in there, then open Hidden Files → Make Money Here.';
     elements.openWhop.hidden = false;
+  } else if (state.candidateRecoveryPending) {
+    elements.pageTitle.textContent = 'Finding Better Content…';
+    elements.pageMeta.textContent = `${state.whopTabCount} Whop tab${state.whopTabCount === 1 ? '' : 's'} found in Firefox.`;
+    elements.pageDetail.textContent = 'The popup is ready. SniperPlug is checking the rendered Whop app frame in the background; keep this popup open for a moment.';
+    elements.openWhop.hidden = true;
   } else {
     elements.pageTitle.textContent = 'Whop is open, but Better Content is not rendered yet';
     elements.pageMeta.textContent = `${state.whopTabCount} Whop tab${state.whopTabCount === 1 ? '' : 's'} found in Firefox.`;
@@ -200,8 +206,12 @@ function render() {
 
 function schedulePoll() {
   clearTimeout(pollTimer);
-  if (!state.crawlEnabled) return;
-  pollTimer = setTimeout(() => refresh().catch(() => null), 900);
+  const recoveringCandidate = state.candidateRecoveryPending === true;
+  if (!state.crawlEnabled && !recoveringCandidate) return;
+  pollTimer = setTimeout(
+    () => refresh().catch(() => null),
+    state.crawlEnabled ? 900 : 300,
+  );
 }
 
 async function refresh() {

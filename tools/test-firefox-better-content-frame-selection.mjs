@@ -12,7 +12,7 @@ const background = read('browser-extension/background.js');
 const captureScript = read('browser-extension/content-capture.js');
 const captureApi = read('functions/api/browser-capture.js');
 
-assert.equal(manifest.version, '0.2.1', 'Firefox authorized-sync package version was not bumped.');
+assert.equal(manifest.version, '0.2.2', 'Firefox authorized-sync package version was not bumped.');
 assert.ok(manifest.permissions.includes('webNavigation'), 'Firefox frame inventory permission is missing.');
 assert.deepEqual(
   manifest.content_scripts?.[0]?.matches,
@@ -25,9 +25,10 @@ assert.ok(appGuard >= 0 && idempotentGuard > appGuard, 'App-frame validation mus
 assert.ok(captureScript.includes("if (!APP_FRAME_HOST || location.protocol !== 'https:') return;"), 'Non-HTTPS or non-app Whop frames are not rejected before DOM extraction.');
 assert.ok(background.includes("candidate?.likelyAppFrame !== true || !isWhopAppHost(candidate?.host)"), 'Background candidate storage still accepts the Whop shell.');
 assert.ok(background.includes('const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);'), 'The current top-level Whop exp_ ID is not linked to the app frame.');
-assert.ok(background.includes('verifyCandidate') && !background.includes('await clearCandidatesForTab(tab.id);'), 'Popup recovery can still erase a known-good app-frame candidate before verifying it.');
+assert.ok(background.includes('verifyCandidate') && !background.includes('await clearCandidatesForTab(tab.id);'), 'Candidate recovery can still erase a known-good app-frame candidate before verifying it.');
 assert.ok(background.includes('chrome.webNavigation?.getAllFrames') && background.includes('frameIds: [frameId]'), 'Firefox recovery does not target the exact app frame discovered by browser frame inventory.');
 assert.ok(background.includes('APP_FRAME_SETTLE_MS = 4000'), 'Mobile app-frame recovery window is too short for a loaded Firefox Android tab.');
+assert.ok(background.includes('scheduleCandidateRecovery') && background.includes('candidateRecoveryPending'), 'Popup candidate recovery is not asynchronous anymore.');
 assert.ok(captureApi.includes('requireWhopAppFrameCaptures(body)'), 'The server API does not independently reject shell-frame captures.');
 
 const appUrl = 'https://mfk8y74zmein6tne8o5e.apps.whop.com/experiences/exp_rpaFYR2AD7Mb9d/pages/profit';
@@ -107,6 +108,7 @@ const context = {
       },
     },
     runtime: {
+      getManifest: () => ({ version: '0.2.2' }),
       onMessage: {
         addListener: (listener) => { runtimeListener = listener; },
       },
@@ -200,6 +202,12 @@ await dispatch({
   },
 }, { tab: whopTab, frameId: 0 });
 
+const initialPopupState = await dispatch({ type: 'sniperplug:popup-state', tabId: whopTab.id });
+assert.equal(initialPopupState.ok, true);
+assert.equal(initialPopupState.candidate, null, 'A cold popup should not block until frame recovery completes.');
+assert.equal(initialPopupState.candidateRecoveryPending, true, 'Cold popup did not report asynchronous frame recovery.');
+
+await new Promise((resolve) => setTimeout(resolve, 10));
 const popupState = await dispatch({ type: 'sniperplug:popup-state', tabId: whopTab.id });
 assert.equal(popupState.ok, true);
 assert.equal(popupState.candidate?.host, 'mfk8y74zmein6tne8o5e.apps.whop.com', 'The Whop shell outranked the actual Better Content iframe.');
@@ -221,7 +229,7 @@ assert.match(rejectedShellCapture.error, /did not come from the rendered Better 
 
 console.log('\nFIREFOX BETTER CONTENT FRAME SELECTION REGRESSION PASSED\n');
 console.log('✓ Top-level whop.com shell candidate is ignored even when it carries the exp_ ID.');
-console.log('✓ Current Whop tab exp_ identity is attached to the real *.apps.whop.com frame.');
-console.log('✓ Firefox frame inventory targets frame 4 directly rather than clearing/rebuilding every frame.');
-console.log('✓ Verified app-frame candidates survive popup recovery and Capture page targets the same frame.');
+console.log('✓ Cold popup state returns before frame recovery and reports that recovery is pending.');
+console.log('✓ Firefox frame inventory still targets frame 4 and the recovered candidate appears on the next popup poll.');
+console.log('✓ Capture page re-verifies and targets the recovered frame ID.');
 console.log('✓ Shell-frame capture payloads are rejected by both extension queue and server preflight.');

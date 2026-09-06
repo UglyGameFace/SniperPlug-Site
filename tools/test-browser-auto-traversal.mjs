@@ -13,7 +13,7 @@ const popupHtml = readFileSync(join(root, 'browser-extension/popup.html'), 'utf8
 const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
 const versionContract = JSON.parse(readFileSync(join(root, 'browser-extension-version.json'), 'utf8'));
 
-assert.equal(manifest.version, '0.2.1', 'Authorized content-sync extension version was not bumped.');
+assert.equal(manifest.version, '0.2.2', 'Authorized content-sync extension version was not bumped.');
 assert.equal(versionContract.latest, manifest.version, 'Published extension-version contract drifted from the packaged manifest.');
 assert.ok(captureScript.includes('function discoverTraversalTargets') && captureScript.includes('function safeTraversalUrl'), 'The DOM reader does not discover bounded safe traversal targets.');
 assert.ok(captureScript.includes("url.origin !== location.origin") && captureScript.includes('targetExperience !== experienceId'), 'Traversal lost same-origin or same-experience confinement.');
@@ -110,7 +110,7 @@ const context = {
       },
     },
     runtime: {
-      getManifest: () => ({ version: '0.2.1' }),
+      getManifest: () => ({ version: '0.2.2' }),
       onMessage: { addListener: (listener) => { runtimeListener = listener; } },
     },
     tabs: {
@@ -187,7 +187,6 @@ assert.equal(directory.ok, true);
 assert.deepEqual(navigationRequests, [guide1Url]);
 assert.equal(directory.crawlCaptured, 0, 'Directory shell should not be captured.');
 
-// First render is empty: bounded retry should navigate to the same target again instead of silently skipping it.
 const retry = await dispatch({
   type: 'sniperplug:traversal-page',
   snapshot: {
@@ -218,7 +217,6 @@ assert.equal(first.ok, true);
 assert.equal(first.crawlNew, 1);
 assert.deepEqual(navigationRequests, [guide1Url, guide1Url, guide2Url]);
 
-// Simulate Firefox/Android killing the tab midway. Persistent traversal state must survive and attach to the new tab id.
 await removedListener(77);
 await new Promise((resolve) => setTimeout(resolve, 5));
 activeTabId = 88;
@@ -248,7 +246,6 @@ assert.equal(popupState.queueCount, 2);
 assert.deepEqual(Array.from(popupState.queuedTitles), ['Guide One', 'Guide Two']);
 assert.equal(navigationRequests.some((url) => url.includes('evil.example.com') || url.includes('exp_other') || url.includes('token=')), false);
 
-// Successful handoff commits fingerprints. A later scan should recognize unchanged pages and queue nothing.
 const pending = await dispatch({ type: 'sniperplug:prepare-send', tabId: 88, rightsConfirmed: true });
 assert.equal(pending.ok, true);
 await dispatch({ type: 'sniperplug:clear-pending', pendingId: pending.pendingId, success: true });
@@ -279,7 +276,6 @@ assert.equal(unchanged2.crawlUnchanged, 2);
 popupState = await dispatch({ type: 'sniperplug:popup-state', tabId: 88 });
 assert.equal(popupState.queueCount, 0, 'Unchanged sync pages should not be re-queued.');
 
-// Section scope must reject a same-experience link outside the chosen path.
 const nestedDirectory = `${directoryUrl}/category-a`;
 await registerCandidate(88, nestedDirectory, 'Category A');
 started = await dispatch({ type: 'sniperplug:start-traversal', tabId: 88, scope: 'section' });
