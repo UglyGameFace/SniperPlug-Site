@@ -8,6 +8,7 @@ const read = (path) => readFileSync(join(root, path), 'utf8');
 
 const page = read('control-center/index.html');
 const lifecycle = read('assets/js/control-center-lifecycle.js');
+const publishingStyles = read('assets/css/control-center-publishing.css');
 const control = read('assets/js/control-center-v2.js');
 const integrityFix = read('assets/js/control-center-integrity-fix.js');
 const networkGuard = read('assets/js/control-center-network-guard.js');
@@ -16,10 +17,11 @@ const guides = read('functions/_lib/guides.js');
 const publish = read('functions/_lib/publish.js');
 
 assert.ok(
-  page.includes('/assets/js/control-center-lifecycle.js?v=20260905.3')
+  page.includes('/assets/js/control-center-lifecycle.js?v=20260906.1')
+    && page.includes('/assets/css/control-center-publishing.css?v=20260906.1')
     && page.includes('/assets/js/control-center-integrity-fix.js?v=20260905.3')
     && !page.includes('control-center-editor-clarity.js'),
-  'Control Center does not load the cache-busted consolidated guide lifecycle.',
+  'Control Center does not load the cache-busted consolidated guide lifecycle and canonical presentation CSS.',
 );
 
 assert.ok(
@@ -28,6 +30,7 @@ assert.ok(
     && !lifecycle.includes('editor-lock-message'),
   'The guide editor still has competing persistent status surfaces.',
 );
+assert.ok(!lifecycle.includes("document.createElement('style')"), 'Guide lifecycle runtime injects presentation CSS instead of using the canonical stylesheet.');
 
 for (const copy of [
   'Save changes',
@@ -43,11 +46,12 @@ for (const copy of [
 }
 
 assert.ok(
-  lifecycle.includes('textarea[name="body"]{height:min(36vh,420px)')
-    && lifecycle.includes('position:sticky')
+  publishingStyles.includes('.draft-editor textarea[name="body"]{height:min(36vh,420px)')
+    && publishingStyles.includes('position:sticky')
+    && publishingStyles.includes('height:min(28vh,320px)')
     && page.includes('rows="12"')
     && page.includes('class="exact-preview" hidden'),
-  'The guide editor still lets raw Markdown dominate the tablet/mobile viewport or hides primary actions below it.',
+  'The canonical guide stylesheet no longer bounds the editor or keeps primary actions reachable on tablet/mobile.',
 );
 
 assert.ok(
@@ -130,7 +134,7 @@ assert.ok(
 
 console.log('\nGUIDE PUBLISH / UNPUBLISH LIFECYCLE REGRESSION PASSED\n');
 console.log('✓ One lifecycle owns editor state, labels, dirty feedback, locking, and mobile action layout.');
-console.log('✓ The legacy capture-phase Unpublish workaround and forced page reload are gone.');
+console.log('✓ Presentation CSS is static and canonical instead of being injected by the lifecycle runtime.');
 console.log('✓ Unpublish uses the same versioned guide-status mutation and canonical renderer as Publish.');
 console.log('✓ Dirty drafts still cannot publish stale unsaved edits.');
 console.log('✓ Manual Publish and bulk manual-review policy remain isolated.');
