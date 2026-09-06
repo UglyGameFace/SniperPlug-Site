@@ -1,63 +1,47 @@
 # Active Task
 
 ## Active task / outcome
-Implement issue #60: enable paid subscribers to sign in with Whop, prove current product entitlement, and receive their own tenant-isolated SniperPlug importer workspace without sharing the owner password.
+Redesign and simplify the entire SniperPlug experience from the public site through the Control Center so the information architecture, navigation, hierarchy, mobile behavior, status language, accessibility, and task flows feel like one deliberate product instead of accumulated feature layers.
 
 ## Scope lock
-- Active scope: application account authentication for subscribers, subscriber Whop OAuth bootstrap/callback, exact paid-product entitlement verification, stable principal issuance, Control Center login/account-state UX, importer endpoint authorization, and targeted regressions directly coupled to paid onboarding.
-- Keep the existing owner password login and owner post-login Whop connection flow intact.
-- Reuse the tenant isolation already deployed for sources, posts, guides, browser capture, bulk jobs, recovery, history, and backups. Do not create a second workspace implementation.
-- Keep owner-global actions owner-only, including public-site publication and shared category management.
-- Do not resurrect the removed `customer-pending` authorization model, the deleted `paid-access.js` implementation, the deleted `/api/importer-login` route, global Whop-session adoption, or the old Discord-guild coupling.
-- Subscriber identity must come from verified Whop OIDC identity and exact product entitlement, never email, mutable membership ID, or browser-local state.
-- Fail closed on OAuth correlation failure, missing billing configuration, missing/expired entitlement, or temporary entitlement-verification failure.
+- Active scope: public route architecture and navigation, shared visual/design tokens, homepage and marketing pages, retailer/deal surfaces, legal/error shells, Control Center information architecture, owner/subscriber entry states, source/import/review/publish/recovery flows, loading/empty/error/success states, mobile/tablet layouts, accessibility, terminology, action hierarchy, and removal of redundant presentation/runtime code discovered during the redesign.
+- Preserve all proven security and data boundaries from the importer work: tenant isolation, owner-only public publishing/shared categories/private-guide library, exact Whop entitlement checks, same-origin protections, versioned writes, no blind retries, private media rules, and fail-closed publication gates.
+- Do not create duplicate renderers, duplicate event handlers, second API implementations, or a parallel design system. Improve the existing canonical runtimes and shared CSS layers.
+- Do not change backend behavior merely to make screenshots look cleaner. Backend changes require a concrete UX or correctness reason and matching regressions.
+- Mobile/tablet is a first-class acceptance target, not a later CSS patch.
 
 ## Completed previous task
-- PR #59 **Add authorized Whop app-specific readers** merged into `main` as `4a560c20bcb79cbc3381a9470450b01d24263482`.
-- Exact PR head passed the full Node 22 suite and Firefox Android extension packaging/upload.
-- Post-merge `main` passed **Verify SniperPlug #1047**, Cloudflare production affiliate/visual verification, and production private-guide privacy verification.
-- Issue #25 closed automatically as completed.
+- PR #61 **Enable paid subscriber Control Center onboarding** merged into `main` as `fce18eb6dc212e7b6bd5dd5b805044c31025f426`.
+- Final PR head `68919473a953ef05ccead150cb55366f37f7f3d9` passed **Verify SniperPlug #1057**, affiliate-ready preview #123, retired public route #124, Firefox Android extension packaging/upload, and had no review threads or submitted reviews.
+- Post-merge `main` passed **Verify SniperPlug #1058**, **Verify production guide privacy #88**, **Verify affiliate-ready production #84**, and **Verify retired public deal routes #125**.
+- Issue #60 closed automatically as completed.
+- Paid subscriber access now uses verified Whop OIDC identity plus exact `WHOP_IMPORTER_PRODUCT_ID` entitlement, while owner-global operations remain owner-only.
 
-## Starting state / root cause
-- Starting `main`: `4a560c20bcb79cbc3381a9470450b01d24263482`.
-- Working branch: `feature/paid-subscriber-onboarding`.
-- Issue #60: **Enable paid subscriber Control Center onboarding**.
-- PR #47 already separated stable account `principalId` from per-browser `browserSid` and made Whop connections account-scoped.
-- PR #48 already tenant-scoped importer source/post/guide/bulk/recovery state and prevents subscriber workspaces from publishing into the owner's public guide catalog.
-- `auth.js` deliberately accepted only owner sessions because the earlier unsafe customer auth model was removed in PR #32.
-- `/api/control?action=login` was password-only, and importer API routes still called the owner-only `requireAdmin()` gate even though their underlying workspace operations were already principal-scoped.
-- Whop OAuth start required an existing owner application session. The callback correctly stored the OAuth connection under the principal recorded in the one-time state row, but could not bootstrap a previously unauthenticated paid subscriber because their stable principal is not known until Whop returns verified user identity.
-- Historical paid-access code mixed product access with Discord-guild requirements and used `customer-pending`; both were intentionally removed and were not restored.
+## Starting architecture observations
+- Public styling is layered through `assets/css/site-base.css`, `site-shell.css`, and page-specific files such as `homepage.css`; the Control Center has its own base plus several feature-specific CSS files.
+- `site-base.css` currently owns both foundational tokens and a large collection of component/page rules, which makes global changes easy to overreach.
+- The public header uses horizontally scrolling pill navigation on narrow screens instead of a deliberate mobile navigation pattern.
+- Control Center functionality is intentionally consolidated in canonical runtimes, but the page has accumulated many feature panels and specialized style layers. The redesign must improve hierarchy without reintroducing duplicate state machines.
+- The existing regression suite already protects route safety, public-theme consistency, importer behavior, mobile Control Center behavior, publication lifecycle, security, media, tenant ownership, and site-integrity constraints. The redesign should extend those audits rather than bypass them.
 
-## Implementation / Definition of Done
-- [x] Introduce one canonical account-session reader that can validate both owner and paid-subscriber application sessions while retaining an explicit owner-only wrapper.
-- [x] Derive subscriber principal only from exact Whop user identity (`sub` / compatible verified user ID), with a stable principal namespace that remains the same across devices.
-- [x] Add a dedicated unauthenticated subscriber OAuth bootstrap using PKCE + server state + narrow SameSite=Lax callback correlation without treating pending OAuth as an authenticated app session.
-- [x] Verify current membership for the exact configured `WHOP_IMPORTER_PRODUCT_ID` before issuing a subscriber application cookie or moving OAuth tokens under the subscriber principal.
-- [x] Use the existing membership-status/access semantics consistently and fail closed on missing configuration, denied membership, or transient Whop failure.
-- [x] Keep owner OAuth start/callback behavior unchanged and keep owner Whop switching/disconnect principal-scoped.
-- [x] Persist the verified subscriber Whop connection under the stable subscriber principal so multiple signed-in devices share one account-scoped connection without sharing browser-session identity.
-- [x] Change only importer/workspace routes to accept authenticated subscriber accounts; owner-global routes/actions still require the owner principal.
-- [x] Update Control Center login UX so owner password unlock and paid-subscriber Whop sign-in are visibly distinct and do not masquerade as the same credential flow.
-- [x] Ensure subscriber logout clears only the browser application session; explicit Whop disconnect remains principal-scoped and cannot delete another principal's connection.
-- [x] Add executable regressions for state correlation, stable identity, product entitlement, denied/expired access, multi-device account sessions, cross-principal isolation, owner compatibility, and owner-only publishing/category enforcement.
-- [x] Update runtime configuration example for the exact paid product ID without exposing secrets.
-- [x] Exact-head **Verify SniperPlug #1055**, affiliate-ready preview #121, and retired public deal routes #122 passed on `1528e85ce3628748fb19c4808e4b7c39c9d2e17e` with no review threads or submitted reviews.
-- [ ] Mark PR #61 ready, merge, then require post-merge production validation before closing issue #60.
-
-## Validation evidence
-- Paid subscriber onboarding regression passes stable Whop identity, exact product entitlement, separate OAuth callback correlation, importer/capture/recovery/backup/bulk authorization, and owner-only public publishing.
-- Tenant workspace regression passes deterministic per-principal source/post/guide/browser-capture/bulk/history/backup/recovery isolation.
-- Existing Better Content capture, publish/unpublish, mobile Control Center, bulk completion, guide versioning, recovery ownership, backup/reset/restore, network safety, media, and site-integrity audits remain green on the exact PR head.
-- Affiliate-ready preview and retired public route checks are green on the exact PR head.
+## Definition of Done
+- [ ] Map every user-facing route and group routes by purpose: discovery/marketing, trust/legal, retailer/deal browsing, owner/subscriber access, private guides/media, and error/recovery surfaces.
+- [ ] Audit shared tokens, typography, spacing, radii, controls, cards, status colors, responsive breakpoints, and duplicated component rules before changing visual code.
+- [ ] Map the key journeys: first-time visitor, deal/retailer browser, owner sign-in, paid subscriber sign-in, Whop connection, source discovery, import, review/edit, publish/unpublish, bulk completion, backup/recovery, and failure recovery.
+- [ ] Define one clearer navigation and page hierarchy for desktop, tablet, and phone without hiding important owner/subscriber actions.
+- [ ] Refactor shared visual foundations so global tokens/components are authoritative and page-specific CSS stops compensating for one another.
+- [ ] Improve homepage and public pages for clearer value proposition, trust, primary actions, scanability, and consistent empty/no-live-deal states.
+- [ ] Rework Control Center hierarchy so account/connection state, source selection, import work, review/publish, bulk progress, and recovery are visually and conceptually distinct.
+- [ ] Simplify status and error language so one state has one message surface and technical detail is progressive rather than dumped into the primary workflow.
+- [ ] Make mobile/tablet controls reachable, non-overlapping, appropriately sized, and ordered by task priority; prevent giant text areas/panels from taking over the viewport.
+- [ ] Improve accessibility: visible focus, semantic headings/landmarks, form labels, status announcements, contrast, touch targets, reduced-motion support, and keyboard navigation.
+- [ ] Remove redundant CSS/JS/markup discovered during the redesign only after proving the canonical replacement covers the same behavior.
+- [ ] Add/extend automated UX integrity checks for navigation ownership, duplicate controls, responsive hierarchy, accessibility markers, and canonical asset/runtime loading.
+- [ ] Run exact-head Node 22/full regression plus applicable Cloudflare preview checks, inspect the final diff/review state, merge, then require post-merge production validation.
 
 ## Branch-governance backlog
-- The repository currently reports `main` as unprotected and has no repository rulesets through the connected GitHub surface.
-- The GitHub App still does not expose the repository-administration write needed to configure required checks from this chat, so governance remains a separate blocked administrative item rather than a fabricated code fix.
-
-## Backlog after this task
-- Larger product/brand/UX redesign across the public site and Control Center.
-- Required branch-check governance when repository administration write access is available.
+- `main` remains unprotected through the connected GitHub surface and no repository rulesets are visible.
+- The GitHub App connection still lacks repository-administration write access required to configure mandatory checks, so this remains a separate blocked administrative item.
 
 ## Next step
-Finish PR #61's merge gate, run the post-merge Cloudflare production checks, close issue #60 only after those pass, then transition the active task to the full-site UX/product redesign.
+Finish architecture/token/journey inspection on current `main`, then create the redesign branch and make the first structural pass against shared navigation and design foundations before touching individual page cosmetics.
