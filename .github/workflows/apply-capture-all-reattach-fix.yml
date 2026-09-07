@@ -25,40 +25,42 @@ jobs:
 
           capture_path = Path('browser-extension/content-capture.js')
           capture = capture_path.read_text()
-          old = """    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
-              traversalEnabled = message.enabled === true;
-              lastTraversalIdentity = '';
-              resetTraversalSnapshotSchedule();
-              if (traversalEnabled) {
-                clearTimeout(autoTimer);
-                scheduleTraversalSnapshot();
-              } else if (autoEnabled) {
-                scheduleAutoCapture();
-              }
-              sendResponse({ ok: true, enabled: traversalEnabled });
-              return false;
-            }
-          """
-          new = """    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
-              const nextTraversalEnabled = message.enabled === true;
-              if (nextTraversalEnabled === traversalEnabled) {
-                if (nextTraversalEnabled) resumeTraversal();
-                sendResponse({ ok: true, enabled: traversalEnabled, unchanged: true });
-                return false;
-              }
-              traversalEnabled = nextTraversalEnabled;
-              lastTraversalIdentity = '';
-              resetTraversalSnapshotSchedule();
-              if (traversalEnabled) {
-                clearTimeout(autoTimer);
-                scheduleTraversalSnapshot();
-              } else if (autoEnabled) {
-                scheduleAutoCapture();
-              }
-              sendResponse({ ok: true, enabled: traversalEnabled });
-              return false;
-            }
-          """
+          old = (
+              "    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {\n"
+              "      traversalEnabled = message.enabled === true;\n"
+              "      lastTraversalIdentity = '';\n"
+              "      resetTraversalSnapshotSchedule();\n"
+              "      if (traversalEnabled) {\n"
+              "        clearTimeout(autoTimer);\n"
+              "        scheduleTraversalSnapshot();\n"
+              "      } else if (autoEnabled) {\n"
+              "        scheduleAutoCapture();\n"
+              "      }\n"
+              "      sendResponse({ ok: true, enabled: traversalEnabled });\n"
+              "      return false;\n"
+              "    }\n"
+          )
+          new = (
+              "    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {\n"
+              "      const nextTraversalEnabled = message.enabled === true;\n"
+              "      if (nextTraversalEnabled === traversalEnabled) {\n"
+              "        if (nextTraversalEnabled) resumeTraversal();\n"
+              "        sendResponse({ ok: true, enabled: traversalEnabled, unchanged: true });\n"
+              "        return false;\n"
+              "      }\n"
+              "      traversalEnabled = nextTraversalEnabled;\n"
+              "      lastTraversalIdentity = '';\n"
+              "      resetTraversalSnapshotSchedule();\n"
+              "      if (traversalEnabled) {\n"
+              "        clearTimeout(autoTimer);\n"
+              "        scheduleTraversalSnapshot();\n"
+              "      } else if (autoEnabled) {\n"
+              "        scheduleAutoCapture();\n"
+              "      }\n"
+              "      sendResponse({ ok: true, enabled: traversalEnabled });\n"
+              "      return false;\n"
+              "    }\n"
+          )
           if capture.count(old) != 1:
               raise SystemExit(f'Expected exactly one traversal handler block, found {capture.count(old)}')
           capture_path.write_text(capture.replace(old, new))
@@ -66,13 +68,14 @@ jobs:
           scheduler_path = Path('tools/test-browser-traversal-scheduler.mjs')
           scheduler = scheduler_path.read_text()
           marker = "assert.ok(schedulerSource.includes('if (traversalTimer) return;'), 'Repeated DOM mutations can reset the settle timer again.');\n"
-          addition = """assert.ok(schedulerSource.includes('if (traversalTimer) return;'), 'Repeated DOM mutations can reset the settle timer again.');
-          const reattachGuard = captureScript.indexOf('const nextTraversalEnabled = message.enabled === true;');
-          const reattachNoop = captureScript.indexOf('if (nextTraversalEnabled === traversalEnabled)', reattachGuard);
-          const reattachReset = captureScript.indexOf('resetTraversalSnapshotSchedule();', reattachGuard);
-          assert.ok(reattachGuard >= 0 && reattachNoop > reattachGuard && reattachReset > reattachNoop, 'Repeated traversal reattach can reset the pending scheduler before the idempotence guard.');
-          assert.ok(captureScript.includes('if (nextTraversalEnabled) resumeTraversal();'), 'Repeated enabled traversal reattach no longer preserves the pending scheduler.');
-          """
+          addition = (
+              marker
+              + "const reattachGuard = captureScript.indexOf('const nextTraversalEnabled = message.enabled === true;');\n"
+              + "const reattachNoop = captureScript.indexOf('if (nextTraversalEnabled === traversalEnabled)', reattachGuard);\n"
+              + "const reattachReset = captureScript.indexOf('resetTraversalSnapshotSchedule();', reattachGuard);\n"
+              + "assert.ok(reattachGuard >= 0 && reattachNoop > reattachGuard && reattachReset > reattachNoop, 'Repeated traversal reattach can reset the pending scheduler before the idempotence guard.');\n"
+              + "assert.ok(captureScript.includes('if (nextTraversalEnabled) resumeTraversal();'), 'Repeated enabled traversal reattach no longer preserves the pending scheduler.');\n"
+          )
           if scheduler.count(marker) != 1:
               raise SystemExit(f'Expected one scheduler assertion marker, found {scheduler.count(marker)}')
           scheduler_path.write_text(scheduler.replace(marker, addition))
