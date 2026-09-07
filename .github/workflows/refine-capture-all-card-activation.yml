@@ -1,0 +1,124 @@
+name: Refine Capture-all card activation
+
+on:
+  push:
+    branches:
+      - fix/capture-all-card-activation-hud
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/capture-all-card-activation-hud
+          fetch-depth: 1
+      - name: Refine activation state and identities
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one refinement match, found {count}')
+              p.write_text(text.replace(old, new))
+
+          capture = 'browser-extension/content-capture.js'
+          background = 'browser-extension/background.js'
+
+          old = "      const style = getComputedStyle(element);\n      const interactive = element.matches('button,[role=\"button\"],[tabindex]:not([tabindex=\"-1\"])') || style.cursor === 'pointer';"
+          new = "      const rawLabel = normalizeSpace(element.getAttribute('aria-label') || element.getAttribute('title') || element.innerText || element.textContent);\n      if (!rawLabel || rawLabel.length > 220) continue;\n      const style = getComputedStyle(element);\n      const interactive = element.matches('button,[role=\"button\"],[role=\"link\"],[tabindex]:not([tabindex=\"-1\"])') || style.cursor === 'pointer';"
+          once(capture, old, new)
+
+          old = "async function classifySyncCapture(tabId, capture) {\n  const key = stablePageKey(capture);"
+          new = "async function classifySyncCapture(tabId, capture, stableKeyOverride = '') {\n  const key = String(stableKeyOverride || '').trim() || stablePageKey(capture);"
+          once(background, old, new)
+
+          old = "  const identity = captureIdentity(capture);\n  const fingerprint = options.fingerprint || await captureFingerprint(capture);"
+          new = "  const identity = String(options.stableKey || '').trim() || captureIdentity(capture);\n  const fingerprint = options.fingerprint || await captureFingerprint(capture);"
+          once(background, old, new)
+
+          old = "    state.lastPageUrl = seed.toString();\n    state.autoSend = options.autoSend === true ? true : state.autoSend === true;"
+          new = "    state.lastPageUrl = seed.toString();\n    state.lastPageDirectoryLike = true;\n    state.lastPageTitle = '';\n    state.autoSend = options.autoSend === true ? true : state.autoSend === true;"
+          once(background, old, new)
+
+          old = "      lastPageUrl: seed.toString(),\n      scope,"
+          new = "      lastPageUrl: seed.toString(),\n      lastPageDirectoryLike: true,\n      lastPageTitle: '',\n      scope,"
+          once(background, old, new)
+
+          old = "  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl;"
+          new = "  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl && state.lastPageDirectoryLike === true;"
+          once(background, old, new)
+
+          old = "    clearTraversalTimer(state);\n    state.status = 'running';"
+          new = "    state.status = 'running';"
+          once(background, old, new)
+
+          old = "    state.lastPageUrl = pageUrl;\n    const targetSignature ="
+          new = "    state.lastPageUrl = pageUrl;\n    state.lastPageDirectoryLike = snapshot?.directoryLike === true;\n    state.lastPageTitle = String(snapshot?.title || '').slice(0, 180);\n    const targetSignature ="
+          once(background, old, new)
+
+          old = "    if (snapshotKey === state.lastSnapshotKey) return { ignored: true, ...traversalPublicState(state) };\n    state.lastSnapshotKey = snapshotKey;"
+          new = "    if (snapshotKey === state.lastSnapshotKey) return { ignored: true, ...traversalPublicState(state) };\n    clearTraversalTimer(state);\n    state.lastSnapshotKey = snapshotKey;"
+          once(background, old, new)
+
+          old = "    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent) {"
+          new = "    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent && snapshot?.directoryLike === true) {"
+          once(background, old, new)
+
+          old = "      await saveTraversal(state);\n      return { waitingForActivation: true, ...traversalPublicState(state) };"
+          new = "      await saveTraversal(state);\n      scheduleTraversalTimeout(state);\n      return { waitingForActivation: true, ...traversalPublicState(state) };"
+          once(background, old, new)
+
+          old = ("    if (snapshot?.capture && snapshot?.directoryLike !== true) {\n"
+                 "      try {\n"
+                 "        const classified = await classifySyncCapture(tabId, snapshot.capture);\n"
+                 "        if (classified.action === 'new' || classified.action === 'changed') {\n"
+                 "          await addCapture(tabId, snapshot.capture, {\n"
+                 "            fingerprint: classified.fingerprint,\n"
+                 "            changeType: classified.action,\n"
+                 "          });\n")
+          new = ("    if (snapshot?.capture && snapshot?.directoryLike !== true) {\n"
+                 "      try {\n"
+                 "        const activationStableKey = matchedTarget?.activation === true ? matchedTarget.url : '';\n"
+                 "        const captureToQueue = matchedTarget?.activation === true\n"
+                 "          ? {\n"
+                 "            ...snapshot.capture,\n"
+                 "            pageIdentity: `${matchedTarget.url}|${String(snapshot.capture.title || matchedTarget.title || '').slice(0, 140)}`.slice(0, 600),\n"
+                 "          }\n"
+                 "          : snapshot.capture;\n"
+                 "        const classified = await classifySyncCapture(tabId, captureToQueue, activationStableKey);\n"
+                 "        if (classified.action === 'new' || classified.action === 'changed') {\n"
+                 "          await addCapture(tabId, captureToQueue, {\n"
+                 "            stableKey: activationStableKey,\n"
+                 "            fingerprint: classified.fingerprint,\n"
+                 "            changeType: classified.action,\n"
+                 "          });\n")
+          once(background, old, new)
+
+          test = Path('tools/test-browser-click-card-traversal.mjs')
+          text = test.read_text()
+          marker = "console.log('BROWSER CLICK-CARD TRAVERSAL + HUD REGRESSION: PASS');"
+          addition = ("assert.ok(capture.includes('[role=\\\"link\\\"]'), 'Role-link click cards are not recognized.');\n"
+                      "assert.ok(background.includes('state.lastPageDirectoryLike === true'), 'Same-URL SPA details can be mistaken for their parent directory.');\n"
+                      "assert.ok(background.includes('stableKeyOverride') && background.includes('activationStableKey') && background.includes('captureToQueue'), 'Same-URL click guides can collapse into one queue identity.');\n"
+                      "assert.ok(background.includes('waitingForActivation') && background.includes('scheduleTraversalTimeout(state);'), 'An unchanged card activation can lose its bounded retry timer.');\n\n")
+          if marker not in text or 'Same-URL SPA details' in text:
+              raise SystemExit('Click-card refinement test marker was missing or already applied.')
+          test.write_text(text.replace(marker, addition + marker))
+
+          Path('.github/workflows/refine-capture-all-card-activation.yml').unlink()
+          PY
+          git config user.name 'SniperPlug CI Fixer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Harden click-card traversal state'
+          git push origin HEAD:fix/capture-all-card-activation-hud
