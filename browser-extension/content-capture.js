@@ -36,6 +36,7 @@
   let traversalTimer = 0;
   let lastTraversalIdentity = '';
   let traversalBusy = false;
+  let traversalDirty = false;
 
   function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,6 +44,22 @@
 
   function normalizeSpace(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function reportTraversalProgress(phase, detail = '') {
+    if (!traversalEnabled) return;
+    try {
+      chrome.runtime.sendMessage({
+        type: `${MESSAGE_PREFIX}traversal-progress`,
+        progress: {
+          phase: String(phase || '').slice(0, 32),
+          detail: normalizeSpace(detail).slice(0, 180),
+          at: Date.now(),
+        },
+      }).catch(() => null);
+    } catch {
+      // Popup/background can disappear while Firefox keeps the Whop frame alive.
+    }
   }
 
   function currentAppFrameFallbackUrl() {
@@ -141,7 +158,7 @@
 
   function elementDepth(element) {
     let depth = 0;
-    for (let node = element; node?.parentElement && depth < 20; node = node.parentElement) depth += 1;
+    for (let node = element?.parentElement; node && depth < 20; node = node.parentElement) depth += 1;
     return depth;
   }
 
@@ -477,12 +494,18 @@
     return { markdown: sections.join('\n\n'), tabPanels: sections.length, discoveredTargets };
   }
 
-  async function prepareRenderedPage({ includeTabs = true } = {}) {
+  async function prepareRenderedPage({ includeTabs = true, reportProgress = false } = {}) {
+    if (reportProgress) reportTraversalProgress('reading');
     const root = selectContentRoot();
+    if (reportProgress) reportTraversalProgress('expanding');
     const expanded = await expandLazyContent(root);
+    if (reportProgress) reportTraversalProgress('scrolling');
     const scrolled = await scrollForLazyRender();
+    if (reportProgress) reportTraversalProgress('images');
     const images = await waitForImages(root);
+    if (reportProgress) reportTraversalProgress('tabs');
     const tabs = includeTabs ? await collectTabPanels(root) : { markdown: '', tabPanels: 0, discoveredTargets: [] };
+    if (reportProgress) reportTraversalProgress('extracting');
     await wait(120);
     return {
       extraMarkdown: tabs.markdown,
@@ -549,7 +572,7 @@
   }
 
   async function traversalSnapshot() {
-    const prepared = await prepareRenderedPage({ includeTabs: true });
+    const prepared = await prepareRenderedPage({ includeTabs: true, reportProgress: true });
     const root = selectContentRoot();
     const targets = [];
     const targetSeen = new Set();
@@ -610,22 +633,41 @@
     }, AUTO_CAPTURE_DELAY_MS);
   }
 
-  function scheduleTraversalSnapshot() {
-    if (!traversalEnabled || traversalBusy) return;
+  function resetTraversalSnapshotSchedule() {
     clearTimeout(traversalTimer);
+    traversalTimer = 0;
+    traversalDirty = false;
+  }
+
+  function scheduleTraversalSnapshot() {
+    if (!traversalEnabled) return;
+    if (traversalBusy) {
+      traversalDirty = true;
+      return;
+    }
+    if (traversalTimer) return;
+    reportTraversalProgress('settling');
     traversalTimer = setTimeout(async () => {
+      traversalTimer = 0;
       if (!traversalEnabled || traversalBusy) return;
       traversalBusy = true;
+      traversalDirty = false;
       try {
         const snapshot = await traversalSnapshot();
+        if (!traversalEnabled) return;
         const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;
         if (identity === lastTraversalIdentity) return;
         lastTraversalIdentity = identity;
+        reportTraversalProgress('sending');
         chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);
-      } catch {
-        // Wait for the next stable render instead of navigating from a transition shell.
+      } catch (error) {
+        if (traversalEnabled) {
+          traversalDirty = true;
+          reportTraversalProgress('retrying', String(error?.message || error || 'Rendered page changed while it was being prepared.'));
+        }
       } finally {
         traversalBusy = false;
+        if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();
       }
     }, TRAVERSAL_SETTLE_MS);
   }
@@ -651,12 +693,12 @@
     if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
       traversalEnabled = message.enabled === true;
       lastTraversalIdentity = '';
+      resetTraversalSnapshotSchedule();
       if (traversalEnabled) {
         clearTimeout(autoTimer);
         scheduleTraversalSnapshot();
-      } else {
-        clearTimeout(traversalTimer);
-        if (autoEnabled) scheduleAutoCapture();
+      } else if (autoEnabled) {
+        scheduleAutoCapture();
       }
       sendResponse({ ok: true, enabled: traversalEnabled });
       return false;
@@ -691,6 +733,7 @@
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       lastTraversalIdentity = '';
+      resetTraversalSnapshotSchedule();
       registerCandidate();
       scheduleAutoCapture();
       scheduleTraversalSnapshot();

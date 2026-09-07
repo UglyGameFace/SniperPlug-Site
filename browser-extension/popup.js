@@ -26,6 +26,30 @@ const elements = {
   versionStatus: document.getElementById('versionStatus'),
 };
 
+const CRAWL_PHASE_LABELS = Object.freeze({
+  settling: 'Waiting for the page to settle…',
+  reading: 'Reading rendered content…',
+  expanding: 'Opening safe collapsed content…',
+  scrolling: 'Scrolling for lazy-loaded content…',
+  images: 'Waiting for rendered images…',
+  tabs: 'Checking rendered tab panels…',
+  extracting: 'Extracting the page…',
+  sending: 'Sending this page to the crawler…',
+  retrying: 'Page changed during capture; retrying…',
+});
+
+const CRAWL_PHASE_SHORT = Object.freeze({
+  settling: 'Settling…',
+  reading: 'Reading…',
+  expanding: 'Expanding…',
+  scrolling: 'Scrolling…',
+  images: 'Images…',
+  tabs: 'Tabs…',
+  extracting: 'Extracting…',
+  sending: 'Saving…',
+  retrying: 'Retrying…',
+});
+
 let tabId = null;
 let preferredTabId = null;
 let pollTimer = 0;
@@ -57,6 +81,9 @@ let state = {
   crawlScope: 'experience',
   crawlCanResume: false,
   crawlAutoSend: false,
+  crawlPhase: '',
+  crawlPhaseDetail: '',
+  crawlPhaseAt: 0,
   extensionVersion: null,
 };
 
@@ -71,12 +98,24 @@ async function background(message) {
   return response;
 }
 
+function crawlPhaseLabel(input = state) {
+  const phase = String(input?.crawlPhase || '');
+  return CRAWL_PHASE_LABELS[phase] || '';
+}
+
+function crawlPhaseShort(input = state) {
+  const phase = String(input?.crawlPhase || '');
+  return CRAWL_PHASE_SHORT[phase] || 'Scanning…';
+}
+
 function crawlSummary() {
+  const phase = crawlPhaseLabel();
   if (state.crawlStatus === 'idle') return 'Ready to scan the rendered directory.';
-  if (state.crawlStatus === 'starting') return 'Reading this Better Content directory…';
+  if (state.crawlStatus === 'starting') return phase || 'Reading this Better Content directory…';
   if (state.crawlStatus === 'running') {
     const current = state.crawlCurrentTitle ? ` · ${state.crawlCurrentTitle}` : '';
-    return `${state.crawlCaptured} queued · ${state.crawlRemaining} remaining · ${state.crawlDiscovered} discovered${current}\n${state.crawlNew} new · ${state.crawlChanged} changed · ${state.crawlUnchanged} unchanged · ${state.crawlDuplicates} duplicate · ${state.crawlRetries} retries`;
+    const phaseLine = phase ? `\n${phase}` : '';
+    return `${state.crawlCaptured} queued · ${state.crawlRemaining} remaining · ${state.crawlDiscovered} discovered${current}\n${state.crawlNew} new · ${state.crawlChanged} changed · ${state.crawlUnchanged} unchanged · ${state.crawlDuplicates} duplicate · ${state.crawlRetries} retries${phaseLine}`;
   }
   if (state.crawlStatus === 'complete') return `Sync scan complete: ${state.crawlNew} new · ${state.crawlChanged} changed · ${state.crawlUnchanged} unchanged · ${state.crawlDuplicates} duplicate.`;
   if (state.crawlStatus === 'complete-empty') return 'Capture-all found no capturable guide pages in this scope.';
@@ -94,6 +133,7 @@ function crawlProgressState(input = state) {
   const discovered = Math.max(0, Number(input?.crawlDiscovered || 0));
   const knownTotal = Math.max(discovered, finished + remaining);
   const complete = status === 'complete' || status === 'complete-empty';
+  const phaseLabel = crawlPhaseLabel(input);
 
   if (complete) {
     return {
@@ -108,7 +148,7 @@ function crawlProgressState(input = state) {
   }
 
   if (status === 'starting' || (status === 'running' && knownTotal === 0)) {
-    return { percent: 0, indeterminate: true, label: 'Discovering guide tree…' };
+    return { percent: 0, indeterminate: true, label: phaseLabel || 'Discovering guide tree…' };
   }
 
   if (knownTotal === 0) {
@@ -122,7 +162,8 @@ function crawlProgressState(input = state) {
     : status === 'interrupted' || status === 'stopped'
       ? 'known pages checked before pause'
       : 'known pages checked';
-  return { percent, indeterminate: false, label: `${finished} of ${knownTotal} ${suffix}` };
+  const phaseSuffix = status === 'running' && phaseLabel ? ` · ${phaseLabel}` : '';
+  return { percent, indeterminate: false, label: `${finished} of ${knownTotal} ${suffix}${phaseSuffix}` };
 }
 
 function renderCrawlProgress() {
@@ -130,7 +171,7 @@ function renderCrawlProgress() {
   elements.crawlProgress.classList.toggle('is-indeterminate', progress.indeterminate);
   elements.crawlProgressBar.style.width = progress.indeterminate ? '38%' : `${progress.percent}%`;
   elements.crawlProgressLabel.textContent = progress.label;
-  elements.crawlProgressPercent.textContent = progress.indeterminate ? 'Scanning…' : `${progress.percent}%`;
+  elements.crawlProgressPercent.textContent = progress.indeterminate ? crawlPhaseShort() : `${progress.percent}%`;
   elements.crawlProgress.setAttribute('aria-valuetext', progress.label);
   if (progress.indeterminate) elements.crawlProgress.removeAttribute('aria-valuenow');
   else elements.crawlProgress.setAttribute('aria-valuenow', String(progress.percent));
@@ -184,7 +225,7 @@ function render() {
   elements.queueCount.textContent = `${state.queueCount} page${state.queueCount === 1 ? '' : 's'} queued`;
   renderCrawlProgress();
   elements.crawlMeta.textContent = crawlSummary();
-  elements.crawlDiagnostic.textContent = state.crawlDiagnostic || '';
+  elements.crawlDiagnostic.textContent = state.crawlPhaseDetail || state.crawlDiagnostic || '';
   elements.crawlFailures.replaceChildren(...(state.crawlFailureTitles || []).map((title) => {
     const item = document.createElement('li');
     item.textContent = `Skipped: ${title}`;
@@ -210,7 +251,7 @@ function schedulePoll() {
   if (!state.crawlEnabled && !recoveringCandidate) return;
   pollTimer = setTimeout(
     () => refresh().catch(() => null),
-    state.crawlEnabled ? 900 : 300,
+    state.crawlEnabled ? 450 : 300,
   );
 }
 
@@ -222,9 +263,27 @@ async function refresh() {
   const resolvedTabId = Number(output.targetTabId);
   tabId = Number.isInteger(resolvedTabId) ? resolvedTabId : preferredTabId;
   state = { ...state, ...output };
+  if (!state.crawlEnabled && !['starting', 'running'].includes(String(state.crawlStatus || ''))) {
+    state.crawlPhase = '';
+    state.crawlPhaseDetail = '';
+    state.crawlPhaseAt = 0;
+  }
   render();
   schedulePoll();
 }
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'sniperplug:traversal-progress' || !state.crawlEnabled) return false;
+  const senderTabId = Number(sender?.tab?.id);
+  if (Number.isInteger(tabId) && Number.isInteger(senderTabId) && senderTabId !== tabId) return false;
+  const phase = String(message?.progress?.phase || '');
+  if (!Object.prototype.hasOwnProperty.call(CRAWL_PHASE_LABELS, phase)) return false;
+  state.crawlPhase = phase;
+  state.crawlPhaseDetail = String(message?.progress?.detail || '').trim().slice(0, 180);
+  state.crawlPhaseAt = Math.max(0, Number(message?.progress?.at || Date.now()));
+  render();
+  return false;
+});
 
 elements.rights.addEventListener('change', render);
 elements.sendWhenDone.addEventListener('change', () => {
@@ -252,12 +311,13 @@ elements.crawl.addEventListener('click', async () => {
   try {
     if (state.crawlEnabled) {
       const output = await background({ type: 'sniperplug:stop-traversal', tabId });
-      state = { ...state, ...output };
+      state = { ...state, ...output, crawlPhase: '', crawlPhaseDetail: '', crawlPhaseAt: 0 };
       setStatus('Capture-all stopped. Pages and traversal progress were kept for resume.', 'ok');
     } else {
       if (elements.sendWhenDone.checked && !elements.rights.checked) {
         throw new Error('Confirm that you own the content or have permission before enabling automatic send.');
       }
+      const wasResume = state.crawlCanResume;
       const output = await background({
         type: 'sniperplug:start-traversal',
         tabId,
@@ -267,8 +327,8 @@ elements.crawl.addEventListener('click', async () => {
         resume: state.crawlCanResume,
       });
       if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
-      state = { ...state, ...output };
-      setStatus(state.crawlCanResume
+      state = { ...state, ...output, crawlPhase: 'settling', crawlPhaseDetail: '', crawlPhaseAt: Date.now() };
+      setStatus(wasResume
         ? 'Capture-all resumed from saved progress.'
         : 'Capture-all started. Keep the Whop tab available; SniperPlug will walk the authorized rendered guide tree for you.', 'ok');
     }

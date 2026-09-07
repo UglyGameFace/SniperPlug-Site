@@ -1,89 +1,99 @@
 # Active Task
 
 ## Active task / outcome
-PR #70 — make the Better Content Firefox extension popup open and become usable quickly instead of blocking on slow candidate recovery, navigation recovery, or extension-version network work.
+Fix Capture all guides so it cannot sit at `0 of 0 known pages checked` / `Scanning…` for minutes with no real progress, and make the popup report meaningful current preparation progress while the first rendered directory page is being processed.
 
 ## Scope
-Completed in this task:
-- traced the popup open path from `popup.js` through `sniperplug:popup-state`;
-- removed deep candidate recovery, version-network refresh, and stale traversal retry/backoff from the popup-state critical path;
-- preserved the reliable Firefox Android candidate recovery path for actions that actually need a verified frame;
-- added visible background-recovery status plus short popup repolling while a cold candidate is being found;
-- added a hard latency regression plus updated cached/cold candidate recovery coverage;
-- bumped the Firefox extension to `0.2.2` and updated the version contract;
-- completed exact-head PR validation, merge, and post-merge `main` validation.
+Completed implementation:
+- traced Capture all from popup start through background traversal state into the Whop app-frame content script;
+- fixed the initial traversal snapshot scheduler so continuous Whop DOM mutations cannot starve it forever;
+- preserved bounded rendered-page preparation, safe same-origin/same-experience traversal, retries, queue limits, and capture verification;
+- added live preparation phases before the first page/targets are known;
+- added a mutation-storm scheduler regression and expanded the real progress-bar regression;
+- bumped the Firefox Android extension/version contract to `0.2.3`.
 
-Out of scope / backlog:
-- changing Better Content traversal/capture behavior;
-- redesigning the popup beyond what is needed for fast opening/status refresh;
-- unrelated Control Center/importer work.
+Still required before completion:
+- validate this final task-record PR head exactly;
+- merge PR #71;
+- post-merge `main` validation;
+- final task-record cleanup and validated XPI handoff.
+
+Out of scope:
+- changing what Whop content is authorized/capturable;
+- unrelated importer, account-switching, or Control Center work.
 
 ## Status
-COMPLETE AND MERGED — PR #70 was squash-merged into `main` as `804ece13741c5d40c14b1afa6b3f7302ace32608` after final PR head `c046593cbd3a713c53c693e36b4edeceab6e5e2c` passed the merge gate. Post-merge `main` validation also passed.
+VALIDATED IMPLEMENTATION — PR #71 implementation head `aa4d2aa51bbf55a9132e8abb960d50d182fa98cf` passed the full merge gate. This task-record-only head must now pass the same repository checks before merge so the final PR head is exact-head validated.
 
 ## Findings / root cause
-- `popup.js` waits for `sniperplug:popup-state` before its first dynamic render.
-- `sniperplug:popup-state` previously awaited `extensionVersionState()`. On a cold/stale cache that performed a live request to `sniperplug.com`, so network latency directly delayed popup state.
-- The same handler awaited `resolveCandidate()`. With no usable cached candidate, recovery could inspect up to four Whop tabs sequentially.
-- Per tab, recovery could wait up to 4 seconds after targeted iframe injection and another 4 seconds after broad fallback injection. The theoretical candidate-recovery worst case was roughly 32 seconds before popup-state returned.
-- Popup-state could also synchronously call stale traversal recovery; retry backoff could add more delay while the user was merely opening the popup.
-- Those operations are needed for reliability, but not for presentation. `capture-current`, `start-traversal`, and `set-auto-request` already use the authoritative `resolveCandidate()` path before acting.
+- `startTraversal()` saves `status: 'starting'`, attaches traversal to the verified app frame, then waits for the content script to emit the first `sniperplug:traversal-page` snapshot.
+- The content script used a 900 ms debounce for that snapshot.
+- Its page-wide `MutationObserver` calls `scheduleTraversalSnapshot()` for every DOM mutation.
+- The old scheduler cleared/restarted the 900 ms timer on every mutation. A Whop/React page mutating more frequently than every 900 ms could therefore postpone the first snapshot indefinitely.
+- That exactly matches the runtime symptom: background state stays `starting`, discovered/visited remain zero, and the popup sits at generic `Scanning…` for minutes.
+- Normal preparation is bounded and measured in seconds: safe expanders, lazy scrolling, image wait, tab panels, and extraction all have caps. The unbounded piece was scheduler starvation before preparation even began.
 
-## Execution path
-1. Firefox opens `popup.html` / `popup.js`.
-2. `refresh()` queries the active tab and requests `sniperplug:popup-state`.
-3. Popup-state now returns using local Whop-tab state, cached candidate metadata, persisted traversal/queue data, auto-capture state, and cached extension-version metadata.
-4. If no candidate is cached, a deduplicated background job runs the existing verified recovery path without delaying the popup response.
-5. If version metadata is stale, a deduplicated background version refresh runs without delaying the popup response.
-6. If a traversal navigation is stale, repair runs under the existing traversal lock without delaying the popup response.
-7. While candidate recovery is active, the popup shows `Finding Better Content…` and polls every 300 ms so the recovered frame appears without requiring the user to close and reopen the extension.
-8. Any capture/start/auto action still resolves and verifies the actual Whop app frame before it can act.
+## Execution path after fix
+1. Popup sends `sniperplug:start-traversal`.
+2. Background resolves/verifies the Better Content iframe, persists traversal state, and attaches traversal to that exact frame.
+3. Content script schedules one 900 ms settling snapshot.
+4. Repeated DOM mutations no longer reset an already-pending timer.
+5. If mutations happen while extraction is busy, they set one dirty flag; completion schedules exactly one follow-up pass.
+6. Content script emits lightweight `sniperplug:traversal-progress` phases: `settling`, `reading`, `expanding`, `scrolling`, `images`, `tabs`, `extracting`, `sending`, or `retrying`.
+7. The open popup renders those phases immediately and polls authoritative crawler state every 450 ms while active.
+8. Only `sniperplug:traversal-page` can discover/navigate/queue pages. Progress messages are display-only and do not weaken traversal authority.
 
 ## Changes
-- Added deduplicated `popupRecoveryJobs` with a short failed-attempt cooldown to prevent recovery storms.
-- Added cache-only extension version reads for popup state and an out-of-band deduplicated version refresh.
-- Added deduplicated, traversal-locked stale-navigation repair outside the popup critical path.
-- Popup state uses cached candidate metadata only when its tab is still present among current Whop tabs.
-- Added `candidateRecoveryPending` to popup state.
-- Popup displays immediate recovery feedback and repolls at 300 ms while recovery is active; normal crawl polling remains 900 ms.
-- Preserved `APP_FRAME_SETTLE_MS = 4000` and the existing exact-frame-then-broad-fallback recovery path instead of weakening Firefox Android reliability.
-- Extension version advanced from `0.2.1` to `0.2.2`; minimum compatible version remains `0.2.0`.
-- Added `tools/test-browser-popup-latency.mjs` and wired it into the normal audit/build chain.
-- Candidate-retention regression proves opening with cached state does not synchronously probe/frame-inventory, while capture actions still verify before use.
-- Exact-frame selection regression proves cold recovery is asynchronous and becomes visible on the next popup state poll.
+- `browser-extension/content-capture.js`
+  - non-starvable coalescing traversal scheduler;
+  - dirty follow-up guarantee while a snapshot is busy;
+  - explicit schedule reset on stop/navigation changes;
+  - bounded live preparation-phase messages;
+  - existing DOM-only/no-private-API boundary preserved.
+- `browser-extension/popup.js`
+  - live phase labels and compact phase readout;
+  - phase shown both before and after a real denominator exists;
+  - active polling tightened to 450 ms;
+  - phase state clears when traversal stops/completes.
+- `tools/test-browser-traversal-scheduler.mjs`
+  - executes the production scheduler and proves 100 rapid mutation triggers create one settle timer;
+  - proves mutations during extraction coalesce into one guaranteed follow-up snapshot.
+- `tools/test-browser-progress-bar.mjs`
+  - executes production phase/progress logic and verifies live phase text with indeterminate and determinate progress.
+- Existing traversal/Firefox regressions updated for extension `0.2.3`.
+- `package.json` runs the scheduler regression in the normal audit/build chain.
+- `browser-extension/manifest.json` and `browser-extension-version.json` advanced to `0.2.3`.
 
 ## Validation / results
-Final PR head `c046593cbd3a713c53c693e36b4edeceab6e5e2c`:
-- **Verify SniperPlug #1094 passed**, including the complete repository audit/regression suite, Firefox Android XPI packaging, and artifact upload.
-- **Verify affiliate-ready preview #139 passed**.
-- **Verify retired public deal routes #143 passed**.
-- Cloudflare Pages preview deployment passed.
-- No inline PR review threads and no submitted reviews were outstanding.
-- The immediately preceding implementation head `88b233a5e5363eef08b6e963817e153f17057c57` independently passed **Verify SniperPlug #1093**, preview/route smoke workflows, and Cloudflare Pages.
-
-Post-merge `main` commit `804ece13741c5d40c14b1afa6b3f7302ace32608`:
-- **Verify SniperPlug #1095 passed**, including the full repository audit/regression suite and Firefox Android packaging/upload.
-- **Verify production guide privacy #104 passed**.
-- **Verify affiliate-ready production #100 passed**.
-- **Verify retired public deal routes #144 passed**.
-- Post-merge Firefox Android artifact `sniperplug-firefox-android-xpi` ZIP digest: `sha256:c58637b9af19559bcea6b1a3571cc28e750d414a32446ea426a391c7a9cdd1f7`.
-- The two Vercel deployments remain rejected by the account's daily/free build quota, not by application build or regression failures.
+Implementation head `aa4d2aa51bbf55a9132e8abb960d50d182fa98cf`:
+- **Verify SniperPlug #1097 passed**.
+- Full repository audit/regression suite passed.
+- New **BROWSER CAPTURE-ALL SCHEDULER REGRESSION** passed, proving a 100-mutation burst cannot postpone the first traversal snapshot and in-flight mutations coalesce into one follow-up.
+- Updated **BROWSER CAPTURE PROGRESS BAR REGRESSION** passed, including live phase visibility.
+- Popup latency regression still passed with cold popup-state returning in 2 ms while recovery/version work was intentionally hung.
+- Firefox exact-frame, candidate-retention, recursive traversal, server roundtrip, security/privacy, and all unrelated repository regressions passed.
+- Firefox Android `0.2.3` XPI packaged, archive-tested, and uploaded successfully.
+- PR artifact `sniperplug-firefox-android-xpi` ID `10000088539`; artifact ZIP digest `sha256:ee430963ccac84c146427dd2a58b34a31a9c6d818d9a0cbd399359d4233b0d8d`.
+- **Verify affiliate-ready preview #140 passed**.
+- **Verify retired public deal routes #145 passed**.
+- Cloudflare Pages preview deployed successfully on the exact implementation head.
+- PR is mergeable with no submitted reviews or inline review findings.
+- Qodo review is externally unavailable because its subscription is inactive; it produced no review finding.
+- Both Vercel statuses are external account-quota failures (`api-deployments-free-per-day` / build-rate limit), not application build failures. Cloudflare and repository-native validation are green.
 
 ## Cleanup / conflicts
-- Final code change set is limited to the extension popup/background path, patch-version metadata, audit wiring, and directly affected regressions.
-- No second crawler, candidate store, authorization path, retry implementation, or compatibility shim was introduced.
-- Existing command-time candidate verification remains authoritative.
-- Existing traversal limits, retry limits, capture limits, Whop authorization boundaries, content readers, and server handoff policy are unchanged.
-- No cookie permission, token forwarding, private-API probing, debug bypass, conflict marker, secret-bearing behavior, or unrelated Control Center/importer redesign was introduced.
+- Changed files are limited to this active task record, extension scheduler/popup/version files, audit wiring, and directly affected regressions.
+- No second crawler, polling crawler, alternate traversal store, or navigation fallback was added.
+- Existing `MutationObserver`, traversal state, background traversal lock, safe URL policy, queue limits, and server verification remain authoritative.
+- No cookie permission, token forwarding, private Whop API call, credential-bearing traversal, or unrelated feature work was introduced.
 
 ## Blockers / risks
-- No implementation blocker remains for PR #70.
-- A cold popup may briefly show `Finding Better Content…` while the real frame is recovered, but the popup itself no longer waits for that slow work before becoming visible/usable.
-- Cached candidate metadata can be briefly optimistic. Correctness is still enforced by authoritative command-time verification before capture/traversal/auto actions.
-- Vercel remains externally rate-limited until the account quota resets or plan changes; GitHub regression workflows and Cloudflare deployment are green.
+- No implementation blocker remains.
+- Real-device runtime confirmation requires installing the newly packaged `0.2.3` XPI after merge.
+- Vercel remains externally quota-limited; this does not block the Cloudflare production path or repository validation.
 
 ## Backlog
 None discovered for this task.
 
 ## Next step
-No additional implementation work remains for PR #70. Install the new Firefox Android `0.2.2` XPI for runtime confirmation on the user's device; any unrelated request is a separate task.
+Wait for repository-native checks on this final task-record head. If they pass without a new review finding, merge PR #71, validate `main`, close the active task record, and hand off the final `0.2.3` XPI.

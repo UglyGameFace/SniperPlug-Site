@@ -13,13 +13,15 @@ const popupHtml = readFileSync(join(root, 'browser-extension/popup.html'), 'utf8
 const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
 const versionContract = JSON.parse(readFileSync(join(root, 'browser-extension-version.json'), 'utf8'));
 
-assert.equal(manifest.version, '0.2.2', 'Authorized content-sync extension version was not bumped.');
+assert.equal(manifest.version, '0.2.3', 'Authorized content-sync extension version was not bumped.');
 assert.equal(versionContract.latest, manifest.version, 'Published extension-version contract drifted from the packaged manifest.');
 assert.ok(captureScript.includes('function discoverTraversalTargets') && captureScript.includes('function safeTraversalUrl'), 'The DOM reader does not discover bounded safe traversal targets.');
 assert.ok(captureScript.includes("url.origin !== location.origin") && captureScript.includes('targetExperience !== experienceId'), 'Traversal lost same-origin or same-experience confinement.');
 assert.ok(captureScript.includes('queryLooksSensitive(url)') && captureScript.includes('BLOCKED_TRAVERSAL_PATH'), 'Traversal does not reject credential-bearing or sensitive routes before navigation.');
 assert.ok(captureScript.includes('expandLazyContent') && captureScript.includes('scrollForLazyRender') && captureScript.includes('waitForImages') && captureScript.includes('collectTabPanels'), 'Capture-all no longer prepares lazy/collapsed/tabbed rendered content before extraction.');
 assert.ok(captureScript.includes("type: `${MESSAGE_PREFIX}traversal-page`") && captureScript.includes('location.assign(target)'), 'Rendered traversal snapshots or app-frame navigation are missing.');
+assert.ok(captureScript.includes('traversalDirty') && captureScript.includes('if (traversalTimer) return;'), 'Capture-all traversal scheduling can be starved by repeated page mutations again.');
+assert.ok(captureScript.includes('reportTraversalProgress') && popup.includes("message?.type !== 'sniperplug:traversal-progress'"), 'Live capture-all preparation phases are no longer wired to the popup.');
 assert.ok(!/\bfetch\s*\(/.test(captureScript), 'Capture-all must remain DOM/navigation driven and must not probe Better Content private APIs.');
 assert.ok(background.includes("TRAVERSAL_KEY = 'sniperplugTraversalTabs'") && background.includes('MAX_TRAVERSAL_VISITS = 240'), 'Traversal state is not bounded and persisted across iframe reloads.');
 assert.ok(background.includes('persistentStore()') && background.includes('chrome.storage?.local || chrome.storage?.session'), 'Traversal/queue state no longer survives browser background restarts with a safe test fallback.');
@@ -110,7 +112,7 @@ const context = {
       },
     },
     runtime: {
-      getManifest: () => ({ version: '0.2.2' }),
+      getManifest: () => ({ version: '0.2.3' }),
       onMessage: { addListener: (listener) => { runtimeListener = listener; } },
     },
     tabs: {
