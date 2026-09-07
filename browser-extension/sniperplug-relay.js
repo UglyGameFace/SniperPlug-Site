@@ -101,7 +101,7 @@
     return batches;
   }
 
-  async function sendBatch(captures, batchIndex, batchCount) {
+  async function requestBatch(captures, batchIndex, batchCount, mode) {
     let attempt = 0;
     while (true) {
       const response = await fetch('/api/browser-capture', {
@@ -109,6 +109,7 @@
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
+          mode,
           rightsConfirmed: pending?.rightsConfirmed === true,
           captures,
         }),
@@ -118,7 +119,8 @@
       const transient = response.status === 429 || response.status >= 500;
       if (transient && attempt < MAX_TRANSIENT_RETRIES) {
         attempt += 1;
-        setMessage(`Batch ${batchIndex + 1}/${batchCount} hit a temporary ${response.status} response. Retrying ${attempt}/${MAX_TRANSIENT_RETRIES}…`);
+        const verb = mode === 'reconcile' ? 'Server check' : 'Import';
+        setMessage(`${verb} batch ${batchIndex + 1}/${batchCount} hit a temporary ${response.status} response. Retrying ${attempt}/${MAX_TRANSIENT_RETRIES}…`);
         await wait(700 * (2 ** (attempt - 1)));
         continue;
       }
@@ -128,36 +130,77 @@
     }
   }
 
+  async function reconcileCaptures(captures) {
+    const batches = captureBatches(captures);
+    const totals = { alreadyImported: 0, new: 0, changed: 0, duplicates: 0, held: 0, needsImport: 0 };
+    const toImport = [];
+    let checked = 0;
+
+    for (let index = 0; index < batches.length; index += 1) {
+      setMessage(`Checking SniperPlug server history · batch ${index + 1}/${batches.length} · ${checked}/${captures.length} pages checked…`);
+      const output = await requestBatch(batches[index], index, batches.length, 'reconcile');
+      if (!Array.isArray(output?.results) || output.results.length !== batches[index].length) {
+        throw new Error('SniperPlug reconciliation returned an incomplete page map. The extension kept the queue unchanged.');
+      }
+      for (const key of Object.keys(totals)) totals[key] += Number(output?.[key] || 0);
+      output.results.forEach((result, resultIndex) => {
+        if (result?.needsImport === true) toImport.push(batches[index][resultIndex]);
+      });
+      checked += batches[index].length;
+    }
+
+    return { totals, toImport };
+  }
+
+  async function importCaptures(captures) {
+    const batches = captureBatches(captures);
+    const totals = { created: 0, updated: 0, unchanged: 0, held: 0 };
+    let sentPages = 0;
+    for (let index = 0; index < batches.length; index += 1) {
+      setMessage(`Importing batch ${index + 1}/${batches.length} · ${sentPages}/${captures.length} pages saved…`);
+      const output = await requestBatch(batches[index], index, batches.length, 'import');
+      sentPages += batches[index].length;
+      for (const key of Object.keys(totals)) totals[key] += Number(output?.[key] || 0);
+    }
+    return totals;
+  }
+
+  function reconciliationSummary(totals) {
+    return `${totals.alreadyImported} already imported · ${totals.changed} changed · ${totals.new} new · ${totals.duplicates} duplicate${totals.duplicates === 1 ? '' : 's'} · ${totals.held} held`;
+  }
+
   async function sendCapture() {
     if (sending) return;
     sending = true;
     retry.disabled = true;
     const captures = pending?.captures || [];
-    const batches = captureBatches(captures);
-    setMessage(`Sending ${captures.length} changed/new rendered page${captures.length === 1 ? '' : 's'} into the private SniperPlug draft queue…`);
+    setMessage(`Checking ${captures.length} rendered page${captures.length === 1 ? '' : 's'} against SniperPlug’s server history before importing anything…`);
     try {
-      const totals = { created: 0, updated: 0, unchanged: 0, held: 0 };
-      let sentPages = 0;
-      for (let index = 0; index < batches.length; index += 1) {
-        setMessage(`Sending batch ${index + 1}/${batches.length} · ${sentPages}/${captures.length} pages complete…`);
-        const output = await sendBatch(batches[index], index, batches.length);
-        sentPages += batches[index].length;
-        for (const key of Object.keys(totals)) totals[key] += Number(output?.[key] || 0);
+      const reconciliation = await reconcileCaptures(captures);
+      const serverSummary = reconciliationSummary(reconciliation.totals);
+      let imported = { created: 0, updated: 0, unchanged: 0, held: 0 };
+
+      if (reconciliation.toImport.length) {
+        setMessage(`Server reconciliation: ${serverSummary}. Importing only ${reconciliation.toImport.length} page${reconciliation.toImport.length === 1 ? '' : 's'} that actually need work…`);
+        imported = await importCaptures(reconciliation.toImport);
       }
 
       await extension({ type: 'sniperplug:clear-pending', pendingId, success: true });
-      setMessage(`${totals.created} new draft${totals.created === 1 ? '' : 's'} · ${totals.updated} updated · ${totals.unchanged} unchanged · ${totals.held} held safely. Sync history saved; reloading the private review queue…`, 'ok');
+      const writeSummary = reconciliation.toImport.length
+        ? ` Saved ${imported.created} new draft${imported.created === 1 ? '' : 's'} · ${imported.updated} updated · ${imported.unchanged} became unchanged during save · ${imported.held} held safely.`
+        : ' Nothing needed to be written.';
+      setMessage(`Server reconciliation: ${serverSummary}.${writeSummary} Local sync history is now hydrated from the server result; reloading the private review queue…`, 'ok');
       const clean = new URL(location.href);
       clean.searchParams.delete('extensionCapture');
       clean.searchParams.set('browserCapture', 'success');
-      setTimeout(() => location.replace(clean.toString()), 900);
+      setTimeout(() => location.replace(clean.toString()), 1100);
     } catch (error) {
       if (Number(error?.status) === 401) {
         setMessage('The Control Center is locked. Unlock SniperPlug on this page, then press Retry capture. The captured pages are still held inside the extension and were not discarded.', 'error');
       } else if (Number(error?.status) === 403) {
         setMessage(`SniperPlug refused the handoff: ${error.message} Reconnect/verify Whop if needed, then retry.`, 'error');
       } else {
-        setMessage(`Capture was not fully saved: ${error?.message || error}. The extension kept the entire queued set. Retrying is safe because already imported pages resolve as unchanged.`, 'error');
+        setMessage(`Capture was not fully reconciled/saved: ${error?.message || error}. The extension kept the entire queued set. Retrying is safe because the server remains authoritative about what already exists.`, 'error');
       }
     } finally {
       sending = false;
