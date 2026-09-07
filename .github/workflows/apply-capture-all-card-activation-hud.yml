@@ -1,0 +1,629 @@
+name: Apply Capture-all card traversal and HUD fix
+
+on:
+  push:
+    branches:
+      - fix/capture-all-card-activation-hud
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/capture-all-card-activation-hud
+          fetch-depth: 1
+      - name: Apply exact Capture-all runtime fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one literal match, found {count}')
+              p.write_text(text.replace(old, new))
+
+          def regex_once(path, pattern, replacement):
+              p = Path(path)
+              text = p.read_text()
+              next_text, count = re.subn(pattern, replacement, text, count=1, flags=re.S)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one regex match, found {count}: {pattern[:90]}')
+              p.write_text(next_text)
+
+          capture_path = 'browser-extension/content-capture.js'
+          background_path = 'browser-extension/background.js'
+
+          replace_once(
+              capture_path,
+              "  let traversalOverlay = null;\n  let traversalOverlayState = null;\n  let traversalOverlayPhase = '';\n  let traversalOverlayDetail = '';\n",
+              "  let traversalOverlay = null;\n  let traversalOverlayState = null;\n  let traversalOverlayPhase = '';\n  let traversalOverlayDetail = '';\n  let traversalOverlayDismissed = false;\n  let traversalOverlayMinimized = false;\n  let traversalOverlayTerminalTimer = 0;\n",
+          )
+
+          overlay_block = r'''  function dismissTraversalOverlay() {
+    clearTimeout(traversalOverlayTerminalTimer);
+    traversalOverlayTerminalTimer = 0;
+    traversalOverlayDismissed = true;
+    if (traversalOverlay?.isConnected) traversalOverlay.remove();
+    traversalOverlay = null;
+  }
+
+  function setTraversalOverlayMinimized(minimized) {
+    traversalOverlayMinimized = minimized === true;
+    const overlay = traversalOverlay;
+    if (!overlay?.isConnected) return;
+    const body = overlay.querySelector('[data-sp-body]');
+    const button = overlay.querySelector('[data-sp-minimize]');
+    if (body) body.style.display = traversalOverlayMinimized ? 'none' : 'block';
+    if (button) {
+      button.textContent = traversalOverlayMinimized ? '□' : '−';
+      button.setAttribute('aria-label', traversalOverlayMinimized ? 'Restore Capture-all progress' : 'Minimize Capture-all progress');
+      button.setAttribute('title', traversalOverlayMinimized ? 'Restore' : 'Minimize');
+    }
+  }
+
+  function overlayControlButton(button) {
+    Object.assign(button.style, {
+      appearance: 'none', border: '1px solid rgba(255,255,255,.18)', background: 'rgba(255,255,255,.08)',
+      color: '#e8fff4', width: '30px', height: '28px', borderRadius: '8px', font: '700 16px/1 system-ui, sans-serif',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0', cursor: 'pointer', touchAction: 'manipulation',
+    });
+  }
+
+  function ensureTraversalOverlay() {
+    if (traversalOverlayDismissed) return null;
+    if (traversalOverlay?.isConnected) return traversalOverlay;
+    const overlay = document.createElement('div');
+    overlay.id = 'sniperplug-capture-all-overlay';
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = '<div data-sp-header><div data-sp-title>SniperPlug Capture-all</div><div data-sp-controls><button type="button" data-sp-minimize aria-label="Minimize Capture-all progress" title="Minimize">−</button><button type="button" data-sp-stop aria-label="Stop Capture-all" title="Stop">■</button><button type="button" data-sp-close aria-label="Hide Capture-all progress" title="Hide">×</button></div></div><div data-sp-body><div data-sp-phase>Starting…</div><div data-sp-track><div data-sp-bar></div></div><div data-sp-counts>Discovering rendered guides…</div></div>';
+    Object.assign(overlay.style, {
+      position: 'fixed', top: '12px', right: '12px', width: 'min(360px, calc(100vw - 24px))',
+      zIndex: '2147483647', padding: '12px', borderRadius: '14px', background: 'rgba(5,16,25,.96)',
+      color: '#e8fff4', border: '1px solid rgba(91,226,158,.45)', boxShadow: '0 12px 32px rgba(0,0,0,.35)',
+      fontFamily: 'system-ui, sans-serif', fontSize: '13px', lineHeight: '1.35', pointerEvents: 'auto',
+    });
+    const header = overlay.querySelector('[data-sp-header]');
+    Object.assign(header.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '7px' });
+    const title = overlay.querySelector('[data-sp-title]');
+    Object.assign(title.style, { fontWeight: '800', fontSize: '14px' });
+    const controls = overlay.querySelector('[data-sp-controls]');
+    Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: '0' });
+    for (const button of controls.querySelectorAll('button')) overlayControlButton(button);
+    const phase = overlay.querySelector('[data-sp-phase]');
+    Object.assign(phase.style, { color: '#9ff3c7', marginBottom: '8px' });
+    const track = overlay.querySelector('[data-sp-track]');
+    Object.assign(track.style, { height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.12)', marginBottom: '7px' });
+    const bar = overlay.querySelector('[data-sp-bar]');
+    Object.assign(bar.style, { height: '100%', width: '18%', borderRadius: '999px', background: '#5be29e', transition: 'width .2s ease' });
+    const counts = overlay.querySelector('[data-sp-counts]');
+    Object.assign(counts.style, { color: '#c7d4d0' });
+    overlay.querySelector('[data-sp-minimize]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setTraversalOverlayMinimized(!traversalOverlayMinimized);
+    });
+    overlay.querySelector('[data-sp-close]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissTraversalOverlay();
+    });
+    overlay.querySelector('[data-sp-stop]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const stop = overlay.querySelector('[data-sp-stop]');
+      stop.disabled = true;
+      stop.textContent = '…';
+      try {
+        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}overlay-stop-traversal` }).catch(() => {
+          stop.disabled = false;
+          stop.textContent = '■';
+        });
+      } catch {
+        stop.disabled = false;
+        stop.textContent = '■';
+      }
+    });
+    (document.body || document.documentElement).appendChild(overlay);
+    traversalOverlay = overlay;
+    setTraversalOverlayMinimized(traversalOverlayMinimized);
+    return overlay;
+  }
+
+  function renderTraversalOverlay() {
+    const state = traversalOverlayState || {};
+    const terminal = ['complete', 'complete-empty', 'error', 'limit', 'stopped', 'interrupted'].includes(String(state.crawlStatus || ''));
+    if (!traversalEnabled && !terminal) {
+      dismissTraversalOverlay();
+      return;
+    }
+    if (traversalOverlayDismissed) return;
+    const overlay = ensureTraversalOverlay();
+    if (!overlay) return;
+    overlay.style.display = 'block';
+    const phaseNames = { settling: 'Settling…', reading: 'Reading…', expanding: 'Expanding…', scrolling: 'Scrolling…', images: 'Images…', tabs: 'Tabs…', extracting: 'Extracting…', sending: 'Saving…', retrying: 'Retrying…' };
+    const status = String(state.crawlStatus || (traversalEnabled ? 'starting' : 'idle'));
+    const visited = Math.max(0, Number(state.crawlVisited || 0));
+    const remaining = Math.max(0, Number(state.crawlRemaining || 0));
+    const discovered = Math.max(0, Number(state.crawlDiscovered || 0));
+    const known = Math.max(discovered, visited + remaining);
+    const complete = status === 'complete' || status === 'complete-empty';
+    const percent = complete ? 100 : known > 0 ? Math.max(2, Math.min(99, Math.round((visited / known) * 100))) : 18;
+    overlay.querySelector('[data-sp-bar]').style.width = `${percent}%`;
+    overlay.querySelector('[data-sp-phase]').textContent = traversalOverlayDetail || phaseNames[traversalOverlayPhase] || (terminal ? status.replace('-', ' ') : 'Scanning rendered Better Content…');
+    overlay.querySelector('[data-sp-counts]').textContent = known > 0
+      ? `${visited} of ${known} known pages checked · ${Math.max(0, Number(state.crawlCaptured || 0))} queued · ${Math.max(0, Number(state.crawlRetries || 0))} retries`
+      : terminal ? (state.crawlError || state.crawlDiagnostic || 'Capture-all finished.') : 'Discovering rendered guides…';
+    setTraversalOverlayMinimized(traversalOverlayMinimized);
+    if (terminal && !traversalOverlayTerminalTimer) {
+      traversalOverlayTerminalTimer = setTimeout(() => dismissTraversalOverlay(), 4200);
+    } else if (!terminal && traversalOverlayTerminalTimer) {
+      clearTimeout(traversalOverlayTerminalTimer);
+      traversalOverlayTerminalTimer = 0;
+    }
+  }
+
+  function updateTraversalOverlayState'''
+          regex_once(
+              capture_path,
+              r"  function ensureTraversalOverlay\(\) \{.*?\n  function updateTraversalOverlayState",
+              overlay_block,
+          )
+
+          replace_once(
+              capture_path,
+              "      if (!label || DANGEROUS_CONTROL_LABEL.test(label)) return false;\n      return SAFE_EXPAND_LABEL.test(label);\n",
+              "      if (!label || DANGEROUS_CONTROL_LABEL.test(label)) return false;\n      return SAFE_EXPAND_LABEL.test(label) || control.getAttribute('aria-expanded') === 'false';\n",
+          )
+
+          discovery_block = r'''  function traversalActivationLabel(element) {
+    return normalizeSpace(
+      element?.getAttribute?.('aria-label')
+      || element?.getAttribute?.('title')
+      || element?.innerText
+      || element?.textContent,
+    ).slice(0, 180);
+  }
+
+  function traversalActivationElements(root = selectContentRoot()) {
+    const raw = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let inspected = 0;
+    for (let element = walker.nextNode(); element && inspected < MAX_CANDIDATES; element = walker.nextNode()) {
+      inspected += 1;
+      if (!(element instanceof Element) || traversalElementExcluded(element)) continue;
+      if (element.closest('a[href],[data-href],[data-url],form')) continue;
+      if (element.matches('[role="tab"]') || element.getAttribute('aria-haspopup') || element.hasAttribute('disabled')) continue;
+      if (element.hasAttribute('aria-expanded')) continue;
+      const style = getComputedStyle(element);
+      const interactive = element.matches('button,[role="button"],[tabindex]:not([tabindex="-1"])') || style.cursor === 'pointer';
+      if (!interactive) continue;
+      const label = traversalActivationLabel(element);
+      if (!label || label.length < 3 || DANGEROUS_CONTROL_LABEL.test(label) || SAFE_EXPAND_LABEL.test(label)) continue;
+      if (/^(?:copy|download|share|save|print|play|pause|next|previous|back|close|cancel|submit|send|search|menu)$/i.test(label)) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 30) continue;
+      raw.push(element);
+    }
+    return raw.filter((element, index) => {
+      const label = traversalActivationLabel(element);
+      return !raw.some((other, otherIndex) => otherIndex !== index && other.contains(element) && traversalActivationLabel(other) === label);
+    }).slice(0, MAX_TRAVERSAL_TARGETS_PER_PAGE);
+  }
+
+  function activationIdentityUrl(parentUrl, label, ordinal, experienceId) {
+    try {
+      const url = new URL(parentUrl);
+      url.searchParams.set('sp_guide', `${Math.max(0, Number(ordinal || 0))}:${String(label || '').slice(0, 96)}`);
+      url.searchParams.sort();
+      return safeTraversalUrl(url.toString(), experienceId);
+    } catch {
+      return '';
+    }
+  }
+
+  function discoverTraversalActivators(root = selectContentRoot()) {
+    const experienceId = findExperienceId();
+    const parentUrl = safeTraversalUrl(location.href, experienceId) || currentAppFrameFallbackUrl();
+    if (!parentUrl) return [];
+    const counts = new Map();
+    const targets = [];
+    for (const element of traversalActivationElements(root)) {
+      const label = traversalActivationLabel(element);
+      const ordinal = counts.get(label) || 0;
+      counts.set(label, ordinal + 1);
+      const url = activationIdentityUrl(parentUrl, label, ordinal, experienceId);
+      if (!url) continue;
+      targets.push({
+        url,
+        title: label,
+        activation: true,
+        parentUrl,
+        parentTitle: pageTitle(root),
+        activationLabel: label,
+        activationOrdinal: ordinal,
+      });
+    }
+    return targets;
+  }
+
+  async function activateTraversalTarget(target) {
+    const experienceId = findExperienceId();
+    const currentUrl = safeTraversalUrl(location.href, experienceId) || currentAppFrameFallbackUrl();
+    const parentUrl = safeTraversalUrl(target?.parentUrl, experienceId);
+    if (!currentUrl || !parentUrl || currentUrl !== parentUrl) {
+      return { ok: false, error: 'Capture-all refused to activate a guide card outside its verified parent directory.' };
+    }
+    const label = normalizeSpace(target?.activationLabel || target?.title).slice(0, 180);
+    const ordinal = Math.max(0, Number(target?.activationOrdinal || 0));
+    const matches = traversalActivationElements(selectContentRoot()).filter((element) => traversalActivationLabel(element) === label);
+    const element = matches[ordinal] || null;
+    if (!element) return { ok: false, error: `The rendered guide card “${label || 'unknown'}” is no longer available.` };
+    try { element.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch { /* Optional viewport assist. */ }
+    await wait(60);
+    try {
+      element.click();
+      return { ok: true, activated: true, title: label };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error || 'The rendered guide card could not be activated.') };
+    }
+  }
+
+  function discoverTraversalTargets(root = selectContentRoot()) {
+    const experienceId = findExperienceId();
+    const currentUrl = safeTraversalUrl(location.href, experienceId) || safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
+    const seen = new Set();
+    const candidates = [];
+    const elements = [...root.querySelectorAll('a[href],[role="link"][href],[data-href],[data-url]')];
+    for (const element of elements) {
+      if (candidates.length >= MAX_TRAVERSAL_TARGETS_PER_PAGE || traversalElementExcluded(element)) continue;
+      const raw = element.getAttribute('href') || element.getAttribute('data-href') || element.getAttribute('data-url') || '';
+      const url = safeTraversalUrl(raw, experienceId);
+      if (!url || url === currentUrl || seen.has(url)) continue;
+      const label = normalizeSpace(
+        element.getAttribute('aria-label')
+        || element.getAttribute('title')
+        || element.innerText
+        || element.textContent,
+      ).slice(0, 180);
+      if (!label || /^(?:home|account|settings|support|contact support|sign out|log out)$/i.test(label)) continue;
+      seen.add(url);
+      candidates.push({ url, title: label, activation: false });
+    }
+
+    const expPath = experienceId ? `/experiences/${experienceId}/` : '';
+    const scoped = expPath ? candidates.filter((target) => {
+      try { return new URL(target.url).pathname.includes(expPath); } catch { return false; }
+    }) : [];
+    const navigable = scoped.length ? scoped : candidates;
+    const activations = discoverTraversalActivators(root).filter((target) => !seen.has(target.url));
+    return [...navigable, ...activations].slice(0, MAX_TRAVERSAL_TARGETS_PER_PAGE);
+  }
+
+  function classifyRenderedPage'''
+          regex_once(
+              capture_path,
+              r"  function discoverTraversalTargets\(root = selectContentRoot\(\)\) \{.*?\n  function classifyRenderedPage",
+              discovery_block,
+          )
+
+          replace_once(
+              capture_path,
+              "    const cardLike = root.querySelectorAll('a[href],[role=\"link\"],[data-href],[data-url]').length;\n",
+              "    const cardLike = root.querySelectorAll('a[href],[role=\"link\"],[data-href],[data-url],button,[role=\"button\"],[tabindex]:not([tabindex=\"-1\"])').length;\n",
+          )
+
+          replace_once(
+              capture_path,
+              "      if (traversalEnabled) {\n        clearTimeout(autoTimer);\n        ensureTraversalOverlay();\n        runTraversalSnapshotNow();\n",
+              "      if (traversalEnabled) {\n        clearTimeout(autoTimer);\n        traversalOverlayDismissed = false;\n        traversalOverlayMinimized = false;\n        ensureTraversalOverlay();\n        runTraversalSnapshotNow();\n",
+          )
+
+          replace_once(
+              capture_path,
+              "    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {\n",
+              "    if (message?.type === `${MESSAGE_PREFIX}traverse-activate`) {\n      activateTraversalTarget(message.target || {})\n        .then((result) => sendResponse(result))\n        .catch((error) => sendResponse({ ok: false, error: String(error?.message || error || 'Guide activation failed.') }));\n      return true;\n    }\n    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {\n",
+          )
+
+          merge_block = r'''function mergeTraversalTargets(state, targets) {
+  const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
+  const known = new Set([
+    ...visited,
+    ...(Array.isArray(state.pending) ? state.pending.map((item) => item.url) : []),
+    state.currentTarget?.url || '',
+    state.seedUrl || '',
+  ].filter(Boolean));
+  const pending = Array.isArray(state.pending) ? [...state.pending] : [];
+  for (const raw of Array.isArray(targets) ? targets.slice(0, 360) : []) {
+    if (known.size >= MAX_TRAVERSAL_VISITS) break;
+    const url = normalizedTraversalUrl(raw?.url, state);
+    if (!url || known.has(url)) continue;
+    const activation = raw?.activation === true;
+    const parentUrl = activation ? normalizedTraversalUrl(raw?.parentUrl, state) : '';
+    if (activation && !parentUrl) continue;
+    known.add(url);
+    pending.push({
+      url,
+      title: String(raw?.title || '').trim().slice(0, 180),
+      activation,
+      parentUrl,
+      parentTitle: activation ? String(raw?.parentTitle || '').trim().slice(0, 180) : '',
+      activationLabel: activation ? String(raw?.activationLabel || raw?.title || '').trim().slice(0, 180) : '',
+      activationOrdinal: activation ? Math.max(0, Number(raw?.activationOrdinal || 0)) : 0,
+    });
+  }
+  state.pending = pending;
+  state.discovered = Math.max(Number(state.discovered || 0), known.size - (state.seedUrl ? 1 : 0));
+}
+
+async function sendTraversalActivation(state, target) {
+  state.status = 'running';
+  state.currentTarget = { ...target, stage: 'activating', startedAt: Date.now() };
+  state.currentTitle = target.title || '';
+  state.updatedAt = Date.now();
+  await saveTraversal(state);
+  try {
+    const response = await chrome.tabs.sendMessage(
+      state.tabId,
+      { type: 'sniperplug:traverse-activate', target: state.currentTarget },
+      { frameId: state.frameId },
+    );
+    if (!response?.ok) throw new Error(response?.error || 'guide card activation refused');
+    scheduleTraversalTimeout(state);
+    return true;
+  } catch (error) {
+    await retryOrSkipCurrent(state, `Guide activation failed: ${String(error?.message || error || 'unknown error')}`);
+    return false;
+  }
+}
+
+async function sendTraversalNavigation(state, target) {
+  state.status = 'running';
+  const parentUrl = target.activation === true ? normalizedTraversalUrl(target.parentUrl, state) : '';
+  const currentPageUrl = normalizedTraversalUrl(state.lastPageUrl, state);
+  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl;
+  state.currentTarget = {
+    ...target,
+    stage: target.activation === true ? (shouldActivate ? 'activating' : 'returning') : 'navigating',
+    startedAt: Date.now(),
+  };
+  state.currentTitle = target.title || '';
+  state.updatedAt = Date.now();
+  await saveTraversal(state);
+  if (shouldActivate) return sendTraversalActivation(state, state.currentTarget);
+  const navigationUrl = target.activation === true ? parentUrl : target.url;
+  try {
+    const response = await chrome.tabs.sendMessage(
+      state.tabId,
+      { type: 'sniperplug:traverse-navigate', url: navigationUrl },
+      { frameId: state.frameId },
+    );
+    if (!response?.ok) throw new Error(response?.error || 'navigation refused');
+    scheduleTraversalTimeout(state);
+    return true;
+  } catch (error) {
+    await retryOrSkipCurrent(state, `Navigation failed: ${String(error?.message || error || 'unknown error')}`);
+    return false;
+  }
+}
+
+async function nextTraversalTarget'''
+          regex_once(
+              background_path,
+              r"function mergeTraversalTargets\(state, targets\) \{.*?\nasync function nextTraversalTarget",
+              merge_block,
+          )
+
+          replace_once(
+              background_path,
+              "      seedUrl: seed.toString(),\n      scope,\n",
+              "      seedUrl: seed.toString(),\n      lastPageUrl: seed.toString(),\n      scope,\n",
+          )
+          replace_once(
+              background_path,
+              "    state.frameId = candidate.frameId;\n    state.autoSend = options.autoSend === true ? true : state.autoSend === true;\n",
+              "    state.frameId = candidate.frameId;\n    state.lastPageUrl = seed.toString();\n    state.autoSend = options.autoSend === true ? true : state.autoSend === true;\n",
+          )
+
+          replace_once(
+              background_path,
+              "    const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])\n      .slice(0, 360)\n      .map((target) => String(target?.url || ''))\n      .sort()\n      .join('|');\n    const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}|${snapshot?.diagnostics?.controlsClicked || 0}`;\n",
+              "    state.lastPageUrl = pageUrl;\n    const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])\n      .slice(0, 360)\n      .map((target) => `${String(target?.url || '')}:${target?.activation === true ? 'activate' : 'url'}:${String(target?.parentUrl || '')}`)\n      .sort()\n      .join('|');\n    const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}|${snapshot?.diagnostics?.controlsClicked || 0}|${state.currentTarget?.url || ''}|${state.currentTarget?.stage || ''}`;\n",
+          )
+
+          old_match = """    const currentMatched = state.currentTarget?.url && normalizedTraversalUrl(state.currentTarget.url, state) === pageUrl;
+    const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
+    if (currentMatched) {
+      visited.add(state.currentTarget.url);
+      state.currentTarget = null;
+      state.currentTitle = '';
+    }
+    visited.add(pageUrl);
+    state.visited = [...visited].slice(-MAX_TRAVERSAL_VISITS);
+
+    mergeTraversalTargets(state, snapshot?.targets);
+
+    const renderLooksEmpty = snapshot?.directoryLike !== true
+      && !snapshot?.capture
+      && (!Array.isArray(snapshot?.targets) || snapshot.targets.length === 0);
+    if (renderLooksEmpty && currentMatched) {
+      state.currentTarget = { url: pageUrl, title: String(snapshot?.title || pageUrl) };
+      return { retrying: true, ...(await retryOrSkipCurrent(state, 'The page rendered no capturable body or child links.')) };
+    }
+"""
+          new_match = """    const activationTarget = state.currentTarget?.activation === true ? state.currentTarget : null;
+    const activationParent = activationTarget ? normalizedTraversalUrl(activationTarget.parentUrl, state) : '';
+    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent) {
+      mergeTraversalTargets(state, snapshot?.targets);
+      state.lastDiagnostic = `Returned to ${activationTarget.parentTitle || 'the Better Content directory'}; opening ${activationTarget.title || 'the next guide'}.`;
+      await saveTraversal(state);
+      await sendTraversalActivation(state, activationTarget);
+      return { activating: true, ...traversalPublicState(state) };
+    }
+
+    const directMatched = state.currentTarget?.activation !== true
+      && state.currentTarget?.url
+      && normalizedTraversalUrl(state.currentTarget.url, state) === pageUrl;
+    const activationMatched = Boolean(activationTarget?.stage === 'activating' && activationParent && (
+      pageUrl !== activationParent
+      || snapshot?.directoryLike !== true
+      || (activationTarget.parentTitle && String(snapshot?.title || '') !== activationTarget.parentTitle)
+    ));
+    if (activationTarget?.stage === 'activating' && !activationMatched) {
+      mergeTraversalTargets(state, snapshot?.targets);
+      state.lastDiagnostic = `Waiting for ${activationTarget.title || 'the selected guide'} to replace the rendered directory.`;
+      await saveTraversal(state);
+      return { waitingForActivation: true, ...traversalPublicState(state) };
+    }
+
+    const currentMatched = Boolean(directMatched || activationMatched);
+    const matchedTarget = currentMatched ? state.currentTarget : null;
+    const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
+    if (currentMatched) {
+      visited.add(state.currentTarget.url);
+      state.currentTarget = null;
+      state.currentTitle = '';
+    }
+    visited.add(pageUrl);
+    state.visited = [...visited].slice(-MAX_TRAVERSAL_VISITS);
+
+    mergeTraversalTargets(state, snapshot?.targets);
+
+    const renderLooksEmpty = snapshot?.directoryLike !== true
+      && !snapshot?.capture
+      && (!Array.isArray(snapshot?.targets) || snapshot.targets.length === 0);
+    if (renderLooksEmpty && currentMatched) {
+      state.currentTarget = matchedTarget || { url: pageUrl, title: String(snapshot?.title || pageUrl) };
+      return { retrying: true, ...(await retryOrSkipCurrent(state, 'The page rendered no capturable body or child links.')) };
+    }
+"""
+          replace_once(background_path, old_match, new_match)
+
+          replace_once(
+              background_path,
+              "    if (message?.type === 'sniperplug:traversal-page') {\n      return { ok: true, ...(await handleTraversalPage(sender, message.snapshot || {})) };\n    }\n",
+              "    if (message?.type === 'sniperplug:traversal-page') {\n      return { ok: true, ...(await handleTraversalPage(sender, message.snapshot || {})) };\n    }\n    if (message?.type === 'sniperplug:overlay-stop-traversal') {\n      const senderTabId = Number(sender?.tab?.id);\n      if (!Number.isInteger(senderTabId)) return { ok: false, error: 'Capture-all stop request did not come from a browser tab.' };\n      return { ok: true, ...(await stopTraversal(senderTabId)) };\n    }\n",
+          )
+
+          # Bump extension/package contract and directly coupled version assertions.
+          manifest_path = Path('browser-extension/manifest.json')
+          manifest = json.loads(manifest_path.read_text())
+          if manifest.get('version') != '0.2.6':
+              raise SystemExit(f"Expected extension 0.2.6, found {manifest.get('version')}")
+          manifest['version'] = '0.2.7'
+          manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+
+          contract_path = Path('browser-extension-version.json')
+          contract = json.loads(contract_path.read_text())
+          if contract.get('latest') != '0.2.6':
+              raise SystemExit(f"Expected extension contract 0.2.6, found {contract.get('latest')}")
+          contract['latest'] = '0.2.7'
+          contract['notes'] = 'Fixes Capture-all on Better Content directories whose guide cards use rendered click navigation instead of hrefs, prevents directory shells from being queued as the only page, and adds minimize/stop/hide controls plus terminal auto-dismiss to the in-page progress HUD.'
+          contract_path.write_text(json.dumps(contract, indent=2) + '\n')
+
+          for test_path in [
+              Path('tools/test-browser-capture-mode-reliability.mjs'),
+              Path('tools/test-browser-auto-traversal.mjs'),
+              Path('tools/test-firefox-better-content-frame-selection.mjs'),
+          ]:
+              text = test_path.read_text()
+              if '0.2.6' not in text:
+                  raise SystemExit(f'Expected 0.2.6 version assertion in {test_path}')
+              test_path.write_text(text.replace('0.2.6', '0.2.7'))
+
+          regression = r'''import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const read = (path) => readFileSync(join(root, path), 'utf8');
+const capture = read('browser-extension/content-capture.js');
+const background = read('browser-extension/background.js');
+const manifest = JSON.parse(read('browser-extension/manifest.json'));
+
+assert.equal(manifest.version, '0.2.7');
+assert.ok(capture.includes('function traversalActivationElements') && capture.includes("style.cursor === 'pointer'"), 'Rendered click-only guide cards are not discoverable.');
+assert.ok(capture.includes('function activationIdentityUrl') && capture.includes("url.searchParams.set('sp_guide'"), 'Click-only cards do not receive stable bounded traversal identities.');
+assert.ok(capture.includes('activation: true') && capture.includes('activationLabel') && capture.includes('activationOrdinal'), 'Click-only card descriptors are incomplete.');
+assert.ok(capture.includes('function activateTraversalTarget') && capture.includes('element.click();') && capture.includes('traverse-activate'), 'Capture-all cannot safely activate a discovered rendered guide card.');
+assert.ok(background.includes('async function sendTraversalActivation') && background.includes("stage: 'activating'") && background.includes("stage: target.activation === true ? (shouldActivate ? 'activating' : 'returning')"), 'Background traversal does not preserve click-card return/activation state.');
+assert.ok(background.includes("activationTarget?.stage === 'returning'") && background.includes("activationTarget?.stage === 'activating'"), 'Returned directory pages and activated guide pages are not distinguished.');
+assert.ok(capture.includes('data-sp-minimize') && capture.includes('data-sp-stop') && capture.includes('data-sp-close'), 'In-page Capture-all HUD is still missing window controls.');
+assert.ok(capture.includes("pointerEvents: 'auto'") && capture.includes('setTraversalOverlayMinimized') && capture.includes('dismissTraversalOverlay'), 'In-page HUD controls cannot actually be used.');
+assert.ok(capture.includes('overlay-stop-traversal') && background.includes("message?.type === 'sniperplug:overlay-stop-traversal'"), 'In-page Stop control is not connected to authoritative traversal stop.');
+assert.ok(capture.includes('traversalOverlayTerminalTimer') && capture.includes('setTimeout(() => dismissTraversalOverlay(), 4200)'), 'Completed/error HUDs can remain stuck on the Whop page forever.');
+assert.ok(capture.includes("control.getAttribute('aria-expanded') === 'false'"), 'Collapsed rendered Better Content sections are not expanded before guide discovery.');
+
+console.log('BROWSER CLICK-CARD TRAVERSAL + HUD REGRESSION: PASS');
+'''
+          Path('tools/test-browser-click-card-traversal.mjs').write_text(regression)
+
+          package_path = Path('package.json')
+          package = json.loads(package_path.read_text())
+          audit = package['scripts']['audit']
+          marker = 'node tools/test-browser-capture-mode-reliability.mjs'
+          if marker not in audit or 'test-browser-click-card-traversal.mjs' in audit:
+              raise SystemExit('Could not add click-card regression to audit chain exactly once.')
+          package['scripts']['audit'] = audit.replace(marker, marker + ' && node tools/test-browser-click-card-traversal.mjs')
+          package_path.write_text(json.dumps(package, indent=2) + '\n')
+
+          active = '''# Active Task
+
+## Active task / outcome
+Fix Firefox Android Better Content Capture-all so the real Make Money Here directory captures every accessible rendered guide instead of queueing only the directory shell, and make the in-page Capture-all progress HUD controllable/removable.
+
+## Status
+IN PROGRESS — runtime regression reproduced on extension 0.2.6. Branch: `fix/capture-all-card-activation-hud`.
+
+## Runtime evidence
+- The rendered Make Money Here directory visibly contains many guide cards, but Capture-all reports `1 of 1 known pages checked` and queues only `Content`.
+- That proves the current URL-only target discovery is not seeing Whop's rendered card navigation.
+- The in-page `SniperPlug Capture-all` HUD remains pinned over the page after the crawl ends and has no minimize, stop, or close controls.
+
+## Root cause
+- `discoverTraversalTargets()` only recognizes anchors/href-style DOM targets (`a[href]`, role=link+href, data-href, data-url).
+- The live Better Content directory uses rendered clickable card controls for at least this view; those cards do not expose an href through the current reader, so the crawler discovers zero children.
+- With no child targets, the directory itself is misclassified/captured as the only page and the traversal immediately completes.
+- The foreground HUD was intentionally created with `pointerEvents: none` and no controls, and terminal states had no dismissal timer.
+
+## Fix in this task
+- Keep URL traversal as the first-class path.
+- Add bounded rendered click-card discovery for visible non-form, non-dangerous card controls that lack safe hrefs, including cursor-pointer React cards.
+- Give every click-only card a same-origin synthetic traversal identity while retaining its verified parent directory URL, title, label, and ordinal.
+- Background remains the authoritative crawler: it returns to the parent directory between click-only guides, activates the exact rendered card, waits for the rendered detail state, then resumes the same queue/retry/persistence machinery.
+- Expand safe collapsed sections (`aria-expanded=false`) before discovering cards.
+- Directory shells with click-only children are classified as directories rather than queued as guides.
+- Add HUD minimize, stop, and hide controls; Stop routes through background traversal authority; completed/error/stopped HUDs auto-dismiss after a short result display.
+- Bump Firefox Android extension/version contract to 0.2.7.
+- Add regression coverage for click-only card traversal and HUD controls.
+
+## Safety preserved
+- Rendered DOM only; no Whop cookie permission, credential forwarding, or private API probing.
+- Same HTTPS app origin/experience scope and sensitive-route rejection remain authoritative.
+- Click activators are limited to visible rendered controls inside the selected content root; forms, dangerous labels, href-backed controls, tabs, popups, disabled controls, tiny/icon controls, and generic action buttons are rejected.
+- Existing traversal visit/retry/queue limits, server authorization, reconciliation, and private-draft review path remain intact.
+
+## Next step
+Run the complete repository regression/package gate on the exact implementation head, inspect the final diff/reviews, merge if green, validate `main`, then hand off the validated 0.2.7 XPI for real-device confirmation.
+'''
+          Path('ACTIVE_TASK.md').write_text(active)
+
+          Path('.github/workflows/apply-capture-all-card-activation-hud.yml').unlink()
+          PY
+
+          git config user.name 'SniperPlug CI Fixer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Fix click-only Capture-all traversal and HUD controls'
+          git push origin HEAD:fix/capture-all-card-activation-hud
