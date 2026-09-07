@@ -219,7 +219,7 @@ function render() {
   elements.crawl.textContent = state.crawlEnabled ? 'Stop capture-all' : resume ? 'Resume capture-all' : 'Capture all guides';
   elements.crawlScope.disabled = state.crawlEnabled || resume;
   if (state.crawlScope) elements.crawlScope.value = state.crawlScope;
-  elements.capture.disabled = !candidate?.experienceId || state.crawlEnabled;
+  elements.capture.disabled = !candidate?.experienceId;
   elements.auto.disabled = !candidate || state.crawlEnabled;
   elements.auto.textContent = `Capture as I browse: ${state.autoEnabled ? 'on' : 'off'}`;
   elements.queueCount.textContent = `${state.queueCount} page${state.queueCount === 1 ? '' : 's'} queued`;
@@ -308,6 +308,7 @@ elements.openWhop.addEventListener('click', async () => {
 
 elements.crawl.addEventListener('click', async () => {
   elements.crawl.disabled = true;
+  let returnToWhop = false;
   try {
     if (state.crawlEnabled) {
       const output = await background({ type: 'sniperplug:stop-traversal', tabId });
@@ -327,13 +328,19 @@ elements.crawl.addEventListener('click', async () => {
         resume: state.crawlCanResume,
       });
       if (Number.isInteger(Number(output.targetTabId))) tabId = Number(output.targetTabId);
-      state = { ...state, ...output, crawlPhase: 'settling', crawlPhaseDetail: '', crawlPhaseAt: Date.now() };
+      state = { ...state, ...output, crawlPhase: 'reading', crawlPhaseDetail: '', crawlPhaseAt: Date.now() };
+      returnToWhop = true;
       setStatus(wasResume
-        ? 'Capture-all resumed from saved progress.'
-        : 'Capture-all started. Keep the Whop tab available; SniperPlug will walk the authorized rendered guide tree for you.', 'ok');
+        ? 'Capture-all resumed. Returning to Whop so Firefox Android keeps the rendered frame active.'
+        : 'Capture-all started. Returning to Whop so Firefox Android keeps the rendered frame active; live progress stays visible on the Better Content page.', 'ok');
     }
     render();
     schedulePoll();
+    if (returnToWhop && Number.isInteger(tabId)) {
+      setTimeout(() => {
+        chrome.tabs.update(tabId, { active: true }).catch(() => null).finally(() => window.close());
+      }, 220);
+    }
   } catch (error) {
     setStatus(error.message, 'error');
     render();

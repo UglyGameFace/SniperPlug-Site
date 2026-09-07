@@ -9,6 +9,7 @@
     ? String(location.hostname || '').toLowerCase()
     : '';
   if (!APP_FRAME_HOST || location.protocol !== 'https:') return;
+  const CAPTURE_DOCUMENT_ID = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
   if (globalThis.__sniperplugBetterContentCapture?.registerCandidate) {
     globalThis.__sniperplugBetterContentCapture.registerCandidate();
@@ -37,6 +38,11 @@
   let lastTraversalIdentity = '';
   let traversalBusy = false;
   let traversalDirty = false;
+  let traversalHasRun = false;
+  let traversalOverlay = null;
+  let traversalOverlayState = null;
+  let traversalOverlayPhase = '';
+  let traversalOverlayDetail = '';
 
   function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -46,8 +52,67 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function ensureTraversalOverlay() {
+    if (traversalOverlay?.isConnected) return traversalOverlay;
+    const overlay = document.createElement('div');
+    overlay.id = 'sniperplug-capture-all-overlay';
+    overlay.setAttribute('aria-live', 'polite');
+    overlay.innerHTML = '<div data-sp-title>SniperPlug Capture-all</div><div data-sp-phase>Starting…</div><div data-sp-track><div data-sp-bar></div></div><div data-sp-counts>Discovering rendered guides…</div>';
+    Object.assign(overlay.style, {
+      position: 'fixed', top: '12px', right: '12px', width: 'min(340px, calc(100vw - 24px))',
+      zIndex: '2147483647', padding: '12px', borderRadius: '14px', background: 'rgba(5,16,25,.94)',
+      color: '#e8fff4', border: '1px solid rgba(91,226,158,.45)', boxShadow: '0 12px 32px rgba(0,0,0,.35)',
+      fontFamily: 'system-ui, sans-serif', fontSize: '13px', lineHeight: '1.35', pointerEvents: 'none',
+    });
+    const title = overlay.querySelector('[data-sp-title]');
+    Object.assign(title.style, { fontWeight: '800', fontSize: '14px', marginBottom: '5px' });
+    const phase = overlay.querySelector('[data-sp-phase]');
+    Object.assign(phase.style, { color: '#9ff3c7', marginBottom: '8px' });
+    const track = overlay.querySelector('[data-sp-track]');
+    Object.assign(track.style, { height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.12)', marginBottom: '7px' });
+    const bar = overlay.querySelector('[data-sp-bar]');
+    Object.assign(bar.style, { height: '100%', width: '18%', borderRadius: '999px', background: '#5be29e', transition: 'width .2s ease' });
+    const counts = overlay.querySelector('[data-sp-counts]');
+    Object.assign(counts.style, { color: '#c7d4d0' });
+    (document.body || document.documentElement).appendChild(overlay);
+    traversalOverlay = overlay;
+    return overlay;
+  }
+
+  function renderTraversalOverlay() {
+    const state = traversalOverlayState || {};
+    const terminal = ['complete', 'complete-empty', 'error', 'limit', 'stopped', 'interrupted'].includes(String(state.crawlStatus || ''));
+    if (!traversalEnabled && !terminal) {
+      if (traversalOverlay) traversalOverlay.style.display = 'none';
+      return;
+    }
+    const overlay = ensureTraversalOverlay();
+    overlay.style.display = 'block';
+    const phaseNames = { settling: 'Settling…', reading: 'Reading…', expanding: 'Expanding…', scrolling: 'Scrolling…', images: 'Images…', tabs: 'Tabs…', extracting: 'Extracting…', sending: 'Saving…', retrying: 'Retrying…' };
+    const status = String(state.crawlStatus || (traversalEnabled ? 'starting' : 'idle'));
+    const visited = Math.max(0, Number(state.crawlVisited || 0));
+    const remaining = Math.max(0, Number(state.crawlRemaining || 0));
+    const discovered = Math.max(0, Number(state.crawlDiscovered || 0));
+    const known = Math.max(discovered, visited + remaining);
+    const complete = status === 'complete' || status === 'complete-empty';
+    const percent = complete ? 100 : known > 0 ? Math.max(2, Math.min(99, Math.round((visited / known) * 100))) : 18;
+    overlay.querySelector('[data-sp-bar]').style.width = `${percent}%`;
+    overlay.querySelector('[data-sp-phase]').textContent = traversalOverlayDetail || phaseNames[traversalOverlayPhase] || (terminal ? status.replace('-', ' ') : 'Scanning rendered Better Content…');
+    overlay.querySelector('[data-sp-counts]').textContent = known > 0
+      ? `${visited} of ${known} known pages checked · ${Math.max(0, Number(state.crawlCaptured || 0))} queued · ${Math.max(0, Number(state.crawlRetries || 0))} retries`
+      : terminal ? (state.crawlError || state.crawlDiagnostic || 'Capture-all finished.') : 'Discovering rendered guides…';
+  }
+
+  function updateTraversalOverlayState(next) {
+    traversalOverlayState = next && typeof next === 'object' ? next : traversalOverlayState;
+    renderTraversalOverlay();
+  }
+
   function reportTraversalProgress(phase, detail = '') {
     if (!traversalEnabled) return;
+    traversalOverlayPhase = String(phase || '');
+    traversalOverlayDetail = normalizeSpace(detail).slice(0, 180);
+    renderTraversalOverlay();
     try {
       chrome.runtime.sendMessage({
         type: `${MESSAGE_PREFIX}traversal-progress`,
@@ -132,6 +197,7 @@
   }
 
   function ignoredElement(element) {
+    if (element?.closest?.('#sniperplug-capture-all-overlay')) return true;
     const tag = element.tagName?.toLowerCase() || '';
     if (['script', 'style', 'noscript', 'template', 'svg', 'canvas', 'button', 'input', 'textarea', 'select', 'option'].includes(tag)) return true;
     const role = String(element.getAttribute('role') || '').toLowerCase();
@@ -143,6 +209,7 @@
 
   function traversalElementExcluded(element) {
     if (!(element instanceof Element) || !elementVisible(element)) return true;
+    if (element.closest('#sniperplug-capture-all-overlay')) return true;
     const excludedAncestor = element.closest('nav,aside,footer,[role="navigation"],[role="menu"],[role="menubar"],[role="toolbar"],[role="dialog"],[role="alertdialog"]');
     if (excludedAncestor) return true;
     for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
@@ -604,6 +671,7 @@
       pageUrl: safeHttpUrl(location.href) || currentAppFrameFallbackUrl(),
       textLength: normalizeSpace(root?.innerText || '').length,
       host: APP_FRAME_HOST,
+      documentId: CAPTURE_DOCUMENT_ID,
       likelyAppFrame: true,
     };
   }
@@ -639,6 +707,36 @@
     traversalDirty = false;
   }
 
+  async function runTraversalSnapshot() {
+    if (!traversalEnabled) return false;
+    if (traversalBusy) {
+      traversalDirty = true;
+      return false;
+    }
+    traversalBusy = true;
+    traversalDirty = false;
+    try {
+      const snapshot = await traversalSnapshot();
+      if (!traversalEnabled) return false;
+      traversalHasRun = true;
+      const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;
+      if (identity === lastTraversalIdentity) return true;
+      lastTraversalIdentity = identity;
+      reportTraversalProgress('sending');
+      chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);
+      return true;
+    } catch (error) {
+      if (traversalEnabled) {
+        traversalDirty = true;
+        reportTraversalProgress('retrying', String(error?.message || error || 'Rendered page changed while it was being prepared.'));
+      }
+      return false;
+    } finally {
+      traversalBusy = false;
+      if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();
+    }
+  }
+
   function scheduleTraversalSnapshot() {
     if (!traversalEnabled) return;
     if (traversalBusy) {
@@ -647,33 +745,28 @@
     }
     if (traversalTimer) return;
     reportTraversalProgress('settling');
-    traversalTimer = setTimeout(async () => {
+    traversalTimer = setTimeout(() => {
       traversalTimer = 0;
-      if (!traversalEnabled || traversalBusy) return;
-      traversalBusy = true;
-      traversalDirty = false;
-      try {
-        const snapshot = await traversalSnapshot();
-        if (!traversalEnabled) return;
-        const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;
-        if (identity === lastTraversalIdentity) return;
-        lastTraversalIdentity = identity;
-        reportTraversalProgress('sending');
-        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);
-      } catch (error) {
-        if (traversalEnabled) {
-          traversalDirty = true;
-          reportTraversalProgress('retrying', String(error?.message || error || 'Rendered page changed while it was being prepared.'));
-        }
-      } finally {
-        traversalBusy = false;
-        if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();
-      }
+      return runTraversalSnapshot();
     }, TRAVERSAL_SETTLE_MS);
   }
 
+  function runTraversalSnapshotNow() {
+    if (!traversalEnabled) return;
+    if (traversalTimer) {
+      clearTimeout(traversalTimer);
+      traversalTimer = 0;
+    }
+    runTraversalSnapshot();
+  }
+
   function resumeTraversal() {
-    if (traversalEnabled) scheduleTraversalSnapshot();
+    if (!traversalEnabled) return;
+    if (!traversalHasRun && !traversalBusy) {
+      runTraversalSnapshotNow();
+      return;
+    }
+    scheduleTraversalSnapshot();
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -699,14 +792,30 @@
       }
       traversalEnabled = nextTraversalEnabled;
       lastTraversalIdentity = '';
+      traversalHasRun = false;
       resetTraversalSnapshotSchedule();
       if (traversalEnabled) {
         clearTimeout(autoTimer);
-        scheduleTraversalSnapshot();
+        ensureTraversalOverlay();
+        runTraversalSnapshotNow();
       } else if (autoEnabled) {
         scheduleAutoCapture();
       }
       sendResponse({ ok: true, enabled: traversalEnabled });
+      return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}traversal-snapshot-now`) {
+      if (!traversalEnabled) {
+        sendResponse({ ok: false, error: 'Capture-all is not enabled in this rendered frame.' });
+        return false;
+      }
+      runTraversalSnapshotNow();
+      sendResponse({ ok: true, started: true });
+      return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}traversal-state`) {
+      updateTraversalOverlayState(message.state || {});
+      sendResponse({ ok: true });
       return false;
     }
     if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {
@@ -727,7 +836,8 @@
     return false;
   });
 
-  const observer = new MutationObserver(() => {
+  const observer = new MutationObserver((mutations) => {
+    if (traversalOverlay && mutations.length && mutations.every((mutation) => mutation.target === traversalOverlay || traversalOverlay.contains(mutation.target))) return;
     registerCandidate();
     scheduleAutoCapture();
     scheduleTraversalSnapshot();
@@ -739,10 +849,11 @@
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       lastTraversalIdentity = '';
+      traversalHasRun = false;
       resetTraversalSnapshotSchedule();
       registerCandidate();
       scheduleAutoCapture();
-      scheduleTraversalSnapshot();
+      resumeTraversal();
     }
   }, 700);
 
@@ -750,6 +861,7 @@
     registerCandidate,
     candidateSummary,
     resumeTraversal,
+    runTraversalSnapshotNow,
   };
   registerCandidate();
   setTimeout(registerCandidate, 900);
