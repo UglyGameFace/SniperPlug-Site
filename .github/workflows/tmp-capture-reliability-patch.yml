@@ -18,4 +18,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Correct async callback contract in temporary patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tools/tmp-capture-reliability-patch.sh')
+          text = p.read_text()
+          old = "    traversalTimer = setTimeout(() => {\\n      traversalTimer = 0;\\n      runTraversalSnapshot();\\n    }, TRAVERSAL_SETTLE_MS);"
+          new = "    traversalTimer = setTimeout(() => {\\n      traversalTimer = 0;\\n      return runTraversalSnapshot();\\n    }, TRAVERSAL_SETTLE_MS);"
+          if old not in text:
+              raise SystemExit('temporary scheduler patch pattern not found')
+          p.write_text(text.replace(old, new, 1))
+          PY
       - run: bash tools/tmp-capture-reliability-patch.sh
