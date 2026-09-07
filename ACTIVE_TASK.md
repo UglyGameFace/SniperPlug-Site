@@ -13,9 +13,9 @@ Completed implementation:
 - bumped the Firefox Android extension/version contract to `0.2.3`.
 
 Still required before completion:
-- exact-head repository CI and Firefox Android packaging;
-- changed-file/review inspection;
-- merge and post-merge `main` validation;
+- validate this final task-record PR head exactly;
+- merge PR #71;
+- post-merge `main` validation;
 - final task-record cleanup and validated XPI handoff.
 
 Out of scope:
@@ -23,7 +23,7 @@ Out of scope:
 - unrelated importer, account-switching, or Control Center work.
 
 ## Status
-IMPLEMENTED — branch `fix/capture-all-progress-stall` contains the scheduler, live-phase, regression, and `0.2.3` package changes. Repository-native exact-head validation is the remaining merge gate.
+VALIDATED IMPLEMENTATION — PR #71 implementation head `aa4d2aa51bbf55a9132e8abb960d50d182fa98cf` passed the full merge gate. This task-record-only head must now pass the same repository checks before merge so the final PR head is exact-head validated.
 
 ## Findings / root cause
 - `startTraversal()` saves `status: 'starting'`, attaches traversal to the verified app frame, then waits for the content script to emit the first `sniperplug:traversal-page` snapshot.
@@ -59,29 +59,41 @@ IMPLEMENTED — branch `fix/capture-all-progress-stall` contains the scheduler, 
   - executes the production scheduler and proves 100 rapid mutation triggers create one settle timer;
   - proves mutations during extraction coalesce into one guaranteed follow-up snapshot.
 - `tools/test-browser-progress-bar.mjs`
-  - now executes production phase/progress logic and verifies live phase text with indeterminate and determinate progress.
+  - executes production phase/progress logic and verifies live phase text with indeterminate and determinate progress.
 - Existing traversal/Firefox regressions updated for extension `0.2.3`.
 - `package.json` runs the scheduler regression in the normal audit/build chain.
 - `browser-extension/manifest.json` and `browser-extension-version.json` advanced to `0.2.3`.
 
-## Validation required
-- Full `Verify SniperPlug` audit/regression suite on exact PR head.
-- Firefox Android XPI package/upload on exact PR head.
-- Preview/privacy/route checks and Cloudflare deployment as applicable.
-- No unresolved PR review threads/findings.
-- Post-merge `main` validation and final bookkeeping-head validation.
+## Validation / results
+Implementation head `aa4d2aa51bbf55a9132e8abb960d50d182fa98cf`:
+- **Verify SniperPlug #1097 passed**.
+- Full repository audit/regression suite passed.
+- New **BROWSER CAPTURE-ALL SCHEDULER REGRESSION** passed, proving a 100-mutation burst cannot postpone the first traversal snapshot and in-flight mutations coalesce into one follow-up.
+- Updated **BROWSER CAPTURE PROGRESS BAR REGRESSION** passed, including live phase visibility.
+- Popup latency regression still passed with cold popup-state returning in 2 ms while recovery/version work was intentionally hung.
+- Firefox exact-frame, candidate-retention, recursive traversal, server roundtrip, security/privacy, and all unrelated repository regressions passed.
+- Firefox Android `0.2.3` XPI packaged, archive-tested, and uploaded successfully.
+- PR artifact `sniperplug-firefox-android-xpi` ID `10000088539`; artifact ZIP digest `sha256:ee430963ccac84c146427dd2a58b34a31a9c6d818d9a0cbd399359d4233b0d8d`.
+- **Verify affiliate-ready preview #140 passed**.
+- **Verify retired public deal routes #145 passed**.
+- Cloudflare Pages preview deployed successfully on the exact implementation head.
+- PR is mergeable with no submitted reviews or inline review findings.
+- Qodo review is externally unavailable because its subscription is inactive; it produced no review finding.
+- Both Vercel statuses are external account-quota failures (`api-deployments-free-per-day` / build-rate limit), not application build failures. Cloudflare and repository-native validation are green.
 
 ## Cleanup / conflicts
+- Changed files are limited to this active task record, extension scheduler/popup/version files, audit wiring, and directly affected regressions.
 - No second crawler, polling crawler, alternate traversal store, or navigation fallback was added.
 - Existing `MutationObserver`, traversal state, background traversal lock, safe URL policy, queue limits, and server verification remain authoritative.
 - No cookie permission, token forwarding, private Whop API call, credential-bearing traversal, or unrelated feature work was introduced.
 
 ## Blockers / risks
-- No known implementation blocker. Real-device runtime still requires installing the newly packaged `0.2.3` XPI after merge.
-- Live phase messages are extension-only messages and do not mutate the Whop page DOM, avoiding a progress-feedback mutation loop.
+- No implementation blocker remains.
+- Real-device runtime confirmation requires installing the newly packaged `0.2.3` XPI after merge.
+- Vercel remains externally quota-limited; this does not block the Cloudflare production path or repository validation.
 
 ## Backlog
 None discovered for this task.
 
 ## Next step
-Open the PR on the implemented branch, run the exact-head merge gate, fix any genuine regression, then merge and validate `main` before declaring completion.
+Wait for repository-native checks on this final task-record head. If they pass without a new review finding, merge PR #71, validate `main`, close the active task record, and hand off the final `0.2.3` XPI.
