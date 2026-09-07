@@ -71,7 +71,7 @@ const context = {
       },
     },
     runtime: {
-      getManifest: () => ({ version: '0.2.3' }),
+      getManifest: () => ({ version: '0.2.4' }),
       onMessage: { addListener: (listener) => { runtimeListener = listener; } },
     },
     tabs: {
@@ -108,7 +108,7 @@ const elapsedMs = Date.now() - startedAt;
 assert.equal(popupState.ok, true);
 assert.equal(popupState.candidate, null);
 assert.equal(popupState.candidateRecoveryPending, true, 'Cold popup did not report background recovery in progress.');
-assert.equal(popupState.extensionVersion?.installed, '0.2.3');
+assert.equal(popupState.extensionVersion?.installed, '0.2.4');
 assert.ok(elapsedMs < 250, `Popup-state took ${elapsedMs}ms even though only cached/local data was required.`);
 
 await new Promise((resolve) => setTimeout(resolve, 0));

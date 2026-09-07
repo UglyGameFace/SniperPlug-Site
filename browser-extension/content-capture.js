@@ -691,7 +691,13 @@
       return false;
     }
     if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
-      traversalEnabled = message.enabled === true;
+      const nextTraversalEnabled = message.enabled === true;
+      if (nextTraversalEnabled === traversalEnabled) {
+        if (nextTraversalEnabled) resumeTraversal();
+        sendResponse({ ok: true, enabled: traversalEnabled, unchanged: true });
+        return false;
+      }
+      traversalEnabled = nextTraversalEnabled;
       lastTraversalIdentity = '';
       resetTraversalSnapshotSchedule();
       if (traversalEnabled) {
