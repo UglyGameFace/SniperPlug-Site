@@ -2,7 +2,8 @@ name: Temporary Capture Reliability Patch
 
 on:
   push:
-    branches: ["fix/capture-all-initial-watchdog"]
+    branches:
+      - fix/capture-all-initial-watchdog
 
 permissions:
   contents: write
@@ -18,23 +19,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Correct async callback contract in temporary patch
-        shell: bash
+      - name: Apply capture reliability implementation
         run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('tools/tmp-capture-reliability-patch.sh')
-          text = p.read_text()
-          old = '''    traversalTimer = setTimeout(() => {
-      traversalTimer = 0;
-      runTraversalSnapshot();
-    }, TRAVERSAL_SETTLE_MS);'''
-          new = '''    traversalTimer = setTimeout(() => {
-      traversalTimer = 0;
-      return runTraversalSnapshot();
-    }, TRAVERSAL_SETTLE_MS);'''
-          if old not in text:
-              raise SystemExit('temporary scheduler patch pattern not found')
-          p.write_text(text.replace(old, new, 1))
-          PY
-      - run: bash tools/tmp-capture-reliability-patch.sh
+          bash tools/tmp-fix-patch-script.sh
+          rm tools/tmp-fix-patch-script.sh
+          bash tools/tmp-capture-reliability-patch.sh
