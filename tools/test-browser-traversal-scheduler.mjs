@@ -20,7 +20,10 @@ assert.ok(reattachGuard >= 0 && reattachNoop > reattachGuard && reattachReset > 
 assert.ok(captureScript.includes('if (nextTraversalEnabled) resumeTraversal();'), 'Repeated enabled traversal reattach no longer preserves the pending scheduler.');
 assert.ok(schedulerSource.includes('traversalDirty = true;'), 'Mutations during an active snapshot are not coalesced for a follow-up pass.');
 assert.ok(schedulerSource.includes('if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();'), 'Dirty work is not guaranteed a follow-up snapshot.');
-assert.ok(!/function scheduleTraversalSnapshot\(\)[\s\S]*?clearTimeout\(traversalTimer\)/.test(schedulerSource), 'The normal traversal scheduler still clears its own settle timer and can starve forever.');
+const scheduleStart = schedulerSource.indexOf('function scheduleTraversalSnapshot()');
+const forceStart = schedulerSource.indexOf('function runTraversalSnapshotNow()', scheduleStart);
+const normalScheduleSource = schedulerSource.slice(scheduleStart, forceStart);
+assert.ok(!normalScheduleSource.includes('clearTimeout(traversalTimer)'), 'The normal mutation scheduler still clears its own settle timer and can starve forever.');
 
 const scheduled = [];
 const phases = [];
@@ -49,6 +52,7 @@ const context = {
   traversalBusy: false,
   traversalTimer: 0,
   traversalDirty: false,
+  traversalHasRun: false,
   lastTraversalIdentity: '',
   MESSAGE_PREFIX: 'sniperplug:',
   setTimeout: (fn, ms) => {
@@ -73,9 +77,17 @@ const context = {
   },
 };
 context.globalThis = context;
-runInNewContext(`${schedulerSource}\nglobalThis.scheduleForTest = scheduleTraversalSnapshot;\nglobalThis.resetForTest = resetTraversalSnapshotSchedule;`, context, {
+runInNewContext(`${schedulerSource}\nglobalThis.scheduleForTest = scheduleTraversalSnapshot;\nglobalThis.runSnapshotForTest = runTraversalSnapshot;\nglobalThis.runNowForTest = runTraversalSnapshotNow;\nglobalThis.resetForTest = resetTraversalSnapshotSchedule;`, context, {
   filename: 'browser-extension/content-capture-scheduler.js',
 });
+
+await context.runSnapshotForTest();
+assert.equal(snapshotNumber, 1, 'An immediate seed snapshot could not run without a settle timer.');
+assert.equal(scheduled.length, 0, 'The immediate seed snapshot unexpectedly depended on a timer.');
+sent.length = 0;
+snapshotNumber = 0;
+context.lastTraversalIdentity = '';
+context.traversalHasRun = false;
 
 for (let index = 0; index < 100; index += 1) context.scheduleForTest();
 assert.equal(scheduled.length, 1, 'A 100-mutation burst scheduled more than one settle timer.');

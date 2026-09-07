@@ -13,6 +13,8 @@ const MAX_TRAVERSAL_VISITS = 240;
 const MAX_TRAVERSAL_RETRIES = 3;
 const MAX_FAILURES_REPORTED = 24;
 const TRAVERSAL_NAV_TIMEOUT_MS = 12_000;
+const TRAVERSAL_START_TIMEOUT_MS = 5_000;
+const MAX_TRAVERSAL_START_REPAIRS = 3;
 const TRAVERSAL_RESUME_MAX_AGE_MS = 24 * 60 * 60_000;
 const CANDIDATE_TTL_MS = 10 * 60_000;
 const APP_FRAME_SETTLE_MS = 4000;
@@ -256,11 +258,23 @@ async function traversalForTab(tabId, candidate = null) {
   return null;
 }
 
+async function publishTraversalState(state) {
+  if (!Number.isInteger(Number(state?.tabId)) || !Number.isInteger(Number(state?.frameId))) return;
+  try {
+    await chrome.tabs.sendMessage(
+      Number(state.tabId),
+      { type: 'sniperplug:traversal-state', state: traversalPublicState(state) },
+      { frameId: Number(state.frameId) },
+    );
+  } catch { /* The frame may be between navigations. */ }
+}
+
 async function saveTraversal(state) {
   if (!state?.experienceId || !state?.host) return;
   const traversals = await allTraversals();
   traversals[traversalId(state.experienceId, state.host)] = state;
   await writePersistent(TRAVERSAL_KEY, traversals);
+  await publishTraversalState(state);
 }
 
 async function deleteTraversal(state) {
@@ -278,6 +292,8 @@ async function saveCandidate(sender, candidate) {
 
   const candidates = pruneCandidates(await readSession(CANDIDATE_KEY, {}));
   const now = Date.now();
+  const key = candidateKey(tabId, frameId);
+  const previousCandidate = candidates[key] || null;
   const tabExperienceId = experienceIdFromUrl(sender?.tab?.url);
   const normalized = {
     tabId,
@@ -288,33 +304,41 @@ async function saveCandidate(sender, candidate) {
     pageUrl: String(candidate?.pageUrl || ''),
     textLength: Math.max(0, Number(candidate?.textLength || 0)),
     host: String(candidate?.host || '').toLowerCase(),
+    documentId: String(candidate?.documentId || ''),
     likelyAppFrame: true,
   };
 
-  candidates[candidateKey(tabId, frameId)] = normalized;
+  candidates[key] = normalized;
   await writeSession(CANDIDATE_KEY, candidates);
 
   const traversal = await traversalForCandidate(normalized);
   if (traversal && (traversal.enabled === true || traversal.status === 'interrupted')) {
-    if (traversal.status === 'interrupted') {
+    const wasInterrupted = traversal.status === 'interrupted';
+    const documentChanged = !previousCandidate || !normalized.documentId || previousCandidate.documentId !== normalized.documentId;
+    const frameChanged = Number(traversal.tabId ?? traversal.lastTabId) !== tabId || Number(traversal.frameId) !== frameId;
+    if (wasInterrupted) {
       traversal.enabled = true;
-      traversal.status = 'running';
+      traversal.status = 'starting';
+      traversal.startupStartedAt = now;
+      traversal.startupRepairCount = 0;
       traversal.lastDiagnostic = 'Resumed after the Whop tab or browser was reopened.';
       if (traversal.currentTarget?.url) {
         traversal.pending = [traversal.currentTarget, ...(Array.isArray(traversal.pending) ? traversal.pending : [])];
         traversal.currentTarget = null;
       }
     }
-    const previousTabId = Number(traversal.tabId ?? traversal.lastTabId);
-    traversal.tabId = tabId;
-    traversal.frameId = frameId;
-    traversal.lastTabId = tabId;
-    if (Number.isInteger(previousTabId) && previousTabId !== tabId) await migrateQueue(previousTabId, tabId);
-    traversal.updatedAt = now;
-    await saveTraversal(traversal);
-    await setPassiveAutoForTab(tabId, false);
-    chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-auto', enabled: false }, { frameId }).catch(() => null);
-    chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);
+    if (wasInterrupted || documentChanged || frameChanged) {
+      const previousTabId = Number(traversal.tabId ?? traversal.lastTabId);
+      traversal.tabId = tabId;
+      traversal.frameId = frameId;
+      traversal.lastTabId = tabId;
+      if (Number.isInteger(previousTabId) && previousTabId !== tabId) await migrateQueue(previousTabId, tabId);
+      traversal.updatedAt = now;
+      await saveTraversal(traversal);
+      await setPassiveAutoForTab(tabId, false);
+      chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-auto', enabled: false }, { frameId }).catch(() => null);
+      chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);
+    }
   } else {
     const autoTabs = await readSession(AUTO_KEY, {});
     if (autoTabs[String(tabId)] === true) {
@@ -613,6 +637,8 @@ async function captureCurrent(tabId) {
     throw new Error('Whop is open in Firefox, but SniperPlug has not found the rendered Better Content app frame yet. Keep the content visible and reopen the extension.');
   }
   const sourceTabId = candidate.tabId;
+  await chrome.tabs.update(sourceTabId, { active: true }).catch(() => null);
+  await wait(80);
   const response = await chrome.tabs.sendMessage(sourceTabId, { type: 'sniperplug:capture-now' }, { frameId: candidate.frameId });
   if (!response?.ok) throw new Error(response?.error || 'The Better Content frame could not be captured.');
   const queue = await addCapture(sourceTabId, response.capture, { changeType: 'manual' });
@@ -706,6 +732,62 @@ async function setTraversalFrame(tabId, frameId, enabled) {
   }
 }
 
+async function requestTraversalSnapshotNow(state) {
+  if (!state?.enabled || !Number.isInteger(Number(state.tabId)) || !Number.isInteger(Number(state.frameId))) return false;
+  try {
+    const response = await chrome.tabs.sendMessage(
+      Number(state.tabId),
+      { type: 'sniperplug:traversal-snapshot-now' },
+      { frameId: Number(state.frameId) },
+    );
+    return response?.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+async function repairTraversalStartup(state, reason) {
+  if (!state?.enabled || state.status !== 'starting' || state.currentTarget) return false;
+  const attempts = Math.max(0, Number(state.startupRepairCount || 0));
+  if (attempts >= MAX_TRAVERSAL_START_REPAIRS) {
+    await stopTraversal(Number(state.tabId), 'error', 'Capture-all could not obtain the first rendered Better Content snapshot after bounded recovery attempts. Keep the Whop content visible and retry.');
+    return false;
+  }
+  state.startupRepairCount = attempts + 1;
+  state.lastDiagnostic = `Startup recovery ${attempts + 1}/${MAX_TRAVERSAL_START_REPAIRS}: ${reason}`;
+  state.updatedAt = Date.now();
+  await saveTraversal(state);
+  let forced = await requestTraversalSnapshotNow(state);
+  if (!forced) {
+    const resolved = await resolveCandidate(Number(state.tabId), await whopTabs());
+    if (resolved.candidate) {
+      state.tabId = resolved.candidate.tabId;
+      state.frameId = resolved.candidate.frameId;
+      await saveTraversal(state);
+      await setTraversalFrame(Number(state.tabId), Number(state.frameId), true);
+      forced = await requestTraversalSnapshotNow(state);
+    }
+  }
+  scheduleTraversalStartupTimeout(state);
+  return forced;
+}
+
+function scheduleTraversalStartupTimeout(state) {
+  clearTraversalTimer(state);
+  if (!state?.enabled || state.status !== 'starting' || state.currentTarget) return;
+  const id = traversalId(state.experienceId, state.host);
+  const expectedStart = Number(state.startupStartedAt || state.startedAt || Date.now());
+  const timer = setTimeout(() => {
+    withTraversalLock(Number(state.tabId), async () => {
+      const latest = await traversalForTab(Number(state.tabId), state);
+      if (!latest?.enabled || latest.status !== 'starting' || latest.currentTarget) return;
+      if (Number(latest.startupStartedAt || latest.startedAt || 0) !== expectedStart) return;
+      await repairTraversalStartup(latest, 'The first rendered-page snapshot did not arrive before the startup deadline.');
+    }).catch(() => null);
+  }, TRAVERSAL_START_TIMEOUT_MS);
+  traversalTimers.set(id, timer);
+}
+
 function sectionScopePath(seedUrl, experienceId) {
   const seed = safeAppFrameUrl(seedUrl);
   if (!seed) return `/experiences/${experienceId}`;
@@ -762,6 +844,9 @@ async function startTraversal(tabId, options = {}) {
       state.currentTarget = null;
     }
     if (Number.isInteger(oldTabId) && oldTabId !== sourceTabId) await migrateQueue(oldTabId, sourceTabId);
+    state.status = 'starting';
+    state.startupStartedAt = Date.now();
+    state.startupRepairCount = 0;
     state.lastDiagnostic = 'Resumed the saved capture-all session.';
   } else {
     state = {
@@ -795,6 +880,8 @@ async function startTraversal(tabId, options = {}) {
       rightsConfirmed: options.rightsConfirmed === true,
       passiveAutoWasEnabled: (await readSession(AUTO_KEY, {}))[String(sourceTabId)] === true,
       startedAt: Date.now(),
+      startupStartedAt: Date.now(),
+      startupRepairCount: 0,
       updatedAt: Date.now(),
     };
   }
@@ -811,6 +898,8 @@ async function startTraversal(tabId, options = {}) {
     await saveTraversal(state);
     throw new Error(state.error);
   }
+  scheduleTraversalStartupTimeout(state);
+  requestTraversalSnapshotNow(state).catch(() => null);
   return { targetTabId: sourceTabId, ...traversalPublicState(state) };
 }
 
@@ -967,6 +1056,9 @@ async function handleTraversalPage(sender, snapshot) {
     if (!pageUrl) return stopTraversal(tabId, 'error', 'Capture-all stopped because Better Content left the verified app-frame scope or exposed a credential-bearing URL.');
 
     clearTraversalTimer(state);
+    state.status = 'running';
+    state.startupStartedAt = 0;
+    state.startupRepairCount = 0;
     const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])
       .slice(0, 360)
       .map((target) => String(target?.url || ''))
@@ -1185,16 +1277,25 @@ function scheduleExtensionVersionRefresh() {
 }
 
 function scheduleStaleTraversalRepair(targetTabId, candidate, traversal) {
-  if (!Number.isInteger(targetTabId)
-    || !traversal?.enabled
-    || !traversal.currentTarget?.startedAt
-    || Date.now() - Number(traversal.currentTarget.startedAt) <= TRAVERSAL_NAV_TIMEOUT_MS) return false;
+  if (!Number.isInteger(targetTabId) || !traversal?.enabled) return false;
+  const startupStale = traversal.status === 'starting'
+    && !traversal.currentTarget
+    && Date.now() - Number(traversal.startupStartedAt || traversal.startedAt || 0) > TRAVERSAL_START_TIMEOUT_MS;
+  const navigationStale = Boolean(traversal.currentTarget?.startedAt)
+    && Date.now() - Number(traversal.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS;
+  if (!startupStale && !navigationStale) return false;
   if (staleTraversalRepairJobs.has(targetTabId)) return true;
   let job;
   job = withTraversalLock(targetTabId, async () => {
     const latest = await traversalForTab(targetTabId, candidate);
-    if (latest?.enabled
-      && latest.currentTarget?.startedAt
+    if (!latest?.enabled) return;
+    if (latest.status === 'starting'
+      && !latest.currentTarget
+      && Date.now() - Number(latest.startupStartedAt || latest.startedAt || 0) > TRAVERSAL_START_TIMEOUT_MS) {
+      await repairTraversalStartup(latest, 'Recovered a stale Capture-all startup while reopening the extension.');
+      return;
+    }
+    if (latest.currentTarget?.startedAt
       && Date.now() - Number(latest.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS) {
       await retryOrSkipCurrent(latest, 'Recovered a stale in-progress navigation while reopening the extension.');
     }

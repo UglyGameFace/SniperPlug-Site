@@ -1,5 +1,5 @@
 {
-  "latest": "0.2.4",
+  "latest": "0.2.5",
   "minimum": "0.2.0",
-  "notes": "Prevents active Capture all sessions from repeatedly reattaching to the same Whop frame and resetting the pending traversal timer; repeated enabled reattach is now idempotent while the existing snapshot continues."
+  "notes": "Makes Capture-all start immediately instead of depending on a backgrounded Whop timer, returns Firefox Android to the rendered Whop page with an in-page progress overlay, adds bounded startup recovery, and keeps Capture page available as a direct fallback."
 }
