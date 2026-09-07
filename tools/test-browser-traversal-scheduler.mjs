@@ -39,6 +39,7 @@ const context = {
   Promise,
   String,
   Error,
+  TRAVERSAL_SETTLE_MS: 900,
   traversalEnabled: true,
   traversalBusy: false,
   traversalTimer: 0,
