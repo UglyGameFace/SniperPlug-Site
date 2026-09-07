@@ -1,0 +1,240 @@
+name: Temporary Capture Reliability Patch
+
+on:
+  push:
+    branches:
+      - fix/capture-all-initial-watchdog
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/capture-all-initial-watchdog
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply exact reliability patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def must_replace(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text()
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrence(s), found {actual}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, count))
+
+          # content-capture.js: identify actual document instances, exclude the in-page overlay,
+          # start the seed snapshot immediately, and expose an explicit background recovery command.
+          path = 'browser-extension/content-capture.js'
+          must_replace(path,
+          "  const APP_FRAME_HOST = isWhopAppHost(location.hostname)\n    ? String(location.hostname || '').toLowerCase()\n    : '';\n  if (!APP_FRAME_HOST || location.protocol !== 'https:') return;\n",
+          "  const APP_FRAME_HOST = isWhopAppHost(location.hostname)\n    ? String(location.hostname || '').toLowerCase()\n    : '';\n  if (!APP_FRAME_HOST || location.protocol !== 'https:') return;\n  const CAPTURE_DOCUMENT_ID = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;\n")
+
+          must_replace(path,
+          "  let traversalBusy = false;\n  let traversalDirty = false;\n",
+          "  let traversalBusy = false;\n  let traversalDirty = false;\n  let traversalHasRun = false;\n  let traversalOverlay = null;\n  let traversalOverlayState = null;\n  let traversalOverlayPhase = '';\n  let traversalOverlayDetail = '';\n")
+
+          must_replace(path,
+          "  function reportTraversalProgress(phase, detail = '') {\n    if (!traversalEnabled) return;\n",
+          "  function ensureTraversalOverlay() {\n    if (traversalOverlay?.isConnected) return traversalOverlay;\n    const overlay = document.createElement('div');\n    overlay.id = 'sniperplug-capture-all-overlay';\n    overlay.setAttribute('aria-live', 'polite');\n    overlay.innerHTML = '<div data-sp-title>SniperPlug Capture-all</div><div data-sp-phase>Starting…</div><div data-sp-track><div data-sp-bar></div></div><div data-sp-counts>Discovering rendered guides…</div>';\n    Object.assign(overlay.style, {\n      position: 'fixed', top: '12px', right: '12px', width: 'min(340px, calc(100vw - 24px))',\n      zIndex: '2147483647', padding: '12px', borderRadius: '14px', background: 'rgba(5,16,25,.94)',\n      color: '#e8fff4', border: '1px solid rgba(91,226,158,.45)', boxShadow: '0 12px 32px rgba(0,0,0,.35)',\n      fontFamily: 'system-ui, sans-serif', fontSize: '13px', lineHeight: '1.35', pointerEvents: 'none',\n    });\n    const title = overlay.querySelector('[data-sp-title]');\n    Object.assign(title.style, { fontWeight: '800', fontSize: '14px', marginBottom: '5px' });\n    const phase = overlay.querySelector('[data-sp-phase]');\n    Object.assign(phase.style, { color: '#9ff3c7', marginBottom: '8px' });\n    const track = overlay.querySelector('[data-sp-track]');\n    Object.assign(track.style, { height: '8px', borderRadius: '999px', overflow: 'hidden', background: 'rgba(255,255,255,.12)', marginBottom: '7px' });\n    const bar = overlay.querySelector('[data-sp-bar]');\n    Object.assign(bar.style, { height: '100%', width: '18%', borderRadius: '999px', background: '#5be29e', transition: 'width .2s ease' });\n    const counts = overlay.querySelector('[data-sp-counts]');\n    Object.assign(counts.style, { color: '#c7d4d0' });\n    (document.body || document.documentElement).appendChild(overlay);\n    traversalOverlay = overlay;\n    return overlay;\n  }\n\n  function renderTraversalOverlay() {\n    const state = traversalOverlayState || {};\n    const terminal = ['complete', 'complete-empty', 'error', 'limit', 'stopped', 'interrupted'].includes(String(state.crawlStatus || ''));\n    if (!traversalEnabled && !terminal) {\n      if (traversalOverlay) traversalOverlay.style.display = 'none';\n      return;\n    }\n    const overlay = ensureTraversalOverlay();\n    overlay.style.display = 'block';\n    const phaseNames = { settling: 'Settling…', reading: 'Reading…', expanding: 'Expanding…', scrolling: 'Scrolling…', images: 'Images…', tabs: 'Tabs…', extracting: 'Extracting…', sending: 'Saving…', retrying: 'Retrying…' };\n    const status = String(state.crawlStatus || (traversalEnabled ? 'starting' : 'idle'));\n    const visited = Math.max(0, Number(state.crawlVisited || 0));\n    const remaining = Math.max(0, Number(state.crawlRemaining || 0));\n    const discovered = Math.max(0, Number(state.crawlDiscovered || 0));\n    const known = Math.max(discovered, visited + remaining);\n    const complete = status === 'complete' || status === 'complete-empty';\n    const percent = complete ? 100 : known > 0 ? Math.max(2, Math.min(99, Math.round((visited / known) * 100))) : 18;\n    overlay.querySelector('[data-sp-bar]').style.width = `${percent}%`;\n    overlay.querySelector('[data-sp-phase]').textContent = traversalOverlayDetail || phaseNames[traversalOverlayPhase] || (terminal ? status.replace('-', ' ') : 'Scanning rendered Better Content…');\n    overlay.querySelector('[data-sp-counts]').textContent = known > 0\n      ? `${visited} of ${known} known pages checked · ${Math.max(0, Number(state.crawlCaptured || 0))} queued · ${Math.max(0, Number(state.crawlRetries || 0))} retries`\n      : terminal ? (state.crawlError || state.crawlDiagnostic || 'Capture-all finished.') : 'Discovering rendered guides…';\n  }\n\n  function updateTraversalOverlayState(next) {\n    traversalOverlayState = next && typeof next === 'object' ? next : traversalOverlayState;\n    renderTraversalOverlay();\n  }\n\n  function reportTraversalProgress(phase, detail = '') {\n    if (!traversalEnabled) return;\n    traversalOverlayPhase = String(phase || '');\n    traversalOverlayDetail = normalizeSpace(detail).slice(0, 180);\n    renderTraversalOverlay();\n")
+
+          must_replace(path,
+          "  function ignoredElement(element) {\n    const tag = element.tagName?.toLowerCase() || '';\n",
+          "  function ignoredElement(element) {\n    if (element?.closest?.('#sniperplug-capture-all-overlay')) return true;\n    const tag = element.tagName?.toLowerCase() || '';\n")
+          must_replace(path,
+          "  function traversalElementExcluded(element) {\n    if (!(element instanceof Element) || !elementVisible(element)) return true;\n",
+          "  function traversalElementExcluded(element) {\n    if (!(element instanceof Element) || !elementVisible(element)) return true;\n    if (element.closest('#sniperplug-capture-all-overlay')) return true;\n")
+
+          must_replace(path,
+          "      host: APP_FRAME_HOST,\n      likelyAppFrame: true,\n",
+          "      host: APP_FRAME_HOST,\n      documentId: CAPTURE_DOCUMENT_ID,\n      likelyAppFrame: true,\n")
+
+          old_scheduler = '''  function resetTraversalSnapshotSchedule() {\n    clearTimeout(traversalTimer);\n    traversalTimer = 0;\n    traversalDirty = false;\n  }\n\n  function scheduleTraversalSnapshot() {\n    if (!traversalEnabled) return;\n    if (traversalBusy) {\n      traversalDirty = true;\n      return;\n    }\n    if (traversalTimer) return;\n    reportTraversalProgress('settling');\n    traversalTimer = setTimeout(async () => {\n      traversalTimer = 0;\n      if (!traversalEnabled || traversalBusy) return;\n      traversalBusy = true;\n      traversalDirty = false;\n      try {\n        const snapshot = await traversalSnapshot();\n        if (!traversalEnabled) return;\n        const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;\n        if (identity === lastTraversalIdentity) return;\n        lastTraversalIdentity = identity;\n        reportTraversalProgress('sending');\n        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);\n      } catch (error) {\n        if (traversalEnabled) {\n          traversalDirty = true;\n          reportTraversalProgress('retrying', String(error?.message || error || 'Rendered page changed while it was being prepared.'));\n        }\n      } finally {\n        traversalBusy = false;\n        if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();\n      }\n    }, TRAVERSAL_SETTLE_MS);\n  }\n\n  function resumeTraversal() {\n    if (traversalEnabled) scheduleTraversalSnapshot();\n  }'''
+          new_scheduler = '''  function resetTraversalSnapshotSchedule() {\n    clearTimeout(traversalTimer);\n    traversalTimer = 0;\n    traversalDirty = false;\n  }\n\n  async function runTraversalSnapshot() {\n    if (!traversalEnabled) return false;\n    if (traversalBusy) {\n      traversalDirty = true;\n      return false;\n    }\n    traversalBusy = true;\n    traversalDirty = false;\n    try {\n      const snapshot = await traversalSnapshot();\n      if (!traversalEnabled) return false;\n      traversalHasRun = true;\n      const identity = `${snapshot.experienceId}|${snapshot.pageUrl}|${snapshot.targets.length}|${snapshot.capture?.bodyMarkdown?.length || 0}|${snapshot.diagnostics?.controlsClicked || 0}`;\n      if (identity === lastTraversalIdentity) return true;\n      lastTraversalIdentity = identity;\n      reportTraversalProgress('sending');\n      chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}traversal-page`, snapshot }).catch(() => null);\n      return true;\n    } catch (error) {\n      if (traversalEnabled) {\n        traversalDirty = true;\n        reportTraversalProgress('retrying', String(error?.message || error || 'Rendered page changed while it was being prepared.'));\n      }\n      return false;\n    } finally {\n      traversalBusy = false;\n      if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();\n    }\n  }\n\n  function scheduleTraversalSnapshot() {\n    if (!traversalEnabled) return;\n    if (traversalBusy) {\n      traversalDirty = true;\n      return;\n    }\n    if (traversalTimer) return;\n    reportTraversalProgress('settling');\n    traversalTimer = setTimeout(() => {\n      traversalTimer = 0;\n      runTraversalSnapshot();\n    }, TRAVERSAL_SETTLE_MS);\n  }\n\n  function runTraversalSnapshotNow() {\n    if (!traversalEnabled) return;\n    if (traversalTimer) {\n      clearTimeout(traversalTimer);\n      traversalTimer = 0;\n    }\n    runTraversalSnapshot();\n  }\n\n  function resumeTraversal() {\n    if (!traversalEnabled) return;\n    if (!traversalHasRun && !traversalBusy) {\n      runTraversalSnapshotNow();\n      return;\n    }\n    scheduleTraversalSnapshot();\n  }'''
+          must_replace(path, old_scheduler, new_scheduler)
+
+          must_replace(path,
+          "      traversalEnabled = nextTraversalEnabled;\n      lastTraversalIdentity = '';\n      resetTraversalSnapshotSchedule();\n      if (traversalEnabled) {\n        clearTimeout(autoTimer);\n        scheduleTraversalSnapshot();\n      } else if (autoEnabled) {\n",
+          "      traversalEnabled = nextTraversalEnabled;\n      lastTraversalIdentity = '';\n      traversalHasRun = false;\n      resetTraversalSnapshotSchedule();\n      if (traversalEnabled) {\n        clearTimeout(autoTimer);\n        ensureTraversalOverlay();\n        runTraversalSnapshotNow();\n      } else if (autoEnabled) {\n")
+
+          must_replace(path,
+          "    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {\n",
+          "    if (message?.type === `${MESSAGE_PREFIX}traversal-snapshot-now`) {\n      if (!traversalEnabled) {\n        sendResponse({ ok: false, error: 'Capture-all is not enabled in this rendered frame.' });\n        return false;\n      }\n      runTraversalSnapshotNow();\n      sendResponse({ ok: true, started: true });\n      return false;\n    }\n    if (message?.type === `${MESSAGE_PREFIX}traversal-state`) {\n      updateTraversalOverlayState(message.state || {});\n      sendResponse({ ok: true });\n      return false;\n    }\n    if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {\n")
+
+          must_replace(path,
+          "  const observer = new MutationObserver(() => {\n    registerCandidate();\n    scheduleAutoCapture();\n    scheduleTraversalSnapshot();\n  });\n",
+          "  const observer = new MutationObserver((mutations) => {\n    if (traversalOverlay && mutations.length && mutations.every((mutation) => mutation.target === traversalOverlay || traversalOverlay.contains(mutation.target))) return;\n    registerCandidate();\n    scheduleAutoCapture();\n    scheduleTraversalSnapshot();\n  });\n")
+
+          must_replace(path,
+          "      lastTraversalIdentity = '';\n      resetTraversalSnapshotSchedule();\n      registerCandidate();\n      scheduleAutoCapture();\n      scheduleTraversalSnapshot();\n",
+          "      lastTraversalIdentity = '';\n      traversalHasRun = false;\n      resetTraversalSnapshotSchedule();\n      registerCandidate();\n      scheduleAutoCapture();\n      resumeTraversal();\n")
+
+          must_replace(path,
+          "    candidateSummary,\n    resumeTraversal,\n",
+          "    candidateSummary,\n    resumeTraversal,\n    runTraversalSnapshotNow,\n")
+
+          # background.js: stop same-document candidate churn from reattaching, publish crawl state
+          # to the in-page overlay, make startup self-healing, and foreground Whop for full capture.
+          path = 'browser-extension/background.js'
+          must_replace(path,
+          "const TRAVERSAL_NAV_TIMEOUT_MS = 12_000;\n",
+          "const TRAVERSAL_NAV_TIMEOUT_MS = 12_000;\nconst TRAVERSAL_START_TIMEOUT_MS = 5_000;\nconst MAX_TRAVERSAL_START_REPAIRS = 3;\n")
+
+          must_replace(path,
+          "async function saveTraversal(state) {\n  if (!state?.experienceId || !state?.host) return;\n  const traversals = await allTraversals();\n  traversals[traversalId(state.experienceId, state.host)] = state;\n  await writePersistent(TRAVERSAL_KEY, traversals);\n}\n",
+          "async function publishTraversalState(state) {\n  if (!Number.isInteger(Number(state?.tabId)) || !Number.isInteger(Number(state?.frameId))) return;\n  try {\n    await chrome.tabs.sendMessage(\n      Number(state.tabId),\n      { type: 'sniperplug:traversal-state', state: traversalPublicState(state) },\n      { frameId: Number(state.frameId) },\n    );\n  } catch { /* The frame may be between navigations. */ }\n}\n\nasync function saveTraversal(state) {\n  if (!state?.experienceId || !state?.host) return;\n  const traversals = await allTraversals();\n  traversals[traversalId(state.experienceId, state.host)] = state;\n  await writePersistent(TRAVERSAL_KEY, traversals);\n  await publishTraversalState(state);\n}\n")
+
+          must_replace(path,
+          "  const candidates = pruneCandidates(await readSession(CANDIDATE_KEY, {}));\n  const now = Date.now();\n",
+          "  const candidates = pruneCandidates(await readSession(CANDIDATE_KEY, {}));\n  const now = Date.now();\n  const key = candidateKey(tabId, frameId);\n  const previousCandidate = candidates[key] || null;\n")
+          must_replace(path,
+          "    host: String(candidate?.host || '').toLowerCase(),\n    likelyAppFrame: true,\n  };\n\n  candidates[candidateKey(tabId, frameId)] = normalized;\n",
+          "    host: String(candidate?.host || '').toLowerCase(),\n    documentId: String(candidate?.documentId || ''),\n    likelyAppFrame: true,\n  };\n\n  candidates[key] = normalized;\n")
+
+          old_active = '''  const traversal = await traversalForCandidate(normalized);\n  if (traversal && (traversal.enabled === true || traversal.status === 'interrupted')) {\n    if (traversal.status === 'interrupted') {\n      traversal.enabled = true;\n      traversal.status = 'running';\n      traversal.lastDiagnostic = 'Resumed after the Whop tab or browser was reopened.';\n      if (traversal.currentTarget?.url) {\n        traversal.pending = [traversal.currentTarget, ...(Array.isArray(traversal.pending) ? traversal.pending : [])];\n        traversal.currentTarget = null;\n      }\n    }\n    const previousTabId = Number(traversal.tabId ?? traversal.lastTabId);\n    traversal.tabId = tabId;\n    traversal.frameId = frameId;\n    traversal.lastTabId = tabId;\n    if (Number.isInteger(previousTabId) && previousTabId !== tabId) await migrateQueue(previousTabId, tabId);\n    traversal.updatedAt = now;\n    await saveTraversal(traversal);\n    await setPassiveAutoForTab(tabId, false);\n    chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-auto', enabled: false }, { frameId }).catch(() => null);\n    chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);\n  } else {'''
+          new_active = '''  const traversal = await traversalForCandidate(normalized);\n  if (traversal && (traversal.enabled === true || traversal.status === 'interrupted')) {\n    const wasInterrupted = traversal.status === 'interrupted';\n    const documentChanged = !previousCandidate || !normalized.documentId || previousCandidate.documentId !== normalized.documentId;\n    const frameChanged = Number(traversal.tabId ?? traversal.lastTabId) !== tabId || Number(traversal.frameId) !== frameId;\n    if (wasInterrupted) {\n      traversal.enabled = true;\n      traversal.status = 'starting';\n      traversal.startupStartedAt = now;\n      traversal.startupRepairCount = 0;\n      traversal.lastDiagnostic = 'Resumed after the Whop tab or browser was reopened.';\n      if (traversal.currentTarget?.url) {\n        traversal.pending = [traversal.currentTarget, ...(Array.isArray(traversal.pending) ? traversal.pending : [])];\n        traversal.currentTarget = null;\n      }\n    }\n    if (wasInterrupted || documentChanged || frameChanged) {\n      const previousTabId = Number(traversal.tabId ?? traversal.lastTabId);\n      traversal.tabId = tabId;\n      traversal.frameId = frameId;\n      traversal.lastTabId = tabId;\n      if (Number.isInteger(previousTabId) && previousTabId !== tabId) await migrateQueue(previousTabId, tabId);\n      traversal.updatedAt = now;\n      await saveTraversal(traversal);\n      await setPassiveAutoForTab(tabId, false);\n      chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-auto', enabled: false }, { frameId }).catch(() => null);\n      chrome.tabs.sendMessage(tabId, { type: 'sniperplug:set-traversal', enabled: true }, { frameId }).catch(() => null);\n    }\n  } else {'''
+          must_replace(path, old_active, new_active)
+
+          must_replace(path,
+          "async function captureCurrent(tabId) {\n  const openTabs = await whopTabs();\n",
+          "async function captureCurrent(tabId) {\n  const openTabs = await whopTabs();\n")
+          must_replace(path,
+          "  const sourceTabId = candidate.tabId;\n  const response = await chrome.tabs.sendMessage(sourceTabId, { type: 'sniperplug:capture-now' }, { frameId: candidate.frameId });\n",
+          "  const sourceTabId = candidate.tabId;\n  await chrome.tabs.update(sourceTabId, { active: true }).catch(() => null);\n  await wait(80);\n  const response = await chrome.tabs.sendMessage(sourceTabId, { type: 'sniperplug:capture-now' }, { frameId: candidate.frameId });\n", count=1)
+
+          insert_after = '''async function setTraversalFrame(tabId, frameId, enabled) {\n  if (!Number.isInteger(tabId) || !Number.isInteger(frameId)) return false;\n  try {\n    const response = await chrome.tabs.sendMessage(\n      tabId,\n      { type: 'sniperplug:set-traversal', enabled: enabled === true },\n      { frameId },\n    );\n    return response?.ok === true;\n  } catch {\n    return false;\n  }\n}\n'''
+          addition = insert_after + '''\nasync function requestTraversalSnapshotNow(state) {\n  if (!state?.enabled || !Number.isInteger(Number(state.tabId)) || !Number.isInteger(Number(state.frameId))) return false;\n  try {\n    const response = await chrome.tabs.sendMessage(\n      Number(state.tabId),\n      { type: 'sniperplug:traversal-snapshot-now' },\n      { frameId: Number(state.frameId) },\n    );\n    return response?.ok === true;\n  } catch {\n    return false;\n  }\n}\n\nasync function repairTraversalStartup(state, reason) {\n  if (!state?.enabled || state.status !== 'starting' || state.currentTarget) return false;\n  const attempts = Math.max(0, Number(state.startupRepairCount || 0));\n  if (attempts >= MAX_TRAVERSAL_START_REPAIRS) {\n    await stopTraversal(Number(state.tabId), 'error', 'Capture-all could not obtain the first rendered Better Content snapshot after bounded recovery attempts. Keep the Whop content visible and retry.');\n    return false;\n  }\n  state.startupRepairCount = attempts + 1;\n  state.lastDiagnostic = `Startup recovery ${attempts + 1}/${MAX_TRAVERSAL_START_REPAIRS}: ${reason}`;\n  state.updatedAt = Date.now();\n  await saveTraversal(state);\n  let forced = await requestTraversalSnapshotNow(state);\n  if (!forced) {\n    const resolved = await resolveCandidate(Number(state.tabId), await whopTabs());\n    if (resolved.candidate) {\n      state.tabId = resolved.candidate.tabId;\n      state.frameId = resolved.candidate.frameId;\n      await saveTraversal(state);\n      await setTraversalFrame(Number(state.tabId), Number(state.frameId), true);\n      forced = await requestTraversalSnapshotNow(state);\n    }\n  }\n  scheduleTraversalStartupTimeout(state);\n  return forced;\n}\n\nfunction scheduleTraversalStartupTimeout(state) {\n  clearTraversalTimer(state);\n  if (!state?.enabled || state.status !== 'starting' || state.currentTarget) return;\n  const id = traversalId(state.experienceId, state.host);\n  const expectedStart = Number(state.startupStartedAt || state.startedAt || Date.now());\n  const timer = setTimeout(() => {\n    withTraversalLock(Number(state.tabId), async () => {\n      const latest = await traversalForTab(Number(state.tabId), state);\n      if (!latest?.enabled || latest.status !== 'starting' || latest.currentTarget) return;\n      if (Number(latest.startupStartedAt || latest.startedAt || 0) !== expectedStart) return;\n      await repairTraversalStartup(latest, 'The first rendered-page snapshot did not arrive before the startup deadline.');\n    }).catch(() => null);\n  }, TRAVERSAL_START_TIMEOUT_MS);\n  traversalTimers.set(id, timer);\n}\n'''
+          must_replace(path, insert_after, addition)
+
+          must_replace(path,
+          "    state.lastDiagnostic = 'Resumed the saved capture-all session.';\n",
+          "    state.status = 'starting';\n    state.startupStartedAt = Date.now();\n    state.startupRepairCount = 0;\n    state.lastDiagnostic = 'Resumed the saved capture-all session.';\n")
+          must_replace(path,
+          "      startedAt: Date.now(),\n      updatedAt: Date.now(),\n",
+          "      startedAt: Date.now(),\n      startupStartedAt: Date.now(),\n      startupRepairCount: 0,\n      updatedAt: Date.now(),\n")
+          must_replace(path,
+          "  const attached = await setTraversalFrame(sourceTabId, candidate.frameId, true);\n  if (!attached) {\n",
+          "  const attached = await setTraversalFrame(sourceTabId, candidate.frameId, true);\n  if (!attached) {\n")
+          must_replace(path,
+          "    throw new Error(state.error);\n  }\n  return { targetTabId: sourceTabId, ...traversalPublicState(state) };\n}\n",
+          "    throw new Error(state.error);\n  }\n  scheduleTraversalStartupTimeout(state);\n  requestTraversalSnapshotNow(state).catch(() => null);\n  return { targetTabId: sourceTabId, ...traversalPublicState(state) };\n}\n", count=1)
+
+          must_replace(path,
+          "    clearTraversalTimer(state);\n    const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])\n",
+          "    clearTraversalTimer(state);\n    state.status = 'running';\n    state.startupStartedAt = 0;\n    state.startupRepairCount = 0;\n    const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])\n")
+
+          old_repair = '''function scheduleStaleTraversalRepair(targetTabId, candidate, traversal) {\n  if (!Number.isInteger(targetTabId)\n    || !traversal?.enabled\n    || !traversal.currentTarget?.startedAt\n    || Date.now() - Number(traversal.currentTarget.startedAt) <= TRAVERSAL_NAV_TIMEOUT_MS) return false;\n  if (staleTraversalRepairJobs.has(targetTabId)) return true;\n  let job;\n  job = withTraversalLock(targetTabId, async () => {\n    const latest = await traversalForTab(targetTabId, candidate);\n    if (latest?.enabled\n      && latest.currentTarget?.startedAt\n      && Date.now() - Number(latest.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS) {\n      await retryOrSkipCurrent(latest, 'Recovered a stale in-progress navigation while reopening the extension.');\n    }\n  })\n    .catch(() => null)\n    .finally(() => {\n      if (staleTraversalRepairJobs.get(targetTabId) === job) staleTraversalRepairJobs.delete(targetTabId);\n    });\n  staleTraversalRepairJobs.set(targetTabId, job);\n  return true;\n}\n'''
+          new_repair = '''function scheduleStaleTraversalRepair(targetTabId, candidate, traversal) {\n  if (!Number.isInteger(targetTabId) || !traversal?.enabled) return false;\n  const startupStale = traversal.status === 'starting'\n    && !traversal.currentTarget\n    && Date.now() - Number(traversal.startupStartedAt || traversal.startedAt || 0) > TRAVERSAL_START_TIMEOUT_MS;\n  const navigationStale = Boolean(traversal.currentTarget?.startedAt)\n    && Date.now() - Number(traversal.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS;\n  if (!startupStale && !navigationStale) return false;\n  if (staleTraversalRepairJobs.has(targetTabId)) return true;\n  let job;\n  job = withTraversalLock(targetTabId, async () => {\n    const latest = await traversalForTab(targetTabId, candidate);\n    if (!latest?.enabled) return;\n    if (latest.status === 'starting'\n      && !latest.currentTarget\n      && Date.now() - Number(latest.startupStartedAt || latest.startedAt || 0) > TRAVERSAL_START_TIMEOUT_MS) {\n      await repairTraversalStartup(latest, 'Recovered a stale Capture-all startup while reopening the extension.');\n      return;\n    }\n    if (latest.currentTarget?.startedAt\n      && Date.now() - Number(latest.currentTarget.startedAt) > TRAVERSAL_NAV_TIMEOUT_MS) {\n      await retryOrSkipCurrent(latest, 'Recovered a stale in-progress navigation while reopening the extension.');\n    }\n  })\n    .catch(() => null)\n    .finally(() => {\n      if (staleTraversalRepairJobs.get(targetTabId) === job) staleTraversalRepairJobs.delete(targetTabId);\n    });\n  staleTraversalRepairJobs.set(targetTabId, job);\n  return true;\n}\n'''
+          must_replace(path, old_repair, new_repair)
+
+          # popup.js: manual Capture page remains a usable fallback, and Capture-all returns
+          # to the Whop tab so Android does not freeze the rendered frame behind the extension page.
+          path = 'browser-extension/popup.js'
+          must_replace(path,
+          "  elements.capture.disabled = !candidate?.experienceId || state.crawlEnabled;\n",
+          "  elements.capture.disabled = !candidate?.experienceId;\n")
+          must_replace(path,
+          "elements.crawl.addEventListener('click', async () => {\n  elements.crawl.disabled = true;\n  try {\n",
+          "elements.crawl.addEventListener('click', async () => {\n  elements.crawl.disabled = true;\n  let returnToWhop = false;\n  try {\n")
+          must_replace(path,
+          "      state = { ...state, ...output, crawlPhase: 'settling', crawlPhaseDetail: '', crawlPhaseAt: Date.now() };\n      setStatus(wasResume\n        ? 'Capture-all resumed from saved progress.'\n        : 'Capture-all started. Keep the Whop tab available; SniperPlug will walk the authorized rendered guide tree for you.', 'ok');\n",
+          "      state = { ...state, ...output, crawlPhase: 'reading', crawlPhaseDetail: '', crawlPhaseAt: Date.now() };\n      returnToWhop = true;\n      setStatus(wasResume\n        ? 'Capture-all resumed. Returning to Whop so Firefox Android keeps the rendered frame active.'\n        : 'Capture-all started. Returning to Whop so Firefox Android keeps the rendered frame active; live progress stays visible on the Better Content page.', 'ok');\n")
+          must_replace(path,
+          "    render();\n    schedulePoll();\n  } catch (error) {\n",
+          "    render();\n    schedulePoll();\n    if (returnToWhop && Number.isInteger(tabId)) {\n      setTimeout(() => {\n        chrome.tabs.update(tabId, { active: true }).catch(() => null).finally(() => window.close());\n      }, 220);\n    }\n  } catch (error) {\n", count=1)
+
+          # Version contract.
+          Path('browser-extension/manifest.json').write_text(Path('browser-extension/manifest.json').read_text().replace('"version": "0.2.4"', '"version": "0.2.5"'))
+          Path('browser-extension-version.json').write_text('''{\n  "latest": "0.2.5",\n  "minimum": "0.2.0",\n  "notes": "Makes Capture-all start immediately instead of depending on a backgrounded Whop timer, returns Firefox Android to the rendered Whop page with an in-page progress overlay, adds bounded startup recovery, and keeps Capture page available as a direct fallback."\n}\n''')
+
+          # Existing scheduler regression needs the new production runner state and must inspect
+          # only the debounced scheduler when checking that mutation churn cannot clear its timer.
+          path = 'tools/test-browser-traversal-scheduler.mjs'
+          must_replace(path,
+          "assert.ok(!/function scheduleTraversalSnapshot\\(\\)[\\s\\S]*?clearTimeout\\(traversalTimer\\)/.test(schedulerSource), 'The normal traversal scheduler still clears its own settle timer and can starve forever.');\n",
+          "const scheduleStart = schedulerSource.indexOf('function scheduleTraversalSnapshot()');\nconst forceStart = schedulerSource.indexOf('function runTraversalSnapshotNow()', scheduleStart);\nconst normalScheduleSource = schedulerSource.slice(scheduleStart, forceStart);\nassert.ok(!normalScheduleSource.includes('clearTimeout(traversalTimer)'), 'The normal mutation scheduler still clears its own settle timer and can starve forever.');\n")
+          must_replace(path,
+          "  traversalDirty: false,\n  lastTraversalIdentity: '',\n",
+          "  traversalDirty: false,\n  traversalHasRun: false,\n  lastTraversalIdentity: '',\n")
+          must_replace(path,
+          "runInNewContext(`${schedulerSource}\\nglobalThis.scheduleForTest = scheduleTraversalSnapshot;\\nglobalThis.resetForTest = resetTraversalSnapshotSchedule;`, context, {\n",
+          "runInNewContext(`${schedulerSource}\\nglobalThis.scheduleForTest = scheduleTraversalSnapshot;\\nglobalThis.runSnapshotForTest = runTraversalSnapshot;\\nglobalThis.runNowForTest = runTraversalSnapshotNow;\\nglobalThis.resetForTest = resetTraversalSnapshotSchedule;`, context, {\n")
+          must_replace(path,
+          "for (let index = 0; index < 100; index += 1) context.scheduleForTest();\n",
+          "await context.runSnapshotForTest();\nassert.equal(snapshotNumber, 1, 'An immediate seed snapshot could not run without a settle timer.');\nassert.equal(scheduled.length, 0, 'The immediate seed snapshot unexpectedly depended on a timer.');\nsent.length = 0;\nsnapshotNumber = 0;\ncontext.lastTraversalIdentity = '';\ncontext.traversalHasRun = false;\n\nfor (let index = 0; index < 100; index += 1) context.scheduleForTest();\n")
+
+          # New cross-mode regression: all three user-facing modes keep a viable path.
+          Path('tools/test-browser-capture-mode-reliability.mjs').write_text(r'''import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const capture = readFileSync(join(root, 'browser-extension/content-capture.js'), 'utf8');
+const background = readFileSync(join(root, 'browser-extension/background.js'), 'utf8');
+const popup = readFileSync(join(root, 'browser-extension/popup.js'), 'utf8');
+const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
+
+assert.equal(manifest.version, '0.2.5');
+assert.ok(capture.includes('const CAPTURE_DOCUMENT_ID ='), 'Rendered frame documents are not uniquely identified across reloads.');
+assert.ok(capture.includes('runTraversalSnapshotNow();') && capture.includes('traversal-snapshot-now'), 'Capture-all still lacks an immediate/forced first-snapshot path.');
+assert.ok(capture.includes('sniperplug-capture-all-overlay') && capture.includes('traversal-state'), 'Capture-all no longer exposes live progress on the foreground Whop page.');
+assert.ok(background.includes('TRAVERSAL_START_TIMEOUT_MS') && background.includes('MAX_TRAVERSAL_START_REPAIRS'), 'Capture-all startup has no bounded watchdog.');
+assert.ok(background.includes('scheduleTraversalStartupTimeout(state);') && background.includes('repairTraversalStartup'), 'The startup watchdog is not wired into the traversal lifecycle.');
+assert.ok(background.includes("{ type: 'sniperplug:traversal-state', state: traversalPublicState(state) }"), 'Background crawl state is not published to the rendered page overlay.');
+assert.ok(background.includes("await chrome.tabs.update(sourceTabId, { active: true }).catch(() => null);"), 'Manual Capture page no longer foregrounds Whop before full rendered capture.');
+assert.ok(popup.includes('elements.capture.disabled = !candidate?.experienceId;'), 'Manual Capture page is still disabled merely because Capture-all is active.');
+assert.ok(popup.includes("chrome.tabs.update(tabId, { active: true })"), 'Capture-all does not return Firefox Android to the Whop page after starting.');
+assert.ok(background.includes('previousCandidate.documentId !== normalized.documentId'), 'Same-document DOM churn can still cause needless traversal reattachment.');
+
+console.log('\nBROWSER CAPTURE MODE RELIABILITY REGRESSION PASSED\n');
+console.log('✓ Capture page remains a direct foregrounded fallback.');
+console.log('✓ Capture-as-I-browse remains independent.');
+console.log('✓ Capture-all starts immediately, self-recovers, and keeps Firefox on the rendered Whop page with live progress.');
+''')
+
+          must_replace('package.json',
+          'node tools/test-browser-traversal-scheduler.mjs && node tools/test-browser-progress-bar.mjs',
+          'node tools/test-browser-traversal-scheduler.mjs && node tools/test-browser-capture-mode-reliability.mjs && node tools/test-browser-progress-bar.mjs')
+
+          # Update active task to reflect the broader, device-proven architecture fix.
+          active = Path('ACTIVE_TASK.md')
+          text = active.read_text()
+          text = text.replace('Fix the Firefox Android Capture-all startup stall still reproduced after `0.2.4`', 'Fix all Firefox Android Better Content capture modes after `0.2.4` still reproduced a Capture-all startup stall')
+          text += '''\n## Unified reliability implementation (0.2.5)\n- Capture-all no longer depends on the initial 900 ms content-frame timer; a genuine traversal attach runs the seed snapshot immediately.\n- Background can explicitly force `traversal-snapshot-now`, has a 5-second startup watchdog, and fails visibly after three bounded recovery attempts instead of showing infinite `Settling…`.\n- Same-document mutation candidates no longer cause redundant background reattachment; a per-document ID preserves legitimate reload/reinjection recovery.\n- Starting/resuming Capture-all returns Firefox Android to the Whop tab so the rendered frame remains foreground and its lazy-content waits are not frozen behind the extension page.\n- A live in-page Capture-all overlay shows phase, real known-page progress, queued count, and retries while Whop stays foreground.\n- Manual Capture page remains enabled during Capture-all and foregrounds Whop before running the existing full rendered-page preparation path, providing a direct fallback.\n- Capture-as-I-browse remains unchanged because it was already the device-proven working path.\n- Version contract advanced to `0.2.5`.\n'''
+          active.write_text(text)
+
+          # Delete this temporary patch workflow from the branch before the implementation commit.
+          Path('.github/workflows/tmp-capture-reliability-patch.yml').unlink()
+          PY
+      - name: Targeted regressions
+        run: |
+          node --check browser-extension/content-capture.js
+          node --check browser-extension/background.js
+          node --check browser-extension/popup.js
+          node tools/test-browser-traversal-scheduler.mjs
+          node tools/test-browser-capture-mode-reliability.mjs
+          node tools/test-browser-auto-traversal.mjs
+          node tools/test-browser-progress-bar.mjs
+          node tools/test-browser-capture-extension.mjs
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Make Firefox capture modes reliably foreground-driven"
+          git push origin HEAD:fix/capture-all-initial-watchdog
