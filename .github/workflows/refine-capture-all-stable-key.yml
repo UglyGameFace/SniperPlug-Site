@@ -1,0 +1,46 @@
+name: Refine Capture-all stable key
+
+on:
+  push:
+    branches:
+      - fix/capture-all-card-activation-hud
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/capture-all-card-activation-hud
+          fetch-depth: 1
+      - name: Preserve activation identity across queue migration
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('browser-extension/background.js')
+          text = path.read_text()
+          old = "function captureIdentity(capture) {\n  return stablePageKey(capture) || `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;\n}"
+          new = "function captureIdentity(capture) {\n  return String(capture?._sniperplugStableKey || '').trim()\n    || stablePageKey(capture)\n    || `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;\n}"
+          if text.count(old) != 1:
+              raise SystemExit(f'Expected one captureIdentity block, found {text.count(old)}')
+          path.write_text(text.replace(old, new))
+
+          test = Path('tools/test-browser-click-card-traversal.mjs')
+          body = test.read_text()
+          marker = "console.log('BROWSER CLICK-CARD TRAVERSAL + HUD REGRESSION: PASS');"
+          addition = "assert.ok(background.includes(\"capture?._sniperplugStableKey\"), 'Activation stable keys are lost when queued pages are deduplicated or migrated between Firefox tabs.');\n\n"
+          if marker not in body or 'Activation stable keys are lost' in body:
+              raise SystemExit('Stable-key regression marker missing or already applied.')
+          test.write_text(body.replace(marker, addition + marker))
+          Path('.github/workflows/refine-capture-all-stable-key.yml').unlink()
+          PY
+          git config user.name 'SniperPlug CI Fixer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Preserve click-card capture identities'
+          git push origin HEAD:fix/capture-all-card-activation-hud
