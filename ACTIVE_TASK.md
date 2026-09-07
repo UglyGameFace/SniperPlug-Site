@@ -1,48 +1,49 @@
 # Active Task
 
 ## Active task / outcome
-Fix all Firefox Android Better Content capture modes after `0.2.4` still reproduced a Capture-all startup stall: the Better Content frame is detected and readable, Capture all enters `Settling…`, but the first rendered-page snapshot never reaches the background so discovery/queue/retry counters remain at zero.
+Firefox Android Better Content capture reliability follow-up to PRs #71 and #72. Device testing showed Capture-as-I-browse worked while Capture page / Capture-all could stall when the rendered Whop frame was backgrounded or the first traversal snapshot timer never fired.
 
 ## Status
-IN PROGRESS — runtime regression continuation of PR #72. Branch: `fix/capture-all-initial-watchdog`.
+COMPLETE AND MERGED — PR #73 shipped the unified Firefox Android capture reliability fix in extension `0.2.5`. No implementation task is currently active.
 
-## New runtime evidence
-- The current device again shows a valid Better Content frame with `2,428 rendered characters detected`.
-- Capture all is active for the entire experience.
-- The popup receives `Settling…` / `Waiting for the page to settle…` but never advances to `Reading…`.
-- Queue remains `0 pages queued`; no discovery/retry counters appear because the first `sniperplug:traversal-page` snapshot still never arrives.
+## Root cause
+- Capture-all still depended on a 900 ms content-frame timer for its first seed-page snapshot.
+- Before a first snapshot there is no `currentTarget`, so the existing navigation watchdog could not repair a lost/throttled startup timer.
+- Firefox Android can throttle the short waits used by full rendered-page preparation when the Whop frame is backgrounded behind the extension UI.
+- Capture-as-I-browse worked because Whop remained foreground while the user navigated.
 
-## Architectural defect found
-PRs #71 and #72 removed two timer-starvation reset loops, but startup still has a single point of failure:
-1. `startTraversal()` persists `status: starting`, attaches the verified app frame, and then waits for the content script to produce the first snapshot.
-2. The content script still schedules that first snapshot only through a 900 ms `setTimeout`.
-3. The background navigation timeout/watchdog only exists after `currentTarget` is set. During the initial seed page, `currentTarget` is null.
-4. `scheduleStaleTraversalRepair()` also only repairs stale `currentTarget` navigation.
-5. Therefore if Firefox Android delays, loses, unloads, or otherwise never executes that first content-script timer, the crawler has no authoritative startup deadline or recovery path and can remain in `starting / Settling…` forever.
-
-## Corrective direction
-- Remove the 900 ms timer as a dependency for the first seed-page snapshot: a genuine false → true traversal attach must begin one snapshot immediately.
-- Keep the existing coalesced 900 ms scheduler only for follow-up DOM mutations.
-- Add an explicit `traversal-snapshot-now` content-script command so background recovery can force the currently verified frame to make progress without toggling traversal state.
-- Add a bounded background startup watchdog for `status: starting` with no first snapshot, including popup-driven stale repair so Firefox background suspension cannot leave the crawl permanently stuck.
-- Fail visibly after bounded recovery attempts rather than showing infinite `Settling…`.
-- Add regression coverage for immediate first snapshot and startup watchdog behavior.
-- Bump the installable Firefox Android package to `0.2.5` only after the exact-head regression suite and XPI packaging pass.
+## Shipped fix
+- A genuine Capture-all attach starts the seed snapshot immediately; the 900 ms scheduler remains only for follow-up DOM mutations.
+- Background can force `traversal-snapshot-now` and uses a 5-second startup watchdog with at most three bounded repair attempts.
+- Startup fails visibly after bounded recovery instead of showing infinite `Settling…`.
+- Per-document identity prevents same-document candidate churn from repeatedly reattaching the crawler while preserving real reload/reinjection recovery.
+- Starting/resuming Capture-all foregrounds the Whop tab so rendered-page work stays alive on Firefox Android.
+- Capture-all progress is also shown in-page while Whop is foreground.
+- Manual Capture page remains available during Capture-all and foregrounds Whop before using the existing full rendered-page capture primitive.
+- Capture-as-I-browse remains unchanged because it is the device-proven working path.
+- Firefox Android extension/version contract advanced to `0.2.5`.
 
 ## Safety preserved
-- Same rendered-DOM-only capture path.
-- Same verified app frame, same-origin/same-experience traversal, sensitive-route rejection, queue/retry limits, and server authorization.
-- No cookie permission, token forwarding, private Whop API access, second crawler, or unrelated product work.
+- Rendered-DOM-only reading in the verified Whop app frame.
+- Same-origin/same-experience traversal and sensitive-route rejection remain enforced.
+- Existing queue/retry limits and server authorization remain intact.
+- No cookie permission, credential/token forwarding, private Whop API probing, or second crawler was introduced.
 
-## Next step
-Implement the immediate seed snapshot plus bounded startup watchdog, run the full merge gate, package `0.2.5`, merge only on a green exact head, then validate `main` and hand off the exact production artifact.
+## Validation / results
+Final PR head `75c1b5ad0d75868c2afc1759cd02ab2ef8844e83`:
+- Verify SniperPlug #1104 passed, including the full repository regression suite and Firefox Android XPI packaging.
+- Cloudflare Pages preview passed.
+- Preview/retired-route checks passed.
+- Vercel preview feedback reported 0 unresolved items.
+- No inline review threads or submitted review findings were outstanding.
 
-## Unified reliability implementation (0.2.5)
-- Capture-all no longer depends on the initial 900 ms content-frame timer; a genuine traversal attach runs the seed snapshot immediately.
-- Background can explicitly force `traversal-snapshot-now`, has a 5-second startup watchdog, and fails visibly after three bounded recovery attempts instead of showing infinite `Settling…`.
-- Same-document mutation candidates no longer cause redundant background reattachment; a per-document ID preserves legitimate reload/reinjection recovery.
-- Starting/resuming Capture-all returns Firefox Android to the Whop tab so the rendered frame remains foreground and its lazy-content waits are not frozen behind the extension page.
-- A live in-page Capture-all overlay shows phase, real known-page progress, queued count, and retries while Whop stays foreground.
-- Manual Capture page remains enabled during Capture-all and foregrounds Whop before running the existing full rendered-page preparation path, providing a direct fallback.
-- Capture-as-I-browse remains unchanged because it was already the device-proven working path.
-- Version contract advanced to `0.2.5`.
+Merged `main` commit `85d8cc13b3dfa204c5bfdf57be4a5cc66a4c5265`:
+- Verify SniperPlug #1105 passed, including full regression validation, package creation, and artifact upload.
+- Verify production guide privacy #110 passed.
+- Verify affiliate-ready production #106 passed.
+- Verify retired public deal routes #149 passed.
+- Cloudflare Pages deployment passed on the exact merge commit.
+- Production artifact `sniperplug-firefox-android-xpi` ID `10012465099`, digest `sha256:d3b9a64226755f657b586e37f9c738be08564b207a10b503b36f2581266a2cca`.
+
+## Remaining runtime confirmation
+The code task is complete. Device testing must use the newly packaged `0.2.5` extension before judging this fix; older `0.2.4` installs do not contain the foreground/startup-watchdog changes. Any failure reproduced on `0.2.5` is a regression continuation of this capture task; otherwise the next unrelated coding request is a separate active task.
