@@ -27,4 +27,6 @@ assert.ok(background.includes('state.lastPageDirectoryLike === true'), 'Same-URL
 assert.ok(background.includes('stableKeyOverride') && background.includes('activationStableKey') && background.includes('captureToQueue'), 'Same-URL click guides can collapse into one queue identity.');
 assert.ok(background.includes('waitingForActivation') && background.includes('scheduleTraversalTimeout(state);'), 'An unchanged card activation can lose its bounded retry timer.');
 
+assert.ok(background.includes("capture?._sniperplugStableKey"), 'Activation stable keys are lost when queued pages are deduplicated or migrated between Firefox tabs.');
+
 console.log('BROWSER CLICK-CARD TRAVERSAL + HUD REGRESSION: PASS');

@@ -527,7 +527,9 @@ function scheduleCandidateRecovery(openTabs, preferredTabId) {
 }
 
 function captureIdentity(capture) {
-  return stablePageKey(capture) || `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;
+  return String(capture?._sniperplugStableKey || '').trim()
+    || stablePageKey(capture)
+    || `${String(capture?.experienceId || '')}|${String(capture?.pageIdentity || capture?.pageUrl || '')}`;
 }
 
 function isSafeAppCapture(capture) {
