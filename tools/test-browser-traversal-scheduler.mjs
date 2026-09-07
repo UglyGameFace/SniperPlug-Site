@@ -13,6 +13,11 @@ assert.ok(start >= 0 && end > start, 'Could not isolate the production traversal
 const schedulerSource = captureScript.slice(start, end);
 
 assert.ok(schedulerSource.includes('if (traversalTimer) return;'), 'Repeated DOM mutations can reset the settle timer again.');
+const reattachGuard = captureScript.indexOf('const nextTraversalEnabled = message.enabled === true;');
+const reattachNoop = captureScript.indexOf('if (nextTraversalEnabled === traversalEnabled)', reattachGuard);
+const reattachReset = captureScript.indexOf('resetTraversalSnapshotSchedule();', reattachGuard);
+assert.ok(reattachGuard >= 0 && reattachNoop > reattachGuard && reattachReset > reattachNoop, 'Repeated traversal reattach can reset the pending scheduler before the idempotence guard.');
+assert.ok(captureScript.includes('if (nextTraversalEnabled) resumeTraversal();'), 'Repeated enabled traversal reattach no longer preserves the pending scheduler.');
 assert.ok(schedulerSource.includes('traversalDirty = true;'), 'Mutations during an active snapshot are not coalesced for a follow-up pass.');
 assert.ok(schedulerSource.includes('if (traversalEnabled && traversalDirty) scheduleTraversalSnapshot();'), 'Dirty work is not guaranteed a follow-up snapshot.');
 assert.ok(!/function scheduleTraversalSnapshot\(\)[\s\S]*?clearTimeout\(traversalTimer\)/.test(schedulerSource), 'The normal traversal scheduler still clears its own settle timer and can starve forever.');

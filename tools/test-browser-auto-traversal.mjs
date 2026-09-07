@@ -13,7 +13,7 @@ const popupHtml = readFileSync(join(root, 'browser-extension/popup.html'), 'utf8
 const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
 const versionContract = JSON.parse(readFileSync(join(root, 'browser-extension-version.json'), 'utf8'));
 
-assert.equal(manifest.version, '0.2.3', 'Authorized content-sync extension version was not bumped.');
+assert.equal(manifest.version, '0.2.4', 'Authorized content-sync extension version was not bumped.');
 assert.equal(versionContract.latest, manifest.version, 'Published extension-version contract drifted from the packaged manifest.');
 assert.ok(captureScript.includes('function discoverTraversalTargets') && captureScript.includes('function safeTraversalUrl'), 'The DOM reader does not discover bounded safe traversal targets.');
 assert.ok(captureScript.includes("url.origin !== location.origin") && captureScript.includes('targetExperience !== experienceId'), 'Traversal lost same-origin or same-experience confinement.');
@@ -112,7 +112,7 @@ const context = {
       },
     },
     runtime: {
-      getManifest: () => ({ version: '0.2.3' }),
+      getManifest: () => ({ version: '0.2.4' }),
       onMessage: { addListener: (listener) => { runtimeListener = listener; } },
     },
     tabs: {
