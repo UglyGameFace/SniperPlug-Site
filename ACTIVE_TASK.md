@@ -4,63 +4,84 @@
 Fix Capture all guides so it cannot sit at `0 of 0 known pages checked` / `Scanning…` for minutes with no real progress, and make the popup report meaningful current preparation progress while the first rendered directory page is being processed.
 
 ## Scope
-In scope:
-- trace Capture all guides from popup start through background traversal state into the Whop app-frame content script;
-- fix the initial traversal snapshot scheduler so continuous Whop DOM mutations cannot starve it forever;
-- preserve bounded rendered-page preparation, safe same-origin/same-experience traversal, retries, queue limits, and capture verification;
-- expose real preparation-phase progress before the first page/targets are known;
-- add regression coverage that simulates frequent mutations and proves the first traversal snapshot still runs;
-- run the full repository validation, Firefox Android packaging, exact-head review/cleanup, merge, and post-merge validation.
+Completed implementation:
+- traced Capture all from popup start through background traversal state into the Whop app-frame content script;
+- fixed the initial traversal snapshot scheduler so continuous Whop DOM mutations cannot starve it forever;
+- preserved bounded rendered-page preparation, safe same-origin/same-experience traversal, retries, queue limits, and capture verification;
+- added live preparation phases before the first page/targets are known;
+- added a mutation-storm scheduler regression and expanded the real progress-bar regression;
+- bumped the Firefox Android extension/version contract to `0.2.3`.
 
-Out of scope / backlog:
-- redesigning the crawler or changing what Whop content is authorized/capturable;
-- unrelated importer, account switching, or Control Center work.
+Still required before completion:
+- exact-head repository CI and Firefox Android packaging;
+- changed-file/review inspection;
+- merge and post-merge `main` validation;
+- final task-record cleanup and validated XPI handoff.
+
+Out of scope:
+- changing what Whop content is authorized/capturable;
+- unrelated importer, account-switching, or Control Center work.
 
 ## Status
-IN PROGRESS — reproduced the structural stall in the current execution path on `main`; implementation branch is `fix/capture-all-progress-stall`.
+IMPLEMENTED — branch `fix/capture-all-progress-stall` contains the scheduler, live-phase, regression, and `0.2.3` package changes. Repository-native exact-head validation is the remaining merge gate.
 
 ## Findings / root cause
-- `startTraversal()` persists state as `status: 'starting'`, attaches traversal to the verified app frame, then waits for the content script to emit the first `sniperplug:traversal-page` snapshot.
-- The content script schedules that first snapshot with a 900 ms debounce.
+- `startTraversal()` saves `status: 'starting'`, attaches traversal to the verified app frame, then waits for the content script to emit the first `sniperplug:traversal-page` snapshot.
+- The content script used a 900 ms debounce for that snapshot.
 - Its page-wide `MutationObserver` calls `scheduleTraversalSnapshot()` for every DOM mutation.
-- `scheduleTraversalSnapshot()` currently calls `clearTimeout(traversalTimer)` before starting a new 900 ms timer. A Whop/React page that keeps mutating more frequently than every 900 ms can therefore postpone the first snapshot indefinitely.
-- There is no independent initial-discovery watchdog or progress phase update. Until the first snapshot arrives, background state remains `starting`, discovered/visited remain zero, and the popup can only show an indeterminate `Scanning…` state.
-- Normal rendered-page preparation itself is bounded: expanders, lazy scrolling, images, and tab panels are each capped. That work can take several seconds on a large mobile page, but it should not take minutes. The unbounded part is the debounce starvation before preparation begins.
+- The old scheduler cleared/restarted the 900 ms timer on every mutation. A Whop/React page mutating more frequently than every 900 ms could therefore postpone the first snapshot indefinitely.
+- That exactly matches the runtime symptom: background state stays `starting`, discovered/visited remain zero, and the popup sits at generic `Scanning…` for minutes.
+- Normal preparation is bounded and measured in seconds: safe expanders, lazy scrolling, image wait, tab panels, and extraction all have caps. The unbounded piece was scheduler starvation before preparation even began.
 
-## Execution path
+## Execution path after fix
 1. Popup sends `sniperplug:start-traversal`.
-2. Background resolves/verifies the Better Content iframe, saves traversal state as `starting`, and sends `sniperplug:set-traversal` to that exact frame.
-3. Content script sets `traversalEnabled = true` and schedules a traversal snapshot after 900 ms.
-4. Current bug: each observed DOM mutation clears/restarts that 900 ms timer, so continuously changing pages may never reach the callback.
-5. Intended fix: coalesce repeated triggers without resetting an already-pending traversal snapshot, and remember mutations that happen while a snapshot is busy so one follow-up run is guaranteed.
-6. Content script will emit lightweight bounded preparation-phase updates (`settling`, `expanding`, `scrolling`, `images`, `tabs`, `extracting`) to background state, so the popup reports actual current work before target counts exist.
-7. The authoritative `sniperplug:traversal-page` snapshot remains the only event that discovers/navigates/queues pages.
+2. Background resolves/verifies the Better Content iframe, persists traversal state, and attaches traversal to that exact frame.
+3. Content script schedules one 900 ms settling snapshot.
+4. Repeated DOM mutations no longer reset an already-pending timer.
+5. If mutations happen while extraction is busy, they set one dirty flag; completion schedules exactly one follow-up pass.
+6. Content script emits lightweight `sniperplug:traversal-progress` phases: `settling`, `reading`, `expanding`, `scrolling`, `images`, `tabs`, `extracting`, `sending`, or `retrying`.
+7. The open popup renders those phases immediately and polls authoritative crawler state every 450 ms while active.
+8. Only `sniperplug:traversal-page` can discover/navigate/queue pages. Progress messages are display-only and do not weaken traversal authority.
 
-## Planned changes
-- Replace traversal debounce starvation with a non-starvable coalescing scheduler.
-- Ensure a mutation arriving while `traversalBusy` schedules one follow-up snapshot instead of being lost.
-- Reset pending timer bookkeeping correctly when traversal stops or navigation changes.
-- Add `sniperplug:traversal-progress` updates that only change persisted diagnostic/phase timestamps and never navigate or capture by themselves.
-- Render the phase in the popup so `0 of 0` during initial preparation explains what is actually happening.
-- Add a regression harness that fires mutations faster than the settle interval and fails if no first traversal snapshot is emitted.
-- Bump the extension patch version and version contract.
+## Changes
+- `browser-extension/content-capture.js`
+  - non-starvable coalescing traversal scheduler;
+  - dirty follow-up guarantee while a snapshot is busy;
+  - explicit schedule reset on stop/navigation changes;
+  - bounded live preparation-phase messages;
+  - existing DOM-only/no-private-API boundary preserved.
+- `browser-extension/popup.js`
+  - live phase labels and compact phase readout;
+  - phase shown both before and after a real denominator exists;
+  - active polling tightened to 450 ms;
+  - phase state clears when traversal stops/completes.
+- `tools/test-browser-traversal-scheduler.mjs`
+  - executes the production scheduler and proves 100 rapid mutation triggers create one settle timer;
+  - proves mutations during extraction coalesce into one guaranteed follow-up snapshot.
+- `tools/test-browser-progress-bar.mjs`
+  - now executes production phase/progress logic and verifies live phase text with indeterminate and determinate progress.
+- Existing traversal/Firefox regressions updated for extension `0.2.3`.
+- `package.json` runs the scheduler regression in the normal audit/build chain.
+- `browser-extension/manifest.json` and `browser-extension-version.json` advanced to `0.2.3`.
 
 ## Validation required
-- New non-starvation traversal scheduler regression.
-- Existing recursive traversal, progress-bar, popup latency, Firefox exact-frame/candidate-retention, browser capture/server roundtrip, security-boundary, and full repository audit suite.
-- Firefox Android XPI package/upload on exact head.
-- Final changed-file/diff inspection, PR review-thread check, merge, and post-merge main validation.
+- Full `Verify SniperPlug` audit/regression suite on exact PR head.
+- Firefox Android XPI package/upload on exact PR head.
+- Preview/privacy/route checks and Cloudflare deployment as applicable.
+- No unresolved PR review threads/findings.
+- Post-merge `main` validation and final bookkeeping-head validation.
 
 ## Cleanup / conflicts
-- Do not add a second crawler, polling loop, or navigation fallback.
-- Existing `MutationObserver`, traversal state, and traversal lock remain authoritative; the fix changes scheduling semantics rather than stacking another traversal implementation.
+- No second crawler, polling crawler, alternate traversal store, or navigation fallback was added.
+- Existing `MutationObserver`, traversal state, background traversal lock, safe URL policy, queue limits, and server verification remain authoritative.
+- No cookie permission, token forwarding, private Whop API call, credential-bearing traversal, or unrelated feature work was introduced.
 
 ## Blockers / risks
-- Preparation-phase messages must be lightweight enough not to create a mutation/re-render feedback loop. They travel through extension messaging/storage only and must not mutate the Whop page DOM.
-- Duplicate snapshots remain suppressed by `lastTraversalIdentity`; follow-up scheduling must not create repeated navigation on an unchanged page.
+- No known implementation blocker. Real-device runtime still requires installing the newly packaged `0.2.3` XPI after merge.
+- Live phase messages are extension-only messages and do not mutate the Whop page DOM, avoiding a progress-feedback mutation loop.
 
 ## Backlog
 None discovered for this task.
 
 ## Next step
-Implement the non-starvable traversal scheduler and phase reporting, then run targeted and full repository validation.
+Open the PR on the implemented branch, run the exact-head merge gate, fix any genuine regression, then merge and validate `main` before declaring completion.
