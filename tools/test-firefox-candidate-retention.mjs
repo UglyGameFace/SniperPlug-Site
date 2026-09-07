@@ -93,7 +93,7 @@ function makeHarness({ initialCandidate = false, exposeFrames = true } = {}) {
         },
       },
       runtime: {
-        getManifest: () => ({ version: '0.2.2' }),
+        getManifest: () => ({ version: '0.2.3' }),
         onMessage: {
           addListener: (listener) => { runtimeListener = listener; },
         },
