@@ -1,60 +1,38 @@
 # Active Task
 
 ## Active task / outcome
-PR #72 — fix the remaining Firefox Android Capture-all `Settling…` stall reproduced on extension `0.2.3`, where a valid Better Content frame was visible but the resumed crawler stayed at 0 discovered / 0 queued / 0 retries.
+Fix the Firefox Android Capture-all startup stall still reproduced after `0.2.4`: the Better Content frame is detected and readable, Capture all enters `Settling…`, but the first rendered-page snapshot never reaches the background so discovery/queue/retry counters remain at zero.
 
 ## Status
-COMPLETE AND MERGED — PR #72 was squash-merged into `main` as `cb09da9cc427b554e7528c1679de6349d4fb629b` after exact final PR head `32fbd4a20e825ba1fba6f6e9927280b46f1d037c` passed the merge gate. Post-merge production validation passed. No implementation task is currently active.
+IN PROGRESS — runtime regression continuation of PR #72. Branch: `fix/capture-all-initial-watchdog`.
 
-## Runtime evidence that reopened the task
-- Installed Firefox Android extension reported `0.2.3 · current 0.2.3`.
-- Better Content frame was correctly found and readable (`2,428 rendered characters detected`).
-- Capture-all resumed its saved session and entered `Settling…`.
-- It remained at 0 queued, 0 remaining, 0 discovered, 0 new/changed/unchanged/duplicate, and 0 retries.
-- This proved PR #71's direct MutationObserver debounce fix was incomplete rather than a frame-discovery, popup, or server-side failure.
+## New runtime evidence
+- The current device again shows a valid Better Content frame with `2,428 rendered characters detected`.
+- Capture all is active for the entire experience.
+- The popup receives `Settling…` / `Waiting for the page to settle…` but never advances to `Reading…`.
+- Queue remains `0 pages queued`; no discovery/retry counters appear because the first `sniperplug:traversal-page` snapshot still never arrives.
 
-## Final root cause
-1. The app-frame `MutationObserver` called `registerCandidate()` on page mutations.
-2. `registerCandidate()` sent `sniperplug:candidate` to the background.
-3. `saveCandidate()` saw the already-active traversal and correctly re-sent `sniperplug:set-traversal { enabled: true }` to the frame so genuinely reloaded/reinjected Firefox frames can resume.
-4. The content-script `set-traversal` handler incorrectly treated every repeated `enabled: true` as a new attach: it cleared traversal identity, reset the traversal snapshot schedule, and started another 900 ms settle timer.
-5. On a busy Whop/React page, candidate churn therefore created a candidate → background → reattach loop that could keep replacing the pending timer before it fired.
-6. `Settling…` was emitted each time the timer was scheduled, explaining why the device showed a live phase but never reached `Reading…`, retries, discovery, or queued pages.
+## Architectural defect found
+PRs #71 and #72 removed two timer-starvation reset loops, but startup still has a single point of failure:
+1. `startTraversal()` persists `status: starting`, attaches the verified app frame, and then waits for the content script to produce the first snapshot.
+2. The content script still schedules that first snapshot only through a 900 ms `setTimeout`.
+3. The background navigation timeout/watchdog only exists after `currentTarget` is set. During the initial seed page, `currentTarget` is null.
+4. `scheduleStaleTraversalRepair()` also only repairs stale `currentTarget` navigation.
+5. Therefore if Firefox Android delays, loses, unloads, or otherwise never executes that first content-script timer, the crawler has no authoritative startup deadline or recovery path and can remain in `starting / Settling…` forever.
 
-## Final fix
-- `sniperplug:set-traversal` is now idempotent when the requested enabled state already matches the content script's current state.
-- Repeated `enabled: true` calls `resumeTraversal()` without clearing the pending timer, dirty flag, or traversal identity.
-- Genuine state transitions still use the existing authoritative reset/start/stop behavior.
-- Background reattachment remains intact so a genuinely new Firefox app-frame document can recover an active traversal.
-- Scheduler regression coverage asserts the repeated-enable guard occurs before any schedule reset and that same-state enable resumes instead of resetting.
-- Firefox Android extension/version contract advanced from `0.2.3` to `0.2.4`.
+## Corrective direction
+- Remove the 900 ms timer as a dependency for the first seed-page snapshot: a genuine false → true traversal attach must begin one snapshot immediately.
+- Keep the existing coalesced 900 ms scheduler only for follow-up DOM mutations.
+- Add an explicit `traversal-snapshot-now` content-script command so background recovery can force the currently verified frame to make progress without toggling traversal state.
+- Add a bounded background startup watchdog for `status: starting` with no first snapshot, including popup-driven stale repair so Firefox background suspension cannot leave the crawl permanently stuck.
+- Fail visibly after bounded recovery attempts rather than showing infinite `Settling…`.
+- Add regression coverage for immediate first snapshot and startup watchdog behavior.
+- Bump the installable Firefox Android package to `0.2.5` only after the exact-head regression suite and XPI packaging pass.
 
-## Safety / cleanup
-- No second crawler, polling crawler, alternate traversal store, retry path, or navigation fallback was added.
-- Same-origin/same-experience traversal, sensitive-route rejection, bounded retries/queues, rendered-DOM-only capture, app-frame verification, and server authorization remain unchanged.
-- No cookie permission, token forwarding, private Whop API probing, Control Center/importer/account-switching changes, or unrelated extraction behavior was introduced.
-- The temporary branch-only patch workflow self-deleted before the PR and is absent from the merged tree.
-
-## Validation / results
-Final PR head `32fbd4a20e825ba1fba6f6e9927280b46f1d037c`:
-- **Verify SniperPlug #1101 passed** with the full repository audit/regression suite.
-- Repeated-reattach traversal regression passed.
-- Firefox Android `0.2.4` XPI packaged and archive-tested successfully.
-- PR artifact `sniperplug-firefox-android-xpi` ID `10001284923`, digest `sha256:4cec0c8ba0204182372401040650db6d995ac4bdba09b932e709547a4826627d`.
-- Cloudflare Pages preview deployed successfully.
-- No inline review comments or submitted review findings were outstanding.
-- Qodo was externally unavailable because its subscription is inactive and produced no finding.
-- Vercel remained externally quota-limited; it is not the production deployment path and did not represent an application regression.
-
-Merged `main` commit `cb09da9cc427b554e7528c1679de6349d4fb629b`:
-- **Verify SniperPlug #1102 passed**, including full regression validation and Firefox Android packaging/upload.
-- **Verify production guide privacy #108 passed**.
-- **Verify affiliate-ready production #104 passed**.
-- Cloudflare Pages deployment passed on the exact merge commit.
-- Production artifact `sniperplug-firefox-android-xpi` ID `10001321116`, digest `sha256:c3421e0e594d9cb212760559464461f6b2909801d73961267626b3142bb3b6fa`.
-
-## Remaining runtime confirmation
-The code task is complete. The only remaining action is device-side confirmation using the newly packaged `0.2.4` XPI. The old `0.2.3` install must be replaced before judging this fix because its content script still contains the repeated-reattach reset bug.
+## Safety preserved
+- Same rendered-DOM-only capture path.
+- Same verified app frame, same-origin/same-experience traversal, sensitive-route rejection, queue/retry limits, and server authorization.
+- No cookie permission, token forwarding, private Whop API access, second crawler, or unrelated product work.
 
 ## Next step
-Install the exact validated `0.2.4` Firefox Android XPI and start a fresh Capture-all run. Any failure after that is a runtime regression continuation of this same Capture-all task; otherwise the next unrelated coding request should become a separate active task.
+Implement the immediate seed snapshot plus bounded startup watchdog, run the full merge gate, package `0.2.5`, merge only on a green exact head, then validate `main` and hand off the exact production artifact.
