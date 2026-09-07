@@ -25,8 +25,14 @@ jobs:
           from pathlib import Path
           p = Path('tools/tmp-capture-reliability-patch.sh')
           text = p.read_text()
-          old = "    traversalTimer = setTimeout(() => {\\n      traversalTimer = 0;\\n      runTraversalSnapshot();\\n    }, TRAVERSAL_SETTLE_MS);"
-          new = "    traversalTimer = setTimeout(() => {\\n      traversalTimer = 0;\\n      return runTraversalSnapshot();\\n    }, TRAVERSAL_SETTLE_MS);"
+          old = '''    traversalTimer = setTimeout(() => {
+      traversalTimer = 0;
+      runTraversalSnapshot();
+    }, TRAVERSAL_SETTLE_MS);'''
+          new = '''    traversalTimer = setTimeout(() => {
+      traversalTimer = 0;
+      return runTraversalSnapshot();
+    }, TRAVERSAL_SETTLE_MS);'''
           if old not in text:
               raise SystemExit('temporary scheduler patch pattern not found')
           p.write_text(text.replace(old, new, 1))
