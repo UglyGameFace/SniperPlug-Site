@@ -1,0 +1,162 @@
+name: Apply Capture-all reattach fix
+
+on:
+  push:
+    branches:
+      - fix/capture-all-reattach-stall
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/capture-all-reattach-stall
+          fetch-depth: 1
+      - name: Apply exact regression fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          capture_path = Path('browser-extension/content-capture.js')
+          capture = capture_path.read_text()
+          old = """    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
+              traversalEnabled = message.enabled === true;
+              lastTraversalIdentity = '';
+              resetTraversalSnapshotSchedule();
+              if (traversalEnabled) {
+                clearTimeout(autoTimer);
+                scheduleTraversalSnapshot();
+              } else if (autoEnabled) {
+                scheduleAutoCapture();
+              }
+              sendResponse({ ok: true, enabled: traversalEnabled });
+              return false;
+            }
+          """
+          new = """    if (message?.type === `${MESSAGE_PREFIX}set-traversal`) {
+              const nextTraversalEnabled = message.enabled === true;
+              if (nextTraversalEnabled === traversalEnabled) {
+                if (nextTraversalEnabled) resumeTraversal();
+                sendResponse({ ok: true, enabled: traversalEnabled, unchanged: true });
+                return false;
+              }
+              traversalEnabled = nextTraversalEnabled;
+              lastTraversalIdentity = '';
+              resetTraversalSnapshotSchedule();
+              if (traversalEnabled) {
+                clearTimeout(autoTimer);
+                scheduleTraversalSnapshot();
+              } else if (autoEnabled) {
+                scheduleAutoCapture();
+              }
+              sendResponse({ ok: true, enabled: traversalEnabled });
+              return false;
+            }
+          """
+          if capture.count(old) != 1:
+              raise SystemExit(f'Expected exactly one traversal handler block, found {capture.count(old)}')
+          capture = capture.replace(old, new)
+          capture_path.write_text(capture)
+
+          scheduler_path = Path('tools/test-browser-traversal-scheduler.mjs')
+          scheduler = scheduler_path.read_text()
+          marker = "assert.ok(schedulerSource.includes('if (traversalTimer) return;'), 'Repeated DOM mutations can reset the settle timer again.');\n"
+          addition = """assert.ok(schedulerSource.includes('if (traversalTimer) return;'), 'Repeated DOM mutations can reset the settle timer again.');
+          const reattachGuard = captureScript.indexOf('const nextTraversalEnabled = message.enabled === true;');
+          const reattachNoop = captureScript.indexOf('if (nextTraversalEnabled === traversalEnabled)', reattachGuard);
+          const reattachReset = captureScript.indexOf('resetTraversalSnapshotSchedule();', reattachGuard);
+          assert.ok(reattachGuard >= 0 && reattachNoop > reattachGuard && reattachReset > reattachNoop, 'Repeated traversal reattach can reset the pending scheduler before the idempotence guard.');
+          assert.ok(captureScript.includes('if (nextTraversalEnabled) resumeTraversal();'), 'Repeated enabled traversal reattach no longer preserves the pending scheduler.');
+          """
+          if scheduler.count(marker) != 1:
+              raise SystemExit(f'Expected one scheduler assertion marker, found {scheduler.count(marker)}')
+          scheduler = scheduler.replace(marker, addition)
+          scheduler_path.write_text(scheduler)
+
+          manifest_path = Path('browser-extension/manifest.json')
+          manifest = json.loads(manifest_path.read_text())
+          if manifest.get('version') != '0.2.3':
+              raise SystemExit(f"Expected manifest 0.2.3, found {manifest.get('version')}")
+          manifest['version'] = '0.2.4'
+          manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+
+          contract_path = Path('browser-extension-version.json')
+          contract = json.loads(contract_path.read_text())
+          if contract.get('latest') != '0.2.3':
+              raise SystemExit(f"Expected contract 0.2.3, found {contract.get('latest')}")
+          contract['latest'] = '0.2.4'
+          contract['notes'] = 'Prevents active Capture all sessions from repeatedly reattaching to the same Whop frame and resetting the pending traversal timer; repeated enabled reattach is now idempotent while the existing snapshot continues.'
+          contract_path.write_text(json.dumps(contract, indent=2) + '\n')
+
+          version_test_paths = [
+              Path('tools/test-browser-popup-latency.mjs'),
+              Path('tools/test-browser-auto-traversal.mjs'),
+              Path('tools/test-firefox-candidate-retention.mjs'),
+              Path('tools/test-firefox-better-content-frame-selection.mjs'),
+          ]
+          for path in version_test_paths:
+              text = path.read_text()
+              if '0.2.3' not in text:
+                  raise SystemExit(f'Expected 0.2.3 in {path}')
+              path.write_text(text.replace('0.2.3', '0.2.4'))
+
+          active = """# Active Task
+
+## Active task / outcome
+Fix the remaining Firefox Android Capture-all `Settling…` stall reproduced on installed extension `0.2.3`, where a resumed session shows a valid Better Content frame but remains at 0 discovered / 0 queued / 0 retries.
+
+## Status
+IN PROGRESS — same regression family as PR #71. Runtime screenshot on `0.2.3` proved the direct mutation debounce fix was incomplete. Branch: `fix/capture-all-reattach-stall`.
+
+## Reproduction evidence
+- Extension reports `0.2.3 · current 0.2.3`.
+- Better Content frame is found and readable (`2,428 rendered characters detected`).
+- Capture-all resumes its saved session and enters `Settling…`.
+- It remains at 0 queued, 0 remaining, 0 discovered, 0 new/changed/unchanged/duplicate, and 0 retries.
+- Therefore frame discovery and popup rendering are working; the first pending traversal snapshot is still being canceled before it executes.
+
+## Root cause
+1. The app-frame `MutationObserver` calls `registerCandidate()` on each DOM mutation.
+2. `registerCandidate()` sends `sniperplug:candidate` to background.
+3. `saveCandidate()` sees the already-active traversal and sends `sniperplug:set-traversal` with `enabled: true` back to the same frame.
+4. In `content-capture.js`, the `set-traversal` handler treated every repeated `enabled: true` message as a fresh attach: it cleared `lastTraversalIdentity`, called `resetTraversalSnapshotSchedule()`, and scheduled a new 900 ms timer.
+5. So PR #71 removed the direct MutationObserver timer reset, but the candidate -> background -> reattach feedback loop could still reset that same timer on every mutation. This exactly explains a permanent `Settling…` state with no retries or page counts.
+
+## Fix
+- Make `sniperplug:set-traversal` idempotent when the requested enabled state already matches the local content-script state.
+- A repeated `enabled: true` reattach now calls `resumeTraversal()` only; it does not reset the existing timer, dirty flag, or traversal identity.
+- A real state transition (false -> true or true -> false) still performs the authoritative reset/start/stop behavior.
+- Keep background reattachment intact so a newly loaded/reinjected Firefox app frame can still recover the active saved traversal.
+- Add a regression assertion that the repeated-enable guard occurs before `resetTraversalSnapshotSchedule()` and that repeated enable resumes rather than resets.
+- Bump the installable Firefox Android extension to `0.2.4`.
+
+## Safety preserved
+- No second crawler, polling crawler, alternate traversal store, or navigation fallback.
+- Same-origin/same-experience traversal and sensitive-route rejection are unchanged.
+- Rendered-DOM-only capture, no cookie permission, no private Whop API probing, queue/retry limits, and server-side authorization remain unchanged.
+
+## Validation required
+- Traversal scheduler / reattach regression.
+- Full repository audit/regression suite.
+- Firefox Android XPI package and archive test.
+- Exact-head PR validation, review/diff check, merge, post-merge `main` validation, and final `0.2.4` handoff.
+
+## Next step
+Run the complete merge gate on the patched branch, fix any genuine regression, then merge and validate `main` before closing this continuation of PR #71.
+"""
+          Path('ACTIVE_TASK.md').write_text(active)
+          PY
+
+          rm .github/workflows/apply-capture-all-reattach-fix.yml
+          git config user.name 'SniperPlug CI Fixer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add browser-extension/content-capture.js browser-extension/manifest.json browser-extension-version.json tools/test-browser-traversal-scheduler.mjs tools/test-browser-popup-latency.mjs tools/test-browser-auto-traversal.mjs tools/test-firefox-candidate-retention.mjs tools/test-firefox-better-content-frame-selection.mjs ACTIVE_TASK.md .github/workflows/apply-capture-all-reattach-fix.yml
+          git diff --cached --check
+          git commit -m 'Fix Capture-all repeated reattach stall'
+          git push origin HEAD:fix/capture-all-reattach-stall
