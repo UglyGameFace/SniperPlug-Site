@@ -548,8 +548,8 @@ async function captureHistory() {
   return readPersistent(HISTORY_KEY, {});
 }
 
-async function classifySyncCapture(tabId, capture) {
-  const key = stablePageKey(capture);
+async function classifySyncCapture(tabId, capture, stableKeyOverride = '') {
+  const key = String(stableKeyOverride || '').trim() || stablePageKey(capture);
   const fingerprint = await captureFingerprint(capture);
   const history = await captureHistory();
   const queues = await readPersistent(QUEUE_KEY, {});
@@ -569,7 +569,7 @@ async function addCapture(tabId, capture, options = {}) {
   const queues = await readPersistent(QUEUE_KEY, {});
   const key = String(tabId);
   const current = Array.isArray(queues[key]) ? queues[key].filter(isSafeAppCapture) : [];
-  const identity = captureIdentity(capture);
+  const identity = String(options.stableKey || '').trim() || captureIdentity(capture);
   const fingerprint = options.fingerprint || await captureFingerprint(capture);
   const enriched = {
     ...capture,
@@ -838,6 +838,8 @@ async function startTraversal(tabId, options = {}) {
     state.tabId = sourceTabId;
     state.frameId = candidate.frameId;
     state.lastPageUrl = seed.toString();
+    state.lastPageDirectoryLike = true;
+    state.lastPageTitle = '';
     state.autoSend = options.autoSend === true ? true : state.autoSend === true;
     state.rightsConfirmed = options.rightsConfirmed === true ? true : state.rightsConfirmed === true;
     if (state.currentTarget?.url) {
@@ -860,6 +862,8 @@ async function startTraversal(tabId, options = {}) {
       frameId: candidate.frameId,
       seedUrl: seed.toString(),
       lastPageUrl: seed.toString(),
+      lastPageDirectoryLike: true,
+      lastPageTitle: '',
       scope,
       scopePath: scope === 'section' ? sectionScopePath(seed.toString(), candidate.experienceId) : `/experiences/${candidate.experienceId}/`,
       currentTarget: null,
@@ -980,7 +984,7 @@ async function sendTraversalNavigation(state, target) {
   state.status = 'running';
   const parentUrl = target.activation === true ? normalizedTraversalUrl(target.parentUrl, state) : '';
   const currentPageUrl = normalizedTraversalUrl(state.lastPageUrl, state);
-  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl;
+  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl && state.lastPageDirectoryLike === true;
   state.currentTarget = {
     ...target,
     stage: target.activation === true ? (shouldActivate ? 'activating' : 'returning') : 'navigating',
@@ -1095,11 +1099,12 @@ async function handleTraversalPage(sender, snapshot) {
     const pageUrl = normalizedTraversalUrl(snapshot?.pageUrl, state);
     if (!pageUrl) return stopTraversal(tabId, 'error', 'Capture-all stopped because Better Content left the verified app-frame scope or exposed a credential-bearing URL.');
 
-    clearTraversalTimer(state);
     state.status = 'running';
     state.startupStartedAt = 0;
     state.startupRepairCount = 0;
     state.lastPageUrl = pageUrl;
+    state.lastPageDirectoryLike = snapshot?.directoryLike === true;
+    state.lastPageTitle = String(snapshot?.title || '').slice(0, 180);
     const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])
       .slice(0, 360)
       .map((target) => `${String(target?.url || '')}:${target?.activation === true ? 'activate' : 'url'}:${String(target?.parentUrl || '')}`)
@@ -1107,6 +1112,7 @@ async function handleTraversalPage(sender, snapshot) {
       .join('|');
     const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}|${snapshot?.diagnostics?.controlsClicked || 0}|${state.currentTarget?.url || ''}|${state.currentTarget?.stage || ''}`;
     if (snapshotKey === state.lastSnapshotKey) return { ignored: true, ...traversalPublicState(state) };
+    clearTraversalTimer(state);
     state.lastSnapshotKey = snapshotKey;
     state.updatedAt = Date.now();
     state.lastDiagnostic = snapshot?.diagnostics
@@ -1115,7 +1121,7 @@ async function handleTraversalPage(sender, snapshot) {
 
     const activationTarget = state.currentTarget?.activation === true ? state.currentTarget : null;
     const activationParent = activationTarget ? normalizedTraversalUrl(activationTarget.parentUrl, state) : '';
-    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent) {
+    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent && snapshot?.directoryLike === true) {
       mergeTraversalTargets(state, snapshot?.targets);
       state.lastDiagnostic = `Returned to ${activationTarget.parentTitle || 'the Better Content directory'}; opening ${activationTarget.title || 'the next guide'}.`;
       await saveTraversal(state);
@@ -1135,6 +1141,7 @@ async function handleTraversalPage(sender, snapshot) {
       mergeTraversalTargets(state, snapshot?.targets);
       state.lastDiagnostic = `Waiting for ${activationTarget.title || 'the selected guide'} to replace the rendered directory.`;
       await saveTraversal(state);
+      scheduleTraversalTimeout(state);
       return { waitingForActivation: true, ...traversalPublicState(state) };
     }
 
@@ -1161,9 +1168,17 @@ async function handleTraversalPage(sender, snapshot) {
 
     if (snapshot?.capture && snapshot?.directoryLike !== true) {
       try {
-        const classified = await classifySyncCapture(tabId, snapshot.capture);
+        const activationStableKey = matchedTarget?.activation === true ? matchedTarget.url : '';
+        const captureToQueue = matchedTarget?.activation === true
+          ? {
+            ...snapshot.capture,
+            pageIdentity: `${matchedTarget.url}|${String(snapshot.capture.title || matchedTarget.title || '').slice(0, 140)}`.slice(0, 600),
+          }
+          : snapshot.capture;
+        const classified = await classifySyncCapture(tabId, captureToQueue, activationStableKey);
         if (classified.action === 'new' || classified.action === 'changed') {
-          await addCapture(tabId, snapshot.capture, {
+          await addCapture(tabId, captureToQueue, {
+            stableKey: activationStableKey,
             fingerprint: classified.fingerprint,
             changeType: classified.action,
           });

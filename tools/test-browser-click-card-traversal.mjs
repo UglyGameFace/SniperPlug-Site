@@ -22,4 +22,9 @@ assert.ok(capture.includes('overlay-stop-traversal') && background.includes("mes
 assert.ok(capture.includes('traversalOverlayTerminalTimer') && capture.includes('setTimeout(() => dismissTraversalOverlay(), 4200)'), 'Completed/error HUDs can remain stuck on the Whop page forever.');
 assert.ok(capture.includes("control.getAttribute('aria-expanded') === 'false'"), 'Collapsed rendered Better Content sections are not expanded before guide discovery.');
 
+assert.ok(capture.includes('[role=\"link\"]'), 'Role-link click cards are not recognized.');
+assert.ok(background.includes('state.lastPageDirectoryLike === true'), 'Same-URL SPA details can be mistaken for their parent directory.');
+assert.ok(background.includes('stableKeyOverride') && background.includes('activationStableKey') && background.includes('captureToQueue'), 'Same-URL click guides can collapse into one queue identity.');
+assert.ok(background.includes('waitingForActivation') && background.includes('scheduleTraversalTimeout(state);'), 'An unchanged card activation can lose its bounded retry timer.');
+
 console.log('BROWSER CLICK-CARD TRAVERSAL + HUD REGRESSION: PASS');
