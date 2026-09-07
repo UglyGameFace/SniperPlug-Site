@@ -1,46 +1,38 @@
 # Active Task
 
 ## Active task / outcome
-Authoritative SniperPlug server reconciliation for Better Content browser captures, so fresh Firefox/Android installs can identify what already exists in the account workspace before importing.
+Fix Firefox Android Better Content Capture-all so the real Make Money Here directory captures every accessible rendered guide instead of queueing only the directory shell, and make the in-page Capture-all progress HUD controllable/removable.
 
 ## Status
-COMPLETE AND MERGED — PR #74 shipped server-authoritative Better Content reconciliation and Firefox Android extension `0.2.6`. No implementation task is currently active.
+IN PROGRESS — runtime regression reproduced on extension 0.2.6. Branch: `fix/capture-all-card-activation-hud`.
 
-## Problem resolved
-The extension already kept local capture fingerprints after successful handoff and the server write path was idempotent, but browser history was device-specific. A fresh phone, cleared Firefox profile, or new extension install could therefore queue pages SniperPlug already had and only discover that fact during the write attempt.
+## Runtime evidence
+- The rendered Make Money Here directory visibly contains many guide cards, but Capture-all reports `1 of 1 known pages checked` and queues only `Content`.
+- That proves the current URL-only target discovery is not seeing Whop's rendered card navigation.
+- The in-page `SniperPlug Capture-all` HUD remains pinned over the page after the crawl ends and has no minimize, stop, or close controls.
 
-## Shipped behavior
-- The signed-in SniperPlug relay now reconciles every queued capture against server history before any import write.
-- Reconciliation is scoped to the current SniperPlug tenant and re-verifies the connected Whop session, current membership/access, supported rendered-app reader, and source policy.
-- Each page is classified as already imported, changed, new, duplicate, or held.
-- Only pages marked `needsImport: true` proceed to the write path.
-- Identical legacy/alternate-source content is detected from the server workspace even when the current browser has no local capture history.
-- Published, manually reviewed, rejected/removed, and duplicate guides remain held instead of being overwritten.
-- Failed reconciliation/import preserves the extension pending queue for safe retry.
-- Complete successful handoff reuses the existing success path to hydrate that Firefox profile's local fingerprint history, making later repeat scans fast again.
-- Firefox Android extension/version contract advanced to `0.2.6`.
+## Root cause
+- `discoverTraversalTargets()` only recognizes anchors/href-style DOM targets (`a[href]`, role=link+href, data-href, data-url).
+- The live Better Content directory uses rendered clickable card controls for at least this view; those cards do not expose an href through the current reader, so the crawler discovers zero children.
+- With no child targets, the directory itself is misclassified/captured as the only page and the traversal immediately completes.
+- The foreground HUD was intentionally created with `pointerEvents: none` and no controls, and terminal states had no dismissal timer.
+
+## Fix in this task
+- Keep URL traversal as the first-class path.
+- Add bounded rendered click-card discovery for visible non-form, non-dangerous card controls that lack safe hrefs, including cursor-pointer React cards.
+- Give every click-only card a same-origin synthetic traversal identity while retaining its verified parent directory URL, title, label, and ordinal.
+- Background remains the authoritative crawler: it returns to the parent directory between click-only guides, activates the exact rendered card, waits for the rendered detail state, then resumes the same queue/retry/persistence machinery.
+- Expand safe collapsed sections (`aria-expanded=false`) before discovering cards.
+- Directory shells with click-only children are classified as directories rather than queued as guides.
+- Add HUD minimize, stop, and hide controls; Stop routes through background traversal authority; completed/error/stopped HUDs auto-dismiss after a short result display.
+- Bump Firefox Android extension/version contract to 0.2.7.
+- Add regression coverage for click-only card traversal and HUD controls.
 
 ## Safety preserved
-- Rendered content remains DOM-only inside the verified HTTPS `*.apps.whop.com` frame.
-- The extension still has no cookie permission and does not read/forward Whop credentials or call Whop private APIs directly.
-- Reconciliation only runs through the signed-in, same-origin SniperPlug endpoint.
-- Existing 25-page/payload limits and private-draft manual review rules remain intact.
+- Rendered DOM only; no Whop cookie permission, credential forwarding, or private API probing.
+- Same HTTPS app origin/experience scope and sensitive-route rejection remain authoritative.
+- Click activators are limited to visible rendered controls inside the selected content root; forms, dangerous labels, href-backed controls, tabs, popups, disabled controls, tiny/icon controls, and generic action buttons are rejected.
+- Existing traversal visit/retry/queue limits, server authorization, reconciliation, and private-draft review path remain intact.
 
-## Validation / results
-Final PR head `49cde2fd6de947eeebd1628b697d69b31757d625`:
-- **Verify SniperPlug #1107 passed**, including the full repository regression suite, the new server-reconciliation regression, Firefox Android `0.2.6` packaging, and artifact upload.
-- **Verify retired public deal routes #150 passed**.
-- **Verify affiliate-ready preview #143 passed**.
-- Cloudflare Pages preview deployment passed.
-- No inline review threads or submitted review findings were outstanding.
-- Changed-file audit contained only reconciliation API/service, signed-in relay, extension/version contract, tests/docs, audit wiring, and task bookkeeping.
-
-Merged `main` commit `883be19b243654228748f5f6a6ac2c06f8a98316`:
-- **Verify SniperPlug #1108 passed**, including the full regression suite and Firefox Android package/upload.
-- **Verify production guide privacy #112 passed**.
-- **Verify affiliate-ready production #108 passed**.
-- **Verify retired public deal routes #151 passed**.
-- Cloudflare production deployment passed on the merge commit.
-
-## Remaining runtime confirmation
-Code and repository validation are complete. Device testing should use the newly packaged `0.2.6` extension. Any failure specifically reproduced on `0.2.6` is a regression continuation of this same reconciliation/capture flow; otherwise the next unrelated coding request is a separate active task.
+## Next step
+Run the complete repository regression/package gate on the exact implementation head, inspect the final diff/reviews, merge if green, validate `main`, then hand off the validated 0.2.7 XPI for real-device confirmation.

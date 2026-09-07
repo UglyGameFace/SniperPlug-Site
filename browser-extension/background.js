@@ -837,6 +837,7 @@ async function startTraversal(tabId, options = {}) {
     state.error = '';
     state.tabId = sourceTabId;
     state.frameId = candidate.frameId;
+    state.lastPageUrl = seed.toString();
     state.autoSend = options.autoSend === true ? true : state.autoSend === true;
     state.rightsConfirmed = options.rightsConfirmed === true ? true : state.rightsConfirmed === true;
     if (state.currentTarget?.url) {
@@ -858,6 +859,7 @@ async function startTraversal(tabId, options = {}) {
       tabId: sourceTabId,
       frameId: candidate.frameId,
       seedUrl: seed.toString(),
+      lastPageUrl: seed.toString(),
       scope,
       scopePath: scope === 'section' ? sectionScopePath(seed.toString(), candidate.experienceId) : `/experiences/${candidate.experienceId}/`,
       currentTarget: null,
@@ -935,26 +937,64 @@ function mergeTraversalTargets(state, targets) {
     if (known.size >= MAX_TRAVERSAL_VISITS) break;
     const url = normalizedTraversalUrl(raw?.url, state);
     if (!url || known.has(url)) continue;
+    const activation = raw?.activation === true;
+    const parentUrl = activation ? normalizedTraversalUrl(raw?.parentUrl, state) : '';
+    if (activation && !parentUrl) continue;
     known.add(url);
     pending.push({
       url,
       title: String(raw?.title || '').trim().slice(0, 180),
+      activation,
+      parentUrl,
+      parentTitle: activation ? String(raw?.parentTitle || '').trim().slice(0, 180) : '',
+      activationLabel: activation ? String(raw?.activationLabel || raw?.title || '').trim().slice(0, 180) : '',
+      activationOrdinal: activation ? Math.max(0, Number(raw?.activationOrdinal || 0)) : 0,
     });
   }
   state.pending = pending;
   state.discovered = Math.max(Number(state.discovered || 0), known.size - (state.seedUrl ? 1 : 0));
 }
 
-async function sendTraversalNavigation(state, target) {
+async function sendTraversalActivation(state, target) {
   state.status = 'running';
-  state.currentTarget = { ...target, startedAt: Date.now() };
+  state.currentTarget = { ...target, stage: 'activating', startedAt: Date.now() };
   state.currentTitle = target.title || '';
   state.updatedAt = Date.now();
   await saveTraversal(state);
   try {
     const response = await chrome.tabs.sendMessage(
       state.tabId,
-      { type: 'sniperplug:traverse-navigate', url: target.url },
+      { type: 'sniperplug:traverse-activate', target: state.currentTarget },
+      { frameId: state.frameId },
+    );
+    if (!response?.ok) throw new Error(response?.error || 'guide card activation refused');
+    scheduleTraversalTimeout(state);
+    return true;
+  } catch (error) {
+    await retryOrSkipCurrent(state, `Guide activation failed: ${String(error?.message || error || 'unknown error')}`);
+    return false;
+  }
+}
+
+async function sendTraversalNavigation(state, target) {
+  state.status = 'running';
+  const parentUrl = target.activation === true ? normalizedTraversalUrl(target.parentUrl, state) : '';
+  const currentPageUrl = normalizedTraversalUrl(state.lastPageUrl, state);
+  const shouldActivate = target.activation === true && parentUrl && currentPageUrl === parentUrl;
+  state.currentTarget = {
+    ...target,
+    stage: target.activation === true ? (shouldActivate ? 'activating' : 'returning') : 'navigating',
+    startedAt: Date.now(),
+  };
+  state.currentTitle = target.title || '';
+  state.updatedAt = Date.now();
+  await saveTraversal(state);
+  if (shouldActivate) return sendTraversalActivation(state, state.currentTarget);
+  const navigationUrl = target.activation === true ? parentUrl : target.url;
+  try {
+    const response = await chrome.tabs.sendMessage(
+      state.tabId,
+      { type: 'sniperplug:traverse-navigate', url: navigationUrl },
       { frameId: state.frameId },
     );
     if (!response?.ok) throw new Error(response?.error || 'navigation refused');
@@ -1059,12 +1099,13 @@ async function handleTraversalPage(sender, snapshot) {
     state.status = 'running';
     state.startupStartedAt = 0;
     state.startupRepairCount = 0;
+    state.lastPageUrl = pageUrl;
     const targetSignature = (Array.isArray(snapshot?.targets) ? snapshot.targets : [])
       .slice(0, 360)
-      .map((target) => String(target?.url || ''))
+      .map((target) => `${String(target?.url || '')}:${target?.activation === true ? 'activate' : 'url'}:${String(target?.parentUrl || '')}`)
       .sort()
       .join('|');
-    const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}|${snapshot?.diagnostics?.controlsClicked || 0}`;
+    const snapshotKey = `${pageUrl}|${snapshot?.capture?.bodyMarkdown?.length || 0}|${targetSignature}|${snapshot?.diagnostics?.controlsClicked || 0}|${state.currentTarget?.url || ''}|${state.currentTarget?.stage || ''}`;
     if (snapshotKey === state.lastSnapshotKey) return { ignored: true, ...traversalPublicState(state) };
     state.lastSnapshotKey = snapshotKey;
     state.updatedAt = Date.now();
@@ -1072,7 +1113,33 @@ async function handleTraversalPage(sender, snapshot) {
       ? `Rendered page prepared: ${Number(snapshot.diagnostics.scrollSteps || 0)} scroll step(s), ${Number(snapshot.diagnostics.controlsClicked || 0)} expander(s), ${Number(snapshot.diagnostics.tabPanels || 0)} tab panel(s), ${Number(snapshot.diagnostics.imagesStillPending || 0)} image(s) still pending.`
       : '';
 
-    const currentMatched = state.currentTarget?.url && normalizedTraversalUrl(state.currentTarget.url, state) === pageUrl;
+    const activationTarget = state.currentTarget?.activation === true ? state.currentTarget : null;
+    const activationParent = activationTarget ? normalizedTraversalUrl(activationTarget.parentUrl, state) : '';
+    if (activationTarget?.stage === 'returning' && activationParent && pageUrl === activationParent) {
+      mergeTraversalTargets(state, snapshot?.targets);
+      state.lastDiagnostic = `Returned to ${activationTarget.parentTitle || 'the Better Content directory'}; opening ${activationTarget.title || 'the next guide'}.`;
+      await saveTraversal(state);
+      await sendTraversalActivation(state, activationTarget);
+      return { activating: true, ...traversalPublicState(state) };
+    }
+
+    const directMatched = state.currentTarget?.activation !== true
+      && state.currentTarget?.url
+      && normalizedTraversalUrl(state.currentTarget.url, state) === pageUrl;
+    const activationMatched = Boolean(activationTarget?.stage === 'activating' && activationParent && (
+      pageUrl !== activationParent
+      || snapshot?.directoryLike !== true
+      || (activationTarget.parentTitle && String(snapshot?.title || '') !== activationTarget.parentTitle)
+    ));
+    if (activationTarget?.stage === 'activating' && !activationMatched) {
+      mergeTraversalTargets(state, snapshot?.targets);
+      state.lastDiagnostic = `Waiting for ${activationTarget.title || 'the selected guide'} to replace the rendered directory.`;
+      await saveTraversal(state);
+      return { waitingForActivation: true, ...traversalPublicState(state) };
+    }
+
+    const currentMatched = Boolean(directMatched || activationMatched);
+    const matchedTarget = currentMatched ? state.currentTarget : null;
     const visited = new Set(Array.isArray(state.visited) ? state.visited : []);
     if (currentMatched) {
       visited.add(state.currentTarget.url);
@@ -1088,7 +1155,7 @@ async function handleTraversalPage(sender, snapshot) {
       && !snapshot?.capture
       && (!Array.isArray(snapshot?.targets) || snapshot.targets.length === 0);
     if (renderLooksEmpty && currentMatched) {
-      state.currentTarget = { url: pageUrl, title: String(snapshot?.title || pageUrl) };
+      state.currentTarget = matchedTarget || { url: pageUrl, title: String(snapshot?.title || pageUrl) };
       return { retrying: true, ...(await retryOrSkipCurrent(state, 'The page rendered no capturable body or child links.')) };
     }
 
@@ -1326,6 +1393,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     if (message?.type === 'sniperplug:traversal-page') {
       return { ok: true, ...(await handleTraversalPage(sender, message.snapshot || {})) };
+    }
+    if (message?.type === 'sniperplug:overlay-stop-traversal') {
+      const senderTabId = Number(sender?.tab?.id);
+      if (!Number.isInteger(senderTabId)) return { ok: false, error: 'Capture-all stop request did not come from a browser tab.' };
+      return { ok: true, ...(await stopTraversal(senderTabId)) };
     }
     if (message?.type === 'sniperplug:popup-state') {
       const preferredTabId = Number(message.tabId);

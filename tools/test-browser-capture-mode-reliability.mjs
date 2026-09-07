@@ -9,7 +9,7 @@ const background = readFileSync(join(root, 'browser-extension/background.js'), '
 const popup = readFileSync(join(root, 'browser-extension/popup.js'), 'utf8');
 const manifest = JSON.parse(readFileSync(join(root, 'browser-extension/manifest.json'), 'utf8'));
 
-assert.equal(manifest.version, '0.2.6');
+assert.equal(manifest.version, '0.2.7');
 assert.ok(capture.includes('const CAPTURE_DOCUMENT_ID ='), 'Rendered frame documents are not uniquely identified across reloads.');
 assert.ok(capture.includes('runTraversalSnapshotNow();') && capture.includes('traversal-snapshot-now'), 'Capture-all still lacks an immediate/forced first-snapshot path.');
 assert.ok(capture.includes('sniperplug-capture-all-overlay') && capture.includes('traversal-state'), 'Capture-all no longer exposes live progress on the foreground Whop page.');

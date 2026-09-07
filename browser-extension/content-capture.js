@@ -43,6 +43,9 @@
   let traversalOverlayState = null;
   let traversalOverlayPhase = '';
   let traversalOverlayDetail = '';
+  let traversalOverlayDismissed = false;
+  let traversalOverlayMinimized = false;
+  let traversalOverlayTerminalTimer = 0;
 
   function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -52,20 +55,56 @@
     return String(value || '').replace(/\s+/g, ' ').trim();
   }
 
+  function dismissTraversalOverlay() {
+    clearTimeout(traversalOverlayTerminalTimer);
+    traversalOverlayTerminalTimer = 0;
+    traversalOverlayDismissed = true;
+    if (traversalOverlay?.isConnected) traversalOverlay.remove();
+    traversalOverlay = null;
+  }
+
+  function setTraversalOverlayMinimized(minimized) {
+    traversalOverlayMinimized = minimized === true;
+    const overlay = traversalOverlay;
+    if (!overlay?.isConnected) return;
+    const body = overlay.querySelector('[data-sp-body]');
+    const button = overlay.querySelector('[data-sp-minimize]');
+    if (body) body.style.display = traversalOverlayMinimized ? 'none' : 'block';
+    if (button) {
+      button.textContent = traversalOverlayMinimized ? '□' : '−';
+      button.setAttribute('aria-label', traversalOverlayMinimized ? 'Restore Capture-all progress' : 'Minimize Capture-all progress');
+      button.setAttribute('title', traversalOverlayMinimized ? 'Restore' : 'Minimize');
+    }
+  }
+
+  function overlayControlButton(button) {
+    Object.assign(button.style, {
+      appearance: 'none', border: '1px solid rgba(255,255,255,.18)', background: 'rgba(255,255,255,.08)',
+      color: '#e8fff4', width: '30px', height: '28px', borderRadius: '8px', font: '700 16px/1 system-ui, sans-serif',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0', cursor: 'pointer', touchAction: 'manipulation',
+    });
+  }
+
   function ensureTraversalOverlay() {
+    if (traversalOverlayDismissed) return null;
     if (traversalOverlay?.isConnected) return traversalOverlay;
     const overlay = document.createElement('div');
     overlay.id = 'sniperplug-capture-all-overlay';
     overlay.setAttribute('aria-live', 'polite');
-    overlay.innerHTML = '<div data-sp-title>SniperPlug Capture-all</div><div data-sp-phase>Starting…</div><div data-sp-track><div data-sp-bar></div></div><div data-sp-counts>Discovering rendered guides…</div>';
+    overlay.innerHTML = '<div data-sp-header><div data-sp-title>SniperPlug Capture-all</div><div data-sp-controls><button type="button" data-sp-minimize aria-label="Minimize Capture-all progress" title="Minimize">−</button><button type="button" data-sp-stop aria-label="Stop Capture-all" title="Stop">■</button><button type="button" data-sp-close aria-label="Hide Capture-all progress" title="Hide">×</button></div></div><div data-sp-body><div data-sp-phase>Starting…</div><div data-sp-track><div data-sp-bar></div></div><div data-sp-counts>Discovering rendered guides…</div></div>';
     Object.assign(overlay.style, {
-      position: 'fixed', top: '12px', right: '12px', width: 'min(340px, calc(100vw - 24px))',
-      zIndex: '2147483647', padding: '12px', borderRadius: '14px', background: 'rgba(5,16,25,.94)',
+      position: 'fixed', top: '12px', right: '12px', width: 'min(360px, calc(100vw - 24px))',
+      zIndex: '2147483647', padding: '12px', borderRadius: '14px', background: 'rgba(5,16,25,.96)',
       color: '#e8fff4', border: '1px solid rgba(91,226,158,.45)', boxShadow: '0 12px 32px rgba(0,0,0,.35)',
-      fontFamily: 'system-ui, sans-serif', fontSize: '13px', lineHeight: '1.35', pointerEvents: 'none',
+      fontFamily: 'system-ui, sans-serif', fontSize: '13px', lineHeight: '1.35', pointerEvents: 'auto',
     });
+    const header = overlay.querySelector('[data-sp-header]');
+    Object.assign(header.style, { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', marginBottom: '7px' });
     const title = overlay.querySelector('[data-sp-title]');
-    Object.assign(title.style, { fontWeight: '800', fontSize: '14px', marginBottom: '5px' });
+    Object.assign(title.style, { fontWeight: '800', fontSize: '14px' });
+    const controls = overlay.querySelector('[data-sp-controls]');
+    Object.assign(controls.style, { display: 'flex', alignItems: 'center', gap: '6px', flexShrink: '0' });
+    for (const button of controls.querySelectorAll('button')) overlayControlButton(button);
     const phase = overlay.querySelector('[data-sp-phase]');
     Object.assign(phase.style, { color: '#9ff3c7', marginBottom: '8px' });
     const track = overlay.querySelector('[data-sp-track]');
@@ -74,8 +113,35 @@
     Object.assign(bar.style, { height: '100%', width: '18%', borderRadius: '999px', background: '#5be29e', transition: 'width .2s ease' });
     const counts = overlay.querySelector('[data-sp-counts]');
     Object.assign(counts.style, { color: '#c7d4d0' });
+    overlay.querySelector('[data-sp-minimize]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setTraversalOverlayMinimized(!traversalOverlayMinimized);
+    });
+    overlay.querySelector('[data-sp-close]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      dismissTraversalOverlay();
+    });
+    overlay.querySelector('[data-sp-stop]').addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const stop = overlay.querySelector('[data-sp-stop]');
+      stop.disabled = true;
+      stop.textContent = '…';
+      try {
+        chrome.runtime.sendMessage({ type: `${MESSAGE_PREFIX}overlay-stop-traversal` }).catch(() => {
+stop.disabled = false;
+stop.textContent = '■';
+        });
+      } catch {
+        stop.disabled = false;
+        stop.textContent = '■';
+      }
+    });
     (document.body || document.documentElement).appendChild(overlay);
     traversalOverlay = overlay;
+    setTraversalOverlayMinimized(traversalOverlayMinimized);
     return overlay;
   }
 
@@ -83,10 +149,12 @@
     const state = traversalOverlayState || {};
     const terminal = ['complete', 'complete-empty', 'error', 'limit', 'stopped', 'interrupted'].includes(String(state.crawlStatus || ''));
     if (!traversalEnabled && !terminal) {
-      if (traversalOverlay) traversalOverlay.style.display = 'none';
+      dismissTraversalOverlay();
       return;
     }
+    if (traversalOverlayDismissed) return;
     const overlay = ensureTraversalOverlay();
+    if (!overlay) return;
     overlay.style.display = 'block';
     const phaseNames = { settling: 'Settling…', reading: 'Reading…', expanding: 'Expanding…', scrolling: 'Scrolling…', images: 'Images…', tabs: 'Tabs…', extracting: 'Extracting…', sending: 'Saving…', retrying: 'Retrying…' };
     const status = String(state.crawlStatus || (traversalEnabled ? 'starting' : 'idle'));
@@ -101,6 +169,13 @@
     overlay.querySelector('[data-sp-counts]').textContent = known > 0
       ? `${visited} of ${known} known pages checked · ${Math.max(0, Number(state.crawlCaptured || 0))} queued · ${Math.max(0, Number(state.crawlRetries || 0))} retries`
       : terminal ? (state.crawlError || state.crawlDiagnostic || 'Capture-all finished.') : 'Discovering rendered guides…';
+    setTraversalOverlayMinimized(traversalOverlayMinimized);
+    if (terminal && !traversalOverlayTerminalTimer) {
+      traversalOverlayTerminalTimer = setTimeout(() => dismissTraversalOverlay(), 4200);
+    } else if (!terminal && traversalOverlayTerminalTimer) {
+      clearTimeout(traversalOverlayTerminalTimer);
+      traversalOverlayTerminalTimer = 0;
+    }
   }
 
   function updateTraversalOverlayState(next) {
@@ -455,7 +530,7 @@
       if (control.getAttribute('aria-haspopup') === 'dialog') return false;
       const label = normalizeSpace(control.getAttribute('aria-label') || control.getAttribute('title') || control.innerText || control.textContent);
       if (!label || DANGEROUS_CONTROL_LABEL.test(label)) return false;
-      return SAFE_EXPAND_LABEL.test(label);
+      return SAFE_EXPAND_LABEL.test(label) || control.getAttribute('aria-expanded') === 'false';
     }).slice(0, MAX_EXPAND_CLICKS);
   }
 
@@ -591,6 +666,99 @@
     return buildCapture(prepared.extraMarkdown, prepared.diagnostics);
   }
 
+  function traversalActivationLabel(element) {
+    return normalizeSpace(
+      element?.getAttribute?.('aria-label')
+      || element?.getAttribute?.('title')
+      || element?.innerText
+      || element?.textContent,
+    ).slice(0, 180);
+  }
+
+  function traversalActivationElements(root = selectContentRoot()) {
+    const raw = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let inspected = 0;
+    for (let element = walker.nextNode(); element && inspected < MAX_CANDIDATES; element = walker.nextNode()) {
+      inspected += 1;
+      if (!(element instanceof Element) || traversalElementExcluded(element)) continue;
+      if (element.closest('a[href],[data-href],[data-url],form')) continue;
+      if (element.matches('[role="tab"]') || element.getAttribute('aria-haspopup') || element.hasAttribute('disabled')) continue;
+      if (element.hasAttribute('aria-expanded')) continue;
+      const style = getComputedStyle(element);
+      const interactive = element.matches('button,[role="button"],[tabindex]:not([tabindex="-1"])') || style.cursor === 'pointer';
+      if (!interactive) continue;
+      const label = traversalActivationLabel(element);
+      if (!label || label.length < 3 || DANGEROUS_CONTROL_LABEL.test(label) || SAFE_EXPAND_LABEL.test(label)) continue;
+      if (/^(?:copy|download|share|save|print|play|pause|next|previous|back|close|cancel|submit|send|search|menu)$/i.test(label)) continue;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 120 || rect.height < 30) continue;
+      raw.push(element);
+    }
+    return raw.filter((element, index) => {
+      const label = traversalActivationLabel(element);
+      return !raw.some((other, otherIndex) => otherIndex !== index && other.contains(element) && traversalActivationLabel(other) === label);
+    }).slice(0, MAX_TRAVERSAL_TARGETS_PER_PAGE);
+  }
+
+  function activationIdentityUrl(parentUrl, label, ordinal, experienceId) {
+    try {
+      const url = new URL(parentUrl);
+      url.searchParams.set('sp_guide', `${Math.max(0, Number(ordinal || 0))}:${String(label || '').slice(0, 96)}`);
+      url.searchParams.sort();
+      return safeTraversalUrl(url.toString(), experienceId);
+    } catch {
+      return '';
+    }
+  }
+
+  function discoverTraversalActivators(root = selectContentRoot()) {
+    const experienceId = findExperienceId();
+    const parentUrl = safeTraversalUrl(location.href, experienceId) || currentAppFrameFallbackUrl();
+    if (!parentUrl) return [];
+    const counts = new Map();
+    const targets = [];
+    for (const element of traversalActivationElements(root)) {
+      const label = traversalActivationLabel(element);
+      const ordinal = counts.get(label) || 0;
+      counts.set(label, ordinal + 1);
+      const url = activationIdentityUrl(parentUrl, label, ordinal, experienceId);
+      if (!url) continue;
+      targets.push({
+        url,
+        title: label,
+        activation: true,
+        parentUrl,
+        parentTitle: pageTitle(root),
+        activationLabel: label,
+        activationOrdinal: ordinal,
+      });
+    }
+    return targets;
+  }
+
+  async function activateTraversalTarget(target) {
+    const experienceId = findExperienceId();
+    const currentUrl = safeTraversalUrl(location.href, experienceId) || currentAppFrameFallbackUrl();
+    const parentUrl = safeTraversalUrl(target?.parentUrl, experienceId);
+    if (!currentUrl || !parentUrl || currentUrl !== parentUrl) {
+      return { ok: false, error: 'Capture-all refused to activate a guide card outside its verified parent directory.' };
+    }
+    const label = normalizeSpace(target?.activationLabel || target?.title).slice(0, 180);
+    const ordinal = Math.max(0, Number(target?.activationOrdinal || 0));
+    const matches = traversalActivationElements(selectContentRoot()).filter((element) => traversalActivationLabel(element) === label);
+    const element = matches[ordinal] || null;
+    if (!element) return { ok: false, error: `The rendered guide card “${label || 'unknown'}” is no longer available.` };
+    try { element.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch { /* Optional viewport assist. */ }
+    await wait(60);
+    try {
+      element.click();
+      return { ok: true, activated: true, title: label };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error || 'The rendered guide card could not be activated.') };
+    }
+  }
+
   function discoverTraversalTargets(root = selectContentRoot()) {
     const experienceId = findExperienceId();
     const currentUrl = safeTraversalUrl(location.href, experienceId) || safeHttpUrl(location.href) || currentAppFrameFallbackUrl();
@@ -610,21 +778,23 @@
       ).slice(0, 180);
       if (!label || /^(?:home|account|settings|support|contact support|sign out|log out)$/i.test(label)) continue;
       seen.add(url);
-      candidates.push({ url, title: label });
+      candidates.push({ url, title: label, activation: false });
     }
 
     const expPath = experienceId ? `/experiences/${experienceId}/` : '';
     const scoped = expPath ? candidates.filter((target) => {
       try { return new URL(target.url).pathname.includes(expPath); } catch { return false; }
     }) : [];
-    return scoped.length ? scoped : candidates;
+    const navigable = scoped.length ? scoped : candidates;
+    const activations = discoverTraversalActivators(root).filter((target) => !seen.has(target.url));
+    return [...navigable, ...activations].slice(0, MAX_TRAVERSAL_TARGETS_PER_PAGE);
   }
 
   function classifyRenderedPage(root, targets, capture) {
     const paragraphChars = [...root.querySelectorAll('p')]
       .reduce((sum, paragraph) => sum + normalizeSpace(paragraph.innerText || paragraph.textContent).length, 0);
     const richBlocks = root.querySelectorAll('pre,table,blockquote').length;
-    const cardLike = root.querySelectorAll('a[href],[role="link"],[data-href],[data-url]').length;
+    const cardLike = root.querySelectorAll('a[href],[role="link"],[data-href],[data-url],button,[role="button"],[tabindex]:not([tabindex="-1"])').length;
     const pathname = String(location.pathname || '');
     const pathLooksDirectory = /\/(?:pages|content|guides|library)\/?$/i.test(pathname);
     const proseLight = paragraphChars < 520 && richBlocks === 0;
@@ -796,6 +966,8 @@
       resetTraversalSnapshotSchedule();
       if (traversalEnabled) {
         clearTimeout(autoTimer);
+        traversalOverlayDismissed = false;
+        traversalOverlayMinimized = false;
         ensureTraversalOverlay();
         runTraversalSnapshotNow();
       } else if (autoEnabled) {
@@ -817,6 +989,12 @@
       updateTraversalOverlayState(message.state || {});
       sendResponse({ ok: true });
       return false;
+    }
+    if (message?.type === `${MESSAGE_PREFIX}traverse-activate`) {
+      activateTraversalTarget(message.target || {})
+        .then((result) => sendResponse(result))
+        .catch((error) => sendResponse({ ok: false, error: String(error?.message || error || 'Guide activation failed.') }));
+      return true;
     }
     if (message?.type === `${MESSAGE_PREFIX}traverse-navigate`) {
       const target = safeTraversalUrl(message.url, findExperienceId());
