@@ -3,12 +3,7 @@
   "name": "SniperPlug Better Content Capture",
   "version": "0.2.4",
   "description": "Safely sync Better Content pages you are already authorized to view in Whop into SniperPlug private review.",
-  "permissions": [
-    "scripting",
-    "storage",
-    "tabs",
-    "webNavigation"
-  ],
+  "permissions": ["scripting", "storage", "tabs", "webNavigation"],
   "host_permissions": [
     "https://whop.com/*",
     "https://*.whop.com/*",
@@ -16,9 +11,7 @@
     "https://sniperplug.com/*"
   ],
   "background": {
-    "scripts": [
-      "background.js"
-    ],
+    "scripts": ["background.js"],
     "service_worker": "background.js"
   },
   "action": {
@@ -27,24 +20,16 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://*.apps.whop.com/*"
-      ],
-      "js": [
-        "content-capture.js"
-      ],
+      "matches": ["https://*.apps.whop.com/*"],
+      "js": ["content-capture.js"],
       "all_frames": true,
       "match_about_blank": true,
       "match_origin_as_fallback": true,
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "https://sniperplug.com/control-center/*"
-      ],
-      "js": [
-        "sniperplug-relay.js"
-      ],
+      "matches": ["https://sniperplug.com/control-center/*"],
+      "js": ["sniperplug-relay.js"],
       "run_at": "document_idle"
     }
   ],
