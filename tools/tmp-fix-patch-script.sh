@@ -14,6 +14,16 @@ new = '''    traversalTimer = setTimeout(() => {
     }, TRAVERSAL_SETTLE_MS);'''
 if old not in text:
     raise SystemExit('temporary scheduler callback pattern not found')
-text = text.replace(old, new, 1)
-p.write_text(text)
+p.write_text(text.replace(old, new, 1))
+
+for name in [
+    'tools/test-browser-auto-traversal.mjs',
+    'tools/test-browser-popup-latency.mjs',
+    'tools/test-firefox-candidate-retention.mjs',
+    'tools/test-firefox-better-content-frame-selection.mjs',
+]:
+    file = Path(name)
+    body = file.read_text()
+    if '0.2.4' in body:
+        file.write_text(body.replace('0.2.4', '0.2.5'))
 PY
