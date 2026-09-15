@@ -19,11 +19,11 @@ jobs:
           distribution: temurin
           java-version: "25"
 
-      - name: Stage exact Paper API and JDK 25
+      - name: Resolve exact Paper compile classpath
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p cobbleverse-host-inputs
+          mkdir -p cobbleverse-host-inputs/paper-classpath
           PAPER="cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar"
           curl --fail --location --retry 4 --retry-all-errors \
             'https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/26.2.build.112-stable/paper-api-26.2.build.112-stable.jar' \
@@ -32,18 +32,35 @@ jobs:
           test "$(md5sum "$PAPER" | awk '{print $1}')" = '48624f563ea90bec747cebc325a79163'
           javac -version | tee cobbleverse-host-inputs/javac-version.txt
           java -version 2>&1 | tee cobbleverse-host-inputs/java-version.txt
-          JDK_PARENT="$(dirname "$JAVA_HOME")"
-          JDK_NAME="$(basename "$JAVA_HOME")"
-          # setup-java exposes JAVA_HOME through a symlink on hosted runners; dereference it
-          # so the artifact contains the actual JDK instead of a symlink-only archive.
-          tar -C "$JDK_PARENT" -chzf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz "$JDK_NAME"
-          tar -tzf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz > /tmp/cobbleverse-jdk25-contents.txt
-          grep -q '/bin/javac$' /tmp/cobbleverse-jdk25-contents.txt
-          sha256sum \
-            cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar \
-            cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz \
-            > cobbleverse-host-inputs/SHA256SUMS.txt
-          stat -c '%n %s bytes' cobbleverse-host-inputs/*
+          cat > /tmp/cobbleverse-paper-classpath-pom.xml <<'POM'
+          <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+            <modelVersion>4.0.0</modelVersion>
+            <groupId>local.cobbleverse</groupId>
+            <artifactId>paper112-classpath</artifactId>
+            <version>1</version>
+            <repositories>
+              <repository>
+                <id>papermc</id>
+                <url>https://repo.papermc.io/repository/maven-public/</url>
+              </repository>
+            </repositories>
+            <dependencies>
+              <dependency>
+                <groupId>io.papermc.paper</groupId>
+                <artifactId>paper-api</artifactId>
+                <version>26.2.build.112-stable</version>
+              </dependency>
+            </dependencies>
+          </project>
+          POM
+          mvn -q -f /tmp/cobbleverse-paper-classpath-pom.xml dependency:copy-dependencies \
+            -DincludeScope=compile \
+            -DoutputDirectory="$PWD/cobbleverse-host-inputs/paper-classpath"
+          rm -f cobbleverse-host-inputs/paper-classpath/paper-api-*.jar
+          test -f cobbleverse-host-inputs/paper-classpath/guava-33.6.0-jre.jar
+          test -f cobbleverse-host-inputs/paper-classpath/adventure-api-5.2.0.jar
+          find cobbleverse-host-inputs/paper-classpath -maxdepth 1 -type f -name '*.jar' -print0 | sort -z | xargs -0 sha256sum > cobbleverse-host-inputs/PAPER-CLASSPATH-SHA256SUMS.txt
+          printf 'classpath_jar_count=%s\n' "$(find cobbleverse-host-inputs/paper-classpath -maxdepth 1 -type f -name '*.jar' | wc -l)" | tee cobbleverse-host-inputs/classpath-summary.txt
 
       - name: Upload host build inputs
         uses: actions/upload-artifact@v4
