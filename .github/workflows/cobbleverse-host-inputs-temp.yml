@@ -1,0 +1,51 @@
+name: Cobbleverse host inputs temp
+
+on:
+  push:
+    branches:
+      - "chore/cobbleverse-host-inputs-temp"
+
+permissions:
+  contents: read
+
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+
+      - name: Stage exact Paper API and JDK 25
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cobbleverse-host-inputs
+          PAPER="cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar"
+          curl --fail --location --retry 4 --retry-all-errors \
+            'https://repo.papermc.io/repository/maven-public/io/papermc/paper/paper-api/26.2.build.112-stable/paper-api-26.2.build.112-stable.jar' \
+            --output "$PAPER"
+          echo '71c508348ca95f0e33a159d5da5ad351caea5fc866067c06aca0d679bc506763  cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar' | sha256sum --check --strict
+          test "$(md5sum "$PAPER" | awk '{print $1}')" = '48624f563ea90bec747cebc325a79163'
+          javac -version | tee cobbleverse-host-inputs/javac-version.txt
+          java -version 2>&1 | tee cobbleverse-host-inputs/java-version.txt
+          JDK_PARENT="$(dirname "$JAVA_HOME")"
+          JDK_NAME="$(basename "$JAVA_HOME")"
+          tar -C "$JDK_PARENT" -czf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz "$JDK_NAME"
+          sha256sum \
+            cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar \
+            cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz \
+            > cobbleverse-host-inputs/SHA256SUMS.txt
+          stat -c '%n %s bytes' cobbleverse-host-inputs/*
+
+      - name: Upload host build inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobbleverse-host-inputs-temp
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+          path: cobbleverse-host-inputs/
