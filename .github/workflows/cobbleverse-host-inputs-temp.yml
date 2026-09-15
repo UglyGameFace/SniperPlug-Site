@@ -35,9 +35,10 @@ jobs:
           JDK_PARENT="$(dirname "$JAVA_HOME")"
           JDK_NAME="$(basename "$JAVA_HOME")"
           # setup-java exposes JAVA_HOME through a symlink on hosted runners; dereference it
-          # so the artifact contains the actual JDK instead of a 143-byte symlink archive.
+          # so the artifact contains the actual JDK instead of a symlink-only archive.
           tar -C "$JDK_PARENT" -chzf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz "$JDK_NAME"
-          tar -tzf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz | grep -q '/bin/javac$'
+          tar -tzf cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz > /tmp/cobbleverse-jdk25-contents.txt
+          grep -q '/bin/javac$' /tmp/cobbleverse-jdk25-contents.txt
           sha256sum \
             cobbleverse-host-inputs/paper-api-26.2.build.112-stable.jar \
             cobbleverse-host-inputs/temurin-jdk25-linux-x64.tar.gz \
