@@ -151,7 +151,7 @@ function secureResponse(response, url, pathname) {
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
   const privateGuideContent = privateGuidePage || privateGuideAsset;
   const retiredPublicDealPath = isRetiredPublicDealPath(pathname);
-  const needsPrivateStyleCompatibility = controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent;
+  const needsPrivateStyleCompatibility = controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || dealOperationsPage;
 
   response.headers.set('X-Frame-Options', courseVideoFrame ? 'SAMEORIGIN' : 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
