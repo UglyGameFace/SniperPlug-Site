@@ -156,7 +156,7 @@ export async function buildDealOpsSnapshot({
   const tree = resultValue(byKey.tree, null);
   const paths = Array.isArray(tree?.tree) ? new Set(tree.tree.filter((entry) => entry.type === 'blob').map((entry) => entry.path)) : null;
   const runs = resultValue(byKey.runs, null);
-  const recentRuns = Array.isArray(runs?.workflow_runs) ? runs.workflow_runs.slice(0, 12) : [];
+  const recentRuns = Array.isArray(runs?.workflow_runs) ? runs.workflow_runs : [];
   const exactHeadRuns = mainSha ? recentRuns.filter((run) => run.head_sha === mainSha) : [];
   const prs = resultValue(byKey.pulls, null);
   const issues = resultValue(byKey.issues, null);
