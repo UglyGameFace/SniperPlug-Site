@@ -105,6 +105,12 @@ export function sanitizeOpsSnapshot(value, now = Date.now()) {
         catalog: worker(record(state.workers).catalog),
         exact: worker(record(state.workers).exact),
       },
+      decisions: Object.fromEntries([
+        'posted', 'below_threshold', 'category_muted', 'quality_blocked',
+        'recent_duplicate', 'reserved_duplicate', 'disabled', 'wrong_retailer',
+        'error', 'unexplained',
+      ].map((name) => [name, number(record(state.decisions)[name])])
+        .filter(([, count]) => count !== null)),
     },
     deals: latest.map((row) => {
       const item = record(row);
