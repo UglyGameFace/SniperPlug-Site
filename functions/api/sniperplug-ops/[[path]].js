@@ -1,6 +1,6 @@
-import { requireAdmin } from '../_lib/auth.js';
-import { HttpError, handleError, json, methodNotAllowed } from '../_lib/http.js';
-import { sanitizeOpsSnapshot, summarizeOpsSnapshot } from '../_lib/sniperplug-ops-telemetry.js';
+import { requireAdmin } from '../../_lib/auth.js';
+import { HttpError, handleError, json, methodNotAllowed } from '../../_lib/http.js';
+import { sanitizeOpsSnapshot, summarizeOpsSnapshot } from '../../_lib/sniperplug-ops-telemetry.js';
 
 const encoder = new TextEncoder();
 const MAX_PAYLOAD_BYTES = 64_000;
