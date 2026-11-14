@@ -40,5 +40,5 @@ jobs:
           fi
           git -c user.name='github-actions[bot]' \
               -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
-              commit -m 'chore(ops): refresh GitHub evidence snapshot [skip ci]'
+              commit -m 'chore(ops): refresh GitHub evidence snapshot'
           git push origin HEAD:main
