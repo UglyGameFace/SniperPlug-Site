@@ -1,0 +1,44 @@
+name: Refresh SniperPlug deal evidence
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Refresh public GitHub evidence four times daily, without live bot calls.
+    - cron: '19 1,7,13,19 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deal-ops-readonly-evidence-refresh
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read public GitHub metadata and generate snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node tools/generate-deal-ops-snapshot.mjs
+      - name: Verify read-only operations regressions
+        run: node tools/test-deal-ops.mjs
+      - name: Commit only generated evidence
+        run: |
+          set -euo pipefail
+          git add functions/_lib/deal-ops-snapshot.js
+          if git diff --cached --quiet; then
+            echo 'No evidence changes'
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -m 'chore(ops): refresh GitHub evidence snapshot [skip ci]'
+          git push origin HEAD:main
