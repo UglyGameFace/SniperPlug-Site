@@ -47,6 +47,27 @@ function isPrivateGuidePage(pathname) {
   return pathname === '/guides' || pathname.startsWith('/guides/');
 }
 
+function isDealOperationsPage(pathname) {
+  return pathname === '/operations' || pathname.startsWith('/operations/');
+}
+
+async function dealOperationsPageGate(request, env) {
+  if (await readAdminSession(request, env).catch(() => null)) return null;
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive">
+<title>Private SniperPlug Operations</title></head>
+<body style="font:16px system-ui;background:#0b101b;color:#eff7ff;max-width:32rem;margin:14vh auto;padding:1rem">
+<h1>Owner access required</h1><p>Sign in using the existing SniperPlug Control Center password, then reopen Deal Operations.</p>
+<p><a style="color:#82ccff" href="/control-center/">Open Control Center</a></p></body></html>`, {
+    status: 401,
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'private, no-store, max-age=0',
+      'x-robots-tag': 'noindex, nofollow, noarchive',
+    },
+  });
+}
+
 function isRetiredPublicDealPath(pathname) {
   return pathname === '/deal'
     || pathname.startsWith('/deal/')
@@ -126,6 +147,7 @@ function secureResponse(response, url, pathname) {
   const controlCenterPage = isControlCenterPage(pathname);
   const courseVideoFrame = pathname.startsWith('/course-video/');
   const privateGuidePage = isPrivateGuidePage(pathname);
+  const dealOperationsPage = isDealOperationsPage(pathname);
   const privateGuideAsset = pathname.startsWith('/media/') || courseVideoFrame;
   const privateGuideContent = privateGuidePage || privateGuideAsset;
   const retiredPublicDealPath = isRetiredPublicDealPath(pathname);
@@ -145,14 +167,14 @@ function secureResponse(response, url, pathname) {
     response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
   const controlAsset = /^\/assets\/(?:js\/control-center|css\/(?:control-center|whop-discovery|bulk-history))/.test(pathname);
-  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath) {
+  if (pathname.startsWith('/api/') || controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || dealOperationsPage || retiredPublicDealPath) {
     response.headers.set('Cache-Control', 'private, no-store, max-age=0');
   } else if (controlAsset && url.searchParams.has('v')) {
     response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (controlAsset) {
     response.headers.set('Cache-Control', 'public, max-age=0, must-revalidate');
   }
-  if (controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || retiredPublicDealPath) {
+  if (controlCenterPage || pathname.startsWith('/control-center/') || privateGuideContent || dealOperationsPage || retiredPublicDealPath) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   }
   return response;
@@ -181,6 +203,11 @@ export async function onRequest(context) {
   // artifact is accidentally left in the build output.
   if (isPrivateGuidePage(pathname)) {
     const gate = await privateGuidePageGate(context.request, context.env);
+    if (gate) return secureResponse(gate, url, pathname);
+  }
+
+  if (isDealOperationsPage(pathname)) {
+    const gate = await dealOperationsPageGate(context.request, context.env);
     if (gate) return secureResponse(gate, url, pathname);
   }
 
