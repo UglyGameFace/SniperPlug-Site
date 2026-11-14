@@ -70,7 +70,7 @@ The owner-only /operations/ view reuses the existing Control Center owner sessio
 
 - Separate monitored code/test presence from measured Discloud behavior.
 - Show missing source listings, current offer prices, receipt logs, unverified ~16-minute revisit, deployment SHA, and local-only branches as unknown. Do not fabricate successful deal validations or deployments.
-- GitHub public API reads can fail or rate-limit; each feed is independent and reports unavailable rather than suppressing the entire board.
+- GitHub public API reads from Cloudflare proved unreliable on Android. Owner workspace now serves a timestamped, CI-generated public GitHub metadata snapshot with 8-hour staleness detection, real open PRs, remote branch refs, code-path checks, and exact-main CI when available. Scheduled GitHub Actions refreshes only this generated site file every six hours; the read-only dashboard never writes to the bot, Discloud, Discord, retailer accounts or repository.
 - This is not an alert sender or a production Discloud integration. Connecting trusted, private, *read-only* telemetry later requires a separately authenticated source, redaction policy, and an explicit deploy/acceptance check.
 - No RivaL, Discord health Site, Whop subscriber, or bot database changes are made.
 
@@ -81,3 +81,5 @@ npm run build
 ```
 
 The Node 22 build runs public affiliate-review audits plus the existing private-guide, Whop discovery/import, security, concurrency, recovery, media, and resilience regressions.
+
+The operation workspace deliberately does not equate an existing remote branch to an unmerged change; local-only branches cannot be observed from GitHub. The public GitHub snapshot is committed to the site repository and served only through the existing owner session at `/api/deal-ops`. GitHub Actions may fail to refresh during outages; old evidence remains dated and marked stale.
