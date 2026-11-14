@@ -53,12 +53,27 @@ function isDealOperationsPage(pathname) {
 
 async function dealOperationsPageGate(request, env) {
   if (await readAdminSession(request, env).catch(() => null)) return null;
+  // Keep the user on the exact same hostname as the app. Preview cookies
+  // cannot authenticate a different production host, so a local login is essential.
   return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive">
-<title>Private SniperPlug Operations</title></head>
-<body style="font:16px system-ui;background:#0b101b;color:#eff7ff;max-width:32rem;margin:14vh auto;padding:1rem">
-<h1>Owner access required</h1><p>Sign in using the existing SniperPlug Control Center password, then reopen Deal Operations.</p>
-<p><a style="color:#82ccff" href="/control-center/">Open Control Center</a></p></body></html>`, {
+<meta name="theme-color" content="#0b101b"><title>Sign in | SniperPlug Deal Operations</title>
+<script src="/assets/js/deal-ops-signin.js" defer></script></head>
+<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#0b101b;color:#eff7ff;font:16px system-ui">
+<main style="width:min(420px,100%);padding:1.5rem">
+<div style="color:#7bedaf;font-size:.75rem;font-weight:800;letter-spacing:.12em">SNIPERPLUG / PRIVATE</div>
+<h1 style="margin:.7rem 0 .4rem;font-size:1.85rem">Deal Operations</h1>
+<p style="color:#a3b2c6;line-height:1.5">Sign in once with your existing Control Center owner password to open this read-only workspace. No separate account or preview link.</p>
+<form id="operations-login" style="display:grid;gap:.8rem;padding-top:.7rem">
+<label for="operations-password" style="font-weight:700">Owner password</label>
+<input id="operations-password" name="password" type="password" autocomplete="current-password" required
+style="border-radius:.75rem;border:1px solid #40576e;background:#18293a;color:white;font:inherit;padding:.9rem;width:100%;box-sizing:border-box">
+<button type="submit" style="padding:.95rem;background:#7bedaf;color:#10261b;border:0;border-radius:.75rem;font:inherit;font-weight:800;cursor:pointer">Open workspace</button>
+</form>
+<p id="operations-error" role="alert" aria-live="polite" style="min-height:1.5em;color:#ffb4bd"></p>
+<a href="/control-center/" style="color:#82ccff">Use existing Control Center instead</a>
+<noscript><p>Please enable JavaScript to sign in here, or use Control Center.</p></noscript>
+</main></body></html>`, {
     status: 401,
     headers: {
       'content-type': 'text/html; charset=utf-8',
