@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#0b101b">
+  <title>Deal Operations | SniperPlug</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=1">
+  <script src="/assets/js/deal-ops.js?v=1" type="module"></script>
+</head>
+<body>
+  <a class="skip" href="#content">Skip to evidence</a>
+  <header class="top">
+    <a class="identity" href="/"><span class="mark">SP</span><span>SniperPlug <small>Deal Operations</small></span></a>
+    <div class="top-right"><span class="read-only">READ ONLY</span><a href="/control-center/">Control Center</a></div>
+  </header>
+  <main id="content" class="app">
+    <section class="intro">
+      <div>
+        <p class="overline">Private / validation workspace</p>
+        <h1>Deal release readiness</h1>
+        <p>Exact evidence for alerts, revisit timing, listing truth, filters, and shipping status. A missing production feed stays unknown, never green by assumption.</p>
+      </div>
+      <div class="buttons"><button id="refresh" type="button">Refresh evidence</button><a href="https://github.com/UglyGameFace/SniperPlug" rel="noopener noreferrer" target="_blank">Bot repository</a></div>
+    </section>
+    <div id="load-message" class="notice" role="status" aria-live="polite">Loading read-only GitHub evidence…</div>
+    <div class="metrics" id="metrics" aria-label="Validation summary"></div>
+    <section class="sourcebar" id="sources" aria-label="Evidence availability"></section>
+
+    <nav class="tabs" aria-label="Operational views" id="views">
+      <button type="button" data-view="all" aria-current="page">Overview</button>
+      <button type="button" data-view="live">Live validation</button>
+      <button type="button" data-view="missed">Missed &amp; inaccurate</button>
+      <button type="button" data-view="revisit">Revisit timing</button>
+      <button type="button" data-view="timeouts">Timeouts &amp; retries</button>
+      <button type="button" data-view="filters">Filter quality</button>
+      <button type="button" data-view="branches">Open PRs &amp; branches</button>
+      <button type="button" data-view="evidence">Evidence</button>
+    </nav>
+    <section class="workspace">
+      <div class="section-heading"><div><h2 id="view-title">Overview</h2><p id="view-copy">Repository evidence is live when GitHub is reachable. Production telemetry is not yet connected.</p></div><span id="asof">As of: unknown</span></div>
+      <form class="filters" id="filters" role="search" autocomplete="off">
+        <label>Search<input type="search" id="search" placeholder="Offer, route, issue, test…"></label>
+        <label>Route<select id="route"><option value="">All routes</option></select></label>
+        <label>Category<select id="category"><option value="">All categories</option></select></label>
+        <label>Product type<select id="product"><option value="">All products</option></select></label>
+        <label>Severity<select id="severity"><option value="">All severity</option></select></label>
+        <label>Status<select id="status"><option value="">All statuses</option></select></label>
+        <label>Branch<select id="branch"><option value="">All branches</option></select></label>
+        <label>Test<select id="test"><option value="">All tests</option></select></label>
+        <label>Since<input type="date" id="since"></label>
+        <button type="reset" class="reset">Clear filters</button>
+      </form>
+      <p class="count" id="count" aria-live="polite"></p>
+      <div id="records" class="records"></div>
+    </section>
+    <div class="lower">
+      <section class="workspace">
+        <div class="section-heading"><div><h2>Exact-head CI</h2><p>Only runs whose head SHA matches current bot main appear here. Green CI never proves a live deployment.</p></div></div>
+        <div id="ci" class="timeline"></div>
+      </section>
+      <section class="workspace">
+        <div class="section-heading"><div><h2>Audit trail</h2><p>Observed GitHub history with separate states for pushed and merged. Nothing is called deployed without independent proof.</p></div></div>
+        <div id="audit" class="timeline"></div>
+      </section>
+    </div>
+    <section class="disclaimer" id="notes" aria-label="Validation limitations"></section>
+  </main>
+  <dialog class="drawer" id="detail" aria-labelledby="detail-title">
+    <div class="drawer-inner">
+      <header><span class="overline">Evidence detail / read only</span><button type="button" id="close-detail" aria-label="Close detail">×</button></header>
+      <div id="detail-content"></div>
+    </div>
+  </dialog>
+</body>
+</html>
