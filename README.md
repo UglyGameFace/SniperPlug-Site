@@ -64,6 +64,16 @@ Do not publish a generic retailer search page as an exact deal destination.
 - Support and corrections: `support@sniperplug.com`
 - Retailer, API, and affiliate partnerships: `partners@sniperplug.com`
 
+## Private deal operations (read only)
+
+The owner-only /operations/ view reuses the existing Control Center owner session. Its /api/deal-ops GET endpoint reads public GitHub main, code paths, exact-head workflow runs, open PRs/issues, and commit history without credentials or writes. No external scripts or public listing feeds are loaded in the browser.
+
+- Separate monitored code/test presence from measured Discloud behavior.
+- Show missing source listings, current offer prices, receipt logs, unverified ~16-minute revisit, deployment SHA, and local-only branches as unknown. Do not fabricate successful deal validations or deployments.
+- GitHub public API reads can fail or rate-limit; each feed is independent and reports unavailable rather than suppressing the entire board.
+- This is not an alert sender or a production Discloud integration. Connecting trusted, private, *read-only* telemetry later requires a separately authenticated source, redaction policy, and an explicit deploy/acceptance check.
+- No RivaL, Discord health Site, Whop subscriber, or bot database changes are made.
+
 ## Validation
 
 ```bash
