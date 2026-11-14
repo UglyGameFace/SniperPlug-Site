@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createAdminSession } from '../functions/_lib/auth.js';
 import { buildDealOpsSnapshot, onRequest as dealOps } from '../functions/api/deal-ops.js';
+import { DEAL_OPS_SNAPSHOT } from '../functions/_lib/deal-ops-snapshot.js';
 import { onRequest as middleware } from '../functions/_middleware.js';
 
 const env = { SNIPERPLUG_SESSION_SECRET: 'test-only-private-deal-ops-session-secret' };
@@ -34,6 +35,30 @@ const github = async (repo, path) => {
   ];
   throw new Error('Unexpected path ' + path);
 };
+// No live API access is needed for the core owner-only dashboard.
+assert.equal(DEAL_OPS_SNAPSHOT.schema, 1);
+assert.equal(DEAL_OPS_SNAPSHOT.bot, 'UglyGameFace/SniperPlug');
+assert.match(DEAL_OPS_SNAPSHOT.sources.commit.sha, /^[0-9a-f]{40}$/);
+assert(DEAL_OPS_SNAPSHOT.sources.branches.length > 0);
+const builtIn = await buildDealOpsSnapshot({
+  fallback: DEAL_OPS_SNAPSHOT, now: () => DEAL_OPS_SNAPSHOT.collectedAt,
+});
+assert.equal(builtIn.sources.githubCommit, 'snapshot');
+assert.equal(builtIn.sources.githubPrs, 'snapshot');
+assert.equal(builtIn.sources.githubBranches, 'snapshot');
+assert.equal(builtIn.evidenceOrigin, 'scheduled_github_snapshot');
+assert.equal(builtIn.branchSummary.remoteCount, DEAL_OPS_SNAPSHOT.sources.branches.length);
+assert(builtIn.checks.some((c) => c.id.startsWith('branch-')));
+assert.equal(builtIn.checks.filter((c) => c.id.startsWith('pr-')).length, DEAL_OPS_SNAPSHOT.sources.pulls.length);
+assert.equal(builtIn.checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
+assert.equal(builtIn.sources.discloud, 'not_connected');
+const stale = await buildDealOpsSnapshot({
+  fallback: DEAL_OPS_SNAPSHOT,
+  now: () => new Date(Date.parse(DEAL_OPS_SNAPSHOT.collectedAt) + 9 * 3600000).toISOString(),
+});
+assert.equal(stale.snapshotStale, true);
+assert.equal(stale.sources.githubCommit, 'stale');
+
 const snapshot = await buildDealOpsSnapshot({ github, now: () => keyDate });
 assert.equal(snapshot.repository.mainSha, head);
 assert.equal(snapshot.repository.siteMainSha, siteHead);
@@ -123,4 +148,6 @@ assert.match(markup, /id="since"/);
 assert.match(ui, /\/api\/deal-ops/);
 assert.doesNotMatch(ui, /innerHTML\s*=/, 'Untrusted GitHub strings should not be parsed as markup');
 assert.doesNotMatch(ui, /fetch\([^)]*method:\s*['"]POST/i, 'Operational UI must not mutate account state');
+assert.match(ui, /visibleLimit = 30/, 'Branch card paging must bound initial Android rendering');
+assert.match(ui, /scheduled snapshot/, 'The app must identify snapshots instead of claiming a live check');
 console.log('DEAL OPS PRIVATE READ-ONLY TESTS PASSED');
