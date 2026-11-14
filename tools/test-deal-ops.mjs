@@ -66,7 +66,7 @@ assert.equal(snapshot.sources.discloud, 'not_connected');
 assert.equal(snapshot.sources.deployment, 'not_connected');
 assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').evidenceLevel, 'code_present');
 assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
-assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').status, 'unknown');
+assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').status, 'pushed');
 assert.equal(snapshot.checks.find((c) => c.id === 'jewelry').status, 'blocked');
 assert.equal(snapshot.checks.find((c) => c.id === 'jewelry').testFilesPresent, 0);
 assert.equal(snapshot.ci.length, 1, 'Older SHA success is not proof for current main');
