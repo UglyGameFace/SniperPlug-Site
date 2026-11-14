@@ -4,75 +4,102 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#0b101b">
-  <title>Deal Operations | SniperPlug</title>
+  <meta name="theme-color" content="#0a101b">
+  <title>SniperPlug | Live Operations</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=1">
-  <script src="/assets/js/deal-ops.js?v=1" type="module"></script>
+  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=2">
+  <script src="/assets/js/deal-ops.js?v=2" type="module"></script>
 </head>
 <body>
-  <a class="skip" href="#content">Skip to evidence</a>
-  <header class="top">
-    <a class="identity" href="/"><span class="mark">SP</span><span>SniperPlug <small>Deal Operations</small></span></a>
-    <div class="top-right"><span class="read-only">READ ONLY</span><a href="/control-center/">Control Center</a></div>
-  </header>
-  <main id="content" class="app">
-    <section class="intro">
-      <div>
-        <p class="overline">Private / validation workspace</p>
-        <h1>Deal release readiness</h1>
-        <p>Source-code proof, release evidence and pending live checks. GitHub is timestamped; Discloud and retailer telemetry remain unknown until connected.</p>
-      </div>
-      <div class="buttons"><button id="refresh" type="button">Reload snapshot</button><a href="https://github.com/UglyGameFace/SniperPlug" rel="noopener noreferrer" target="_blank">Bot repository</a></div>
-    </section>
-    <div id="load-message" class="notice" role="status" aria-live="polite">Loading read-only GitHub evidence…</div>
-    <div class="metrics" id="metrics" aria-label="Validation summary"></div>
-    <section class="sourcebar" id="sources" aria-label="Evidence availability"></section>
-
-    <nav class="tabs" aria-label="Operational views" id="views">
-      <button type="button" data-view="all" aria-current="page">Overview</button>
-      <button type="button" data-view="live">Live validation</button>
-      <button type="button" data-view="missed">Missed &amp; inaccurate</button>
-      <button type="button" data-view="revisit">Revisit timing</button>
-      <button type="button" data-view="timeouts">Timeouts &amp; retries</button>
-      <button type="button" data-view="filters">Filter quality</button>
-      <button type="button" data-view="branches">Open PRs &amp; branches</button>
-      <button type="button" data-view="evidence">Evidence</button>
-    </nav>
-    <section class="workspace">
-      <div class="section-heading"><div><h2 id="view-title">Overview</h2><p id="view-copy">GitHub metadata refreshes on a schedule. Production telemetry is not yet connected.</p></div><span id="asof">As of: unknown</span></div>
-      <form class="filters" id="filters" role="search" autocomplete="off">
-        <label>Search<input type="search" id="search" placeholder="Offer, route, issue, test…"></label>
-        <label>Route<select id="route"><option value="">All routes</option></select></label>
-        <label>Category<select id="category"><option value="">All categories</option></select></label>
-        <label>Product type<select id="product"><option value="">All products</option></select></label>
-        <label>Severity<select id="severity"><option value="">All severity</option></select></label>
-        <label>Status<select id="status"><option value="">All statuses</option></select></label>
-        <label>Branch<select id="branch"><option value="">All branches</option></select></label>
-        <label>Test<select id="test"><option value="">All tests</option></select></label>
-        <label>Since<input type="date" id="since"></label>
-        <button type="reset" class="reset">Clear filters</button>
-      </form>
-      <p class="count" id="count" aria-live="polite"></p>
-      <div id="records" class="records"></div>
-    </section>
-    <div class="lower">
-      <section class="workspace">
-        <div class="section-heading"><div><h2>Exact-head CI</h2><p>Only runs whose head SHA matches current bot main appear here. Green CI never proves a live deployment.</p></div></div>
-        <div id="ci" class="timeline"></div>
-      </section>
-      <section class="workspace">
-        <div class="section-heading"><div><h2>Audit trail</h2><p>Observed GitHub history with separate states for pushed and merged. Nothing is called deployed without independent proof.</p></div></div>
-        <div id="audit" class="timeline"></div>
-      </section>
+<a class="skip" href="#main">Skip to dashboard</a>
+<header class="topbar">
+  <a href="/" class="brand"><span class="logo">SP</span><span><strong>SniperPlug</strong><small>OPERATIONS</small></span></a>
+  <div class="toptools"><span class="ro">READ ONLY</span><a href="/control-center/" class="ctl">Control Center</a></div>
+</header>
+<main id="main" class="shell">
+  <section class="intro">
+    <div><span class="eyebrow">LIVE DEAL INTELLIGENCE</span><h1>SniperPlug Control Desk</h1>
+      <p>Track what your bot discovers, verifies, rejects and sends. Measurements come from the bot's own records, never simulated deals.</p></div>
+    <div class="topstatus"><span id="live-dot" class="live-dot"></span><span id="live-state">Checking connection</span>
+      <button type="button" id="refresh">Refresh</button></div>
+  </section>
+  <div id="notice" class="notice" role="status" aria-live="polite">Loading production evidence…</div>
+  <nav class="tabs" id="tabs" aria-label="Operations views">
+    <button type="button" data-tab="overview" aria-current="page">Overview</button>
+    <button type="button" data-tab="deals">Deals</button>
+    <button type="button" data-tab="delivery">Delivery</button>
+    <button type="button" data-tab="timing">Scan timing</button>
+    <button type="button" data-tab="quality">Filter quality</button>
+    <button type="button" data-tab="readiness">Reliability</button>
+  </nav>
+  <div id="unconnected" class="connection-panel" hidden>
+    <div class="connection-icon">◎</div>
+    <div><h2>No live bot feed connected</h2>
+      <p>This website cannot read Discloud's local SQLite on its own. The dashboard needs a signed, read-only telemetry feed from the running SniperPlug bot. Until then, no deal counts, alert history or scanner health can honestly be marked live.</p>
+      <span id="connection-reason" class="reason">Awaiting first authenticated snapshot</span>
     </div>
-    <section class="disclaimer" id="notes" aria-label="Validation limitations"></section>
-  </main>
-  <dialog class="drawer" id="detail" aria-labelledby="detail-title">
-    <div class="drawer-inner">
-      <header><span class="overline">Evidence detail / read only</span><button type="button" id="close-detail" aria-label="Close detail">×</button></header>
-      <div id="detail-content"></div>
+  </div>
+  <section class="panel-group" id="overview" data-panel>
+    <div class="section-title"><div><span class="eyebrow">LAST 24 HOURS / LIVE DATABASE</span><h2>Operational pulse</h2></div><small id="last-seen">Last bot report: unknown</small></div>
+    <div class="metrics" id="metrics">
+      <div class="metric"><label>Public alerts sent</label><strong id="metric-posts">—</strong><small>Discord delivery receipts, last 24h</small></div>
+      <div class="metric"><label>Exact verified queue</label><strong id="metric-verified">—</strong><small>Retained verified item states</small></div>
+      <div class="metric"><label>Due for verification</label><strong id="metric-due">—</strong><small>Queued, due and not leased</small></div>
+      <div class="metric"><label>Verified deal events</label><strong id="metric-events">—</strong><small>Events discovered in last 24h</small></div>
+      <div class="metric"><label>Delivery errors</label><strong id="metric-errors">—</strong><small>Fanout events with stored errors</small></div>
+      <div class="metric"><label>Bot servers</label><strong id="metric-guilds">—</strong><small>Connected Discord guild count</small></div>
     </div>
-  </dialog>
+    <div class="split">
+      <section class="panel"><div class="panel-head"><div><h3>Alert activity</h3><p>Reported 24h public-post counts over recent samples. Not unique deals.</p></div><span class="smalltag">Historical samples</span></div>
+        <div id="chart" class="chart" role="img" aria-label="No runtime samples yet"></div>
+        <div class="chart-footer"><span>Snapshot count</span><strong id="chart-samples">—</strong></div>
+      </section>
+      <section class="panel"><div class="panel-head"><div><h3>Attention needed</h3><p>Actual worker failures, overdue cycles and data gaps</p></div></div>
+        <div id="alerts" class="alerts"></div></section>
+    </div>
+    <section class="panel"><div class="panel-head"><div><h3>Latest verified and problem items</h3><p>Retained exact-item records from the bot's existing SQLite queue</p></div><button type="button" data-open-tab="deals" class="flat-button">See all</button></div>
+      <div id="overview-deals" class="deal-list"></div></section>
+  </section>
+  <section class="panel-group" id="deals" data-panel hidden>
+    <div class="section-title"><div><span class="eyebrow">REAL STORED ITEMS</span><h2>Deal verification</h2></div><small>Latest sampled exact items, not the entire catalog</small></div>
+    <section class="panel"><div class="filters">
+      <label>Search item<input id="search" type="search" placeholder="Title or Walmart item ID"></label>
+      <label>Verification status<select id="deal-status"><option value="">All statuses</option><option value="verified">Verified</option><option value="problem">Failed / retry / blocked</option><option value="pending">Pending</option></select></label>
+      <label>Route<select id="deal-route"><option value="">All routes</option></select></label>
+      <label>Date<select id="deal-age"><option value="">All observed</option><option value="1">Last hour</option><option value="24">Last 24 hours</option></select></label>
+    </div>
+    <p id="deal-count" class="fine"></p><div id="all-deals" class="deal-list"></div></section>
+    <div class="footnote">A missing item in this sample does not prove the scanner missed it. Finding genuinely missed retailer deals needs an independent timestamped retailer offer source.</div>
+  </section>
+  <section class="panel-group" id="delivery" data-panel hidden>
+    <div class="section-title"><div><span class="eyebrow">DISCORD DELIVERY</span><h2>What actually got posted?</h2></div></div>
+    <div class="triple" id="delivery-cards"></div>
+    <section class="panel"><div class="panel-head"><div><h3>Delivery decisions and suppressions</h3><p>Historical reason codes, not guesses from marketing copy.</p></div></div><div id="delivery-decisions" class="breakdown"></div></section>
+    <div class="footnote">Per-deal, per-guild receipt drilldown is not exported yet. Total posts count delivered messages across servers, not unique offers.</div>
+  </section>
+  <section class="panel-group" id="timing" data-panel hidden>
+    <div class="section-title"><div><span class="eyebrow">WORKER TIMING</span><h2>Scanning and retries</h2></div></div>
+    <div class="two" id="workers"></div>
+    <section class="panel"><h3>Price-sniper revisit</h3><div class="timing-compare">
+      <div><small>Code scheduling target</small><strong>~16 minutes</strong><span>Modeled rotation, not guaranteed runtime</span></div>
+      <div><small>Measured production revisit</small><strong>Not measured</strong><span>Requires per-query timestamps from live scan cycles</span></div></div>
+    </section>
+  </section>
+  <section class="panel-group" id="quality" data-panel hidden>
+    <div class="section-title"><div><span class="eyebrow">DEAL TRUST</span><h2>Filtering and accuracy</h2></div></div>
+    <div class="two" id="quality-cards"></div>
+    <section class="panel"><h3>Where deals are being rejected</h3><div id="quality-reasons" class="breakdown"></div></section>
+    <div class="footnote">Jewelry authenticity and profitable resale cannot be proven from a product's price or category. Without material proof and exact sold comparables, this board must show unverified, not pass.</div>
+  </section>
+  <section class="panel-group" id="readiness" data-panel hidden>
+    <div class="section-title"><div><span class="eyebrow">RELEASE AND SERVICE HEALTH</span><h2>Production readiness</h2></div></div>
+    <section class="panel"><div id="health-rows" class="breakdown"></div></section>
+    <section class="panel"><h3>What still needs direct evidence?</h3><div id="gaps" class="breakdown"></div></section>
+  </section>
+  <footer class="footer">SniperPlug operational data only. The dashboard does not scan retailers, send alerts, change bot settings, or perform deployments. <span id="evidence-at">No verified snapshot</span></footer>
+</main>
+<dialog class="drawer" id="detail" aria-labelledby="detail-heading">
+  <div class="drawer-body"><header><span class="eyebrow">EXACT OFFER EVIDENCE</span><button type="button" id="close-detail" aria-label="Close detail">×</button></header><div id="detail-body"></div></div>
+</dialog>
 </body>
 </html>
