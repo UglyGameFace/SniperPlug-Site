@@ -96,6 +96,16 @@ assert.equal(blockedPage.status, 401);
 assert.equal(called, false, 'Private page must be gated before static assets');
 assert.match(blockedPage.headers.get('cache-control'), /no-store/);
 assert.match(blockedPage.headers.get('x-robots-tag'), /noindex/);
+const lockedHtml = await blockedPage.text();
+assert.match(lockedHtml, /id="operations-login"/);
+assert.match(lockedHtml, /name="password" type="password"/);
+assert.match(lockedHtml, /\/assets\/js\/deal-ops-signin\.js/);
+assert.doesNotMatch(lockedHtml, /<script(?![^>]*src=)/i, 'Sign-in should honor strict script CSP');
+const signin = await readFile(new URL('../assets/js/deal-ops-signin.js', import.meta.url), 'utf8');
+assert.match(signin, /\/api\/control\?action=session/);
+assert.match(signin, /window\.location\.replace\('\/operations\/'\)/);
+assert.doesNotMatch(signin, /localStorage|sessionStorage|document\.cookie/);
+
 const allowedPage = await middleware({
   request: new Request('https://sniperplug.com/operations/index.html', { headers: { cookie } }),
   env,
