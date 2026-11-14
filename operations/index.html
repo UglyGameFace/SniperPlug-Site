@@ -21,9 +21,9 @@
       <div>
         <p class="overline">Private / validation workspace</p>
         <h1>Deal release readiness</h1>
-        <p>Exact evidence for alerts, revisit timing, listing truth, filters, and shipping status. A missing production feed stays unknown, never green by assumption.</p>
+        <p>Source-code proof, release evidence and pending live checks. GitHub is timestamped; Discloud and retailer telemetry remain unknown until connected.</p>
       </div>
-      <div class="buttons"><button id="refresh" type="button">Refresh evidence</button><a href="https://github.com/UglyGameFace/SniperPlug" rel="noopener noreferrer" target="_blank">Bot repository</a></div>
+      <div class="buttons"><button id="refresh" type="button">Reload snapshot</button><a href="https://github.com/UglyGameFace/SniperPlug" rel="noopener noreferrer" target="_blank">Bot repository</a></div>
     </section>
     <div id="load-message" class="notice" role="status" aria-live="polite">Loading read-only GitHub evidence…</div>
     <div class="metrics" id="metrics" aria-label="Validation summary"></div>
@@ -40,7 +40,7 @@
       <button type="button" data-view="evidence">Evidence</button>
     </nav>
     <section class="workspace">
-      <div class="section-heading"><div><h2 id="view-title">Overview</h2><p id="view-copy">Repository evidence is live when GitHub is reachable. Production telemetry is not yet connected.</p></div><span id="asof">As of: unknown</span></div>
+      <div class="section-heading"><div><h2 id="view-title">Overview</h2><p id="view-copy">GitHub metadata refreshes on a schedule. Production telemetry is not yet connected.</p></div><span id="asof">As of: unknown</span></div>
       <form class="filters" id="filters" role="search" autocomplete="off">
         <label>Search<input type="search" id="search" placeholder="Offer, route, issue, test…"></label>
         <label>Route<select id="route"><option value="">All routes</option></select></label>
