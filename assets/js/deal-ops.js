@@ -232,8 +232,6 @@ async function load() {
   try {
     const response = await fetch('/api/deal-ops', { method: 'GET', credentials: 'same-origin', cache: 'no-store' });
     if (response.status === 401 || response.status === 403) {
-      els.message.replaceChildren(elt('span', '', 'Owner session required. '));
-      add(els.message, link('Open Control Center', 'https://github.com/UglyGameFace/SniperPlug')); // Replaced below with safe site-local link
       const anchor = elt('a', 'link', 'Sign in to Control Center');
       anchor.href = '/control-center/'; els.message.replaceChildren(elt('span', '', 'Owner access required. '), anchor);
       return;
