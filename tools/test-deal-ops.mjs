@@ -1,153 +1,137 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createAdminSession } from '../functions/_lib/auth.js';
-import { buildDealOpsSnapshot, onRequest as dealOps } from '../functions/api/deal-ops.js';
-import { DEAL_OPS_SNAPSHOT } from '../functions/_lib/deal-ops-snapshot.js';
+import { sanitizeOpsSnapshot, summarizeOpsSnapshot } from '../functions/_lib/sniperplug-ops-telemetry.js';
+import { onRequest as operations } from '../functions/api/sniperplug-ops/[[path]].js';
 import { onRequest as middleware } from '../functions/_middleware.js';
 
-const env = { SNIPERPLUG_SESSION_SECRET: 'test-only-private-deal-ops-session-secret' };
-const head = 'a'.repeat(40);
-const siteHead = 'b'.repeat(40);
-const keyDate = '2026-11-14T22:00:00Z';
-const tree = [
-  'sniperplug/cogs/deal_scanner.py',
-  'sniperplug/services/walmart_exact_verification_queue.py',
-  'tests/test_local_check_command_helpers.py',
-  'tests/test_walmart_page_price_lane_a1.py',
-].map((path) => ({ type: 'blob', path }));
-const github = async (repo, path) => {
-  if (repo.endsWith('-Site')) return { sha: siteHead };
-  if (path === 'commits/main') return { sha: head, commit: { committer: { date: keyDate } } };
-  if (path.startsWith('git/trees/')) return { tree };
-  if (path.startsWith('actions/runs')) return { workflow_runs: [
-    { id: 14, name: 'Verify SniperPlug', head_sha: head, status: 'completed', conclusion: 'success', html_url: 'https://github.com/UglyGameFace/SniperPlug/actions/runs/14', updated_at: keyDate },
-    { id: 13, name: 'Old success', head_sha: 'c'.repeat(40), status: 'completed', conclusion: 'success' },
-  ] };
-  if (path.startsWith('pulls?')) return [
-    { number: 273, title: 'Incomplete PR', draft: true, updated_at: keyDate, head: { ref: 'fix/screening' }, html_url: 'https://github.com/UglyGameFace/SniperPlug/pull/273' },
-  ];
-  if (path.startsWith('issues?')) return [
-    { number: 295, title: 'Missed Walmart deal', updated_at: keyDate, html_url: 'https://github.com/UglyGameFace/SniperPlug/issues/295' },
-    { number: 273, title: 'PR issue', pull_request: { url: 'x' }, html_url: 'https://github.com/UglyGameFace/SniperPlug/pull/273' },
-  ];
-  if (path.startsWith('commits?')) return [
-    { sha: head, commit: { message: 'Merge pull request #318', committer: { date: keyDate } }, html_url: 'https://github.com/UglyGameFace/SniperPlug/commit/' + head },
-  ];
-  throw new Error('Unexpected path ' + path);
+const secret = 'test-only-signed-operational-observations-2026';
+const now = new Date().toISOString();
+const valid = {
+  schema: 1, id: '123e4567-e89b-42d3-a456-426614174000',
+  source: 'discloud-sniperplug', observed_at: now,
+  bot: { ready: true, guild_count: 9, backend: 'sqlite', uptime_seconds: 120 },
+  metrics: {
+    queue: { total: 22, due: 3, verified: 12, pending: 1 },
+    posts: { posts_24h: 5, latest_post_at: now },
+    events: { events_24h: 8, processed_24h: 7, event_errors_24h: 1 },
+    catalog: { completed_routes: 300, last_completed_at: now, claim_active: false },
+    workers: { catalog: { total_cycles: 55, total_timeouts: 1, last_success_at: now }, exact: { total_cycles: 130, total_timeouts: 0, last_success_at: now } },
+    decisions: { quality_blocked: 2, posted: 5, category_muted: 4 },
+  },
+  deals: [
+    { item_id: '12345678', title: '<script>alert(1)</script> Laptop', retailer: 'walmart',
+      status: 'verified_markdown', exact_current_cents: 1999, exact_reference_cents: 18000,
+      route: 'computers', product_url: 'https://www.walmart.com/ip/12345678?tracking=true',
+      verified_at: now, error_class: '' },
+  ],
 };
-// No live API access is needed for the core owner-only dashboard.
-assert.equal(DEAL_OPS_SNAPSHOT.schema, 1);
-assert.equal(DEAL_OPS_SNAPSHOT.bot, 'UglyGameFace/SniperPlug');
-assert.match(DEAL_OPS_SNAPSHOT.sources.commit.sha, /^[0-9a-f]{40}$/);
-assert(DEAL_OPS_SNAPSHOT.sources.branches.length > 0);
-const builtIn = await buildDealOpsSnapshot({
-  fallback: DEAL_OPS_SNAPSHOT, now: () => DEAL_OPS_SNAPSHOT.collectedAt,
-});
-assert.equal(builtIn.sources.githubCommit, 'snapshot');
-assert.equal(builtIn.sources.githubPrs, 'snapshot');
-assert.equal(builtIn.sources.githubBranches, 'snapshot');
-assert.equal(builtIn.evidenceOrigin, 'scheduled_github_snapshot');
-assert.equal(builtIn.branchSummary.remoteCount, DEAL_OPS_SNAPSHOT.sources.branches.length);
-assert(builtIn.checks.some((c) => c.id.startsWith('branch-')));
-assert.equal(builtIn.checks.filter((c) => c.id.startsWith('pr-')).length, DEAL_OPS_SNAPSHOT.sources.pulls.length);
-assert.equal(builtIn.checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
-assert.equal(builtIn.sources.discloud, 'not_connected');
-const stale = await buildDealOpsSnapshot({
-  fallback: DEAL_OPS_SNAPSHOT,
-  now: () => new Date(Date.parse(DEAL_OPS_SNAPSHOT.collectedAt) + 9 * 3600000).toISOString(),
-});
-assert.equal(stale.snapshotStale, true);
-assert.equal(stale.sources.githubCommit, 'stale');
+const cleaned = sanitizeOpsSnapshot({ ...valid, bot: { ...valid.bot, dangerous: 'DISCORD_TOKEN=secret' },
+  dangerous: { password: 'example' } });
+assert.equal(cleaned.bot.guild_count, 9);
+assert.equal(cleaned.metrics.posts.posts_24h, 5);
+assert.equal(cleaned.metrics.decisions.quality_blocked, 2);
+assert(!JSON.stringify(cleaned).includes('DISCORD_TOKEN'));
+assert(!JSON.stringify(cleaned).includes('tracking=true'));
+assert.equal(cleaned.deals[0].product_url, 'https://www.walmart.com/ip/12345678');
+assert.throws(() => sanitizeOpsSnapshot({ ...valid, deals: Array(50).fill(valid.deals[0]) }), /Too many item/);
+assert.throws(() => sanitizeOpsSnapshot({ ...valid, observed_at: '2020-01-01T00:00:00Z' }), /recent/);
+assert.throws(() => sanitizeOpsSnapshot({ ...valid, source: 'fake-bot' }), /Unknown/);
+assert.equal(summarizeOpsSnapshot(null, null).state, 'not_connected');
+assert.equal(summarizeOpsSnapshot(cleaned, new Date(Date.now() - 20 * 60_000).toISOString()).state, 'stale');
 
-const snapshot = await buildDealOpsSnapshot({ github, now: () => keyDate });
-assert.equal(snapshot.repository.mainSha, head);
-assert.equal(snapshot.repository.siteMainSha, siteHead);
-assert.equal(snapshot.sources.discloud, 'not_connected');
-assert.equal(snapshot.sources.deployment, 'not_connected');
-assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').evidenceLevel, 'code_present');
-assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
-assert.equal(snapshot.checks.find((c) => c.id === 'manual-check').status, 'pushed');
-assert.equal(snapshot.checks.find((c) => c.id === 'jewelry').status, 'blocked');
-assert.equal(snapshot.checks.find((c) => c.id === 'jewelry').testFilesPresent, 0);
-assert.equal(snapshot.ci.length, 1, 'Older SHA success is not proof for current main');
-assert.equal(snapshot.ci[0].status, 'verified');
-assert.equal(snapshot.checks.find((c) => c.id === 'pr-273').status, 'proposed');
-assert.equal(snapshot.checks.find((c) => c.id === 'issue-295').status, 'blocked');
-assert.equal(snapshot.audit[0].state, 'merged');
-assert(snapshot.notes.some((note) => note.includes('deployment')));
-assert(snapshot.statusValues.includes('deployed') && snapshot.statusValues.includes('unknown'));
-
-const failedGithub = async (_repo, path) => {
-  if (path === 'commits/main') throw Error('rate limited');
-  return github('UglyGameFace/SniperPlug', path);
-};
-const partial = await buildDealOpsSnapshot({ github: failedGithub });
-assert.equal(partial.sources.githubCommit, 'unavailable');
-assert.equal(partial.repository.mainSha, null);
-assert.equal(partial.checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
-assert.equal(partial.ci.length, 0, 'CI must never be attributed without an exact main SHA');
-
-const missing = await dealOps({ request: new Request('https://sniperplug.com/api/deal-ops'), env });
-assert.equal(missing.status, 401, 'Anonymous data access must fail closed');
-
-const post = await dealOps({ request: new Request('https://sniperplug.com/api/deal-ops', { method: 'POST' }), env });
-assert.equal(post.status, 405, 'Only GET is allowed');
-assert.equal(post.headers.get('allow'), 'GET');
-
+class Db {
+  constructor() { this.rows = new Map(); this.queries = []; }
+  prepare(sql) {
+    const db = this;
+    return {
+      args: [],
+      bind(...args) { this.args = args; return this; },
+      async run() {
+        db.queries.push(sql);
+        if (sql.startsWith('INSERT')) {
+          const [id, observed_at, received_at, source, schema_version, payload_json] = this.args;
+          if (!db.rows.has(id)) db.rows.set(id, { id, observed_at, received_at, source, schema_version, payload_json });
+        } else if (sql.startsWith('DELETE')) {
+          const [cutoff] = this.args;
+          for (const [id, row] of db.rows) if (row.received_at < cutoff) db.rows.delete(id);
+        } else { throw Error('Unexpected query: ' + sql); }
+        return { success: true };
+      },
+      async all() {
+        assert.match(sql, /SELECT observed_at, received_at, payload_json/);
+        return { results: [...db.rows.values()].sort((a, b) =>
+          b.received_at.localeCompare(a.received_at)).slice(0, 96) };
+      },
+    };
+  }
+}
+const db = new Db();
+const env = { SNIPERPLUG_DB: db, SNIPERPLUG_SESSION_SECRET: secret,
+  SNIPERPLUG_OPS_INGEST_SECRET: secret };
 const owner = await createAdminSession(env);
 const cookie = owner.cookie.split(';', 1)[0];
-const request = new Request('https://sniperplug.com/api/deal-ops', { headers: { cookie } });
-const originalFetch = globalThis.fetch;
-try {
-  globalThis.fetch = async (url) => new Response(JSON.stringify(await github(
-    String(url).includes('SniperPlug-Site') ? 'UglyGameFace/SniperPlug-Site' : 'UglyGameFace/SniperPlug',
-    String(url).split('SniperPlug/')[1] || 'commits/main',
-  )), { status: 200 });
-  const response = await dealOps({ request, env });
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('cache-control'), /no-store/);
-  assert.equal((await response.json()).checks.find((c) => c.id === 'manual-check').runtime, 'unknown');
-} finally {
-  globalThis.fetch = originalFetch;
+const get = (url, auth = false) => new Request('https://sniperplug.com' + url,
+  { headers: auth ? { cookie } : {} });
+const anonymous = await operations({ request: get('/api/sniperplug-ops/live'), env });
+assert.equal(anonymous.status, 401);
+const empty = await operations({ request: get('/api/sniperplug-ops/live', true), env });
+assert.equal(empty.status, 200);
+assert.equal((await empty.json()).state, 'not_connected');
+assert.match(empty.headers.get('cache-control'), /no-store/);
+
+function signed(body, timestamp = Math.floor(Date.now() / 1000), overrideSignature = '') {
+  const raw = JSON.stringify(body);
+  const signature = overrideSignature || createHmac('sha256', secret)
+    .update(String(timestamp) + '.' + raw).digest('hex');
+  return new Request('https://sniperplug.com/api/sniperplug-ops/ingest', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-sniperplug-timestamp': String(timestamp),
+      'x-sniperplug-signature': 'sha256=' + signature },
+    body: raw,
+  });
 }
+assert.equal((await operations({ request: signed(valid, 1234567890), env })).status, 401);
+assert.equal((await operations({ request: signed(valid, undefined, '0'.repeat(64)), env })).status, 401);
+assert.equal(db.rows.size, 0);
+const success = await operations({ request: signed(valid), env });
+assert.equal(success.status, 202);
+assert.equal(db.rows.size, 1);
+assert.equal((await operations({ request: signed(valid), env })).status, 202);
+assert.equal(db.rows.size, 1, 'Replayed event ID must be idempotent');
+const live = await operations({ request: get('/api/sniperplug-ops/live', true), env });
+assert.equal(live.status, 200);
+const report = await live.json();
+assert.equal(report.state, 'connected');
+assert.equal(report.read_only, true);
+assert.equal(report.snapshot.metrics.queue.due, 3);
+assert.equal(report.snapshot.metrics.decisions.category_muted, 4);
+assert.equal(report.history.length, 1);
+assert.equal(report.history[0].posted_24h, 5);
+assert.equal((await operations({ request: get('/api/sniperplug-ops/ingest'), env })).status, 405);
+assert.equal((await operations({ request: new Request('https://sniperplug.com/api/sniperplug-ops/live', { method: 'POST' }), env })).status, 405);
 
-let called = false;
-const blockedPage = await middleware({
-  request: new Request('https://sniperplug.com/operations/'),
-  env,
-  next: async () => { called = true; return new Response('EXPOSED'); },
+let reachedStatic = false;
+const blocked = await middleware({
+  request: get('/operations/'), env,
+  next: async () => { reachedStatic = true; return new Response('EXPOSED'); },
 });
-assert.equal(blockedPage.status, 401);
-assert.equal(called, false, 'Private page must be gated before static assets');
-assert.match(blockedPage.headers.get('cache-control'), /no-store/);
-assert.match(blockedPage.headers.get('x-robots-tag'), /noindex/);
-const lockedHtml = await blockedPage.text();
-assert.match(lockedHtml, /id="operations-login"/);
-assert.match(lockedHtml, /name="password" type="password"/);
-assert.match(lockedHtml, /\/assets\/js\/deal-ops-signin\.js/);
-assert.doesNotMatch(lockedHtml, /<script(?![^>]*src=)/i, 'Sign-in should honor strict script CSP');
-const signin = await readFile(new URL('../assets/js/deal-ops-signin.js', import.meta.url), 'utf8');
-assert.match(signin, /\/api\/control\?action=session/);
-assert.match(signin, /window\.location\.replace\('\/operations\/'\)/);
-assert.doesNotMatch(signin, /localStorage|sessionStorage|document\.cookie/);
-
-const allowedPage = await middleware({
-  request: new Request('https://sniperplug.com/operations/index.html', { headers: { cookie } }),
-  env,
-  next: async () => new Response('<html>Ops</html>', { headers: { 'content-type': 'text/html' } }),
+assert.equal(blocked.status, 401);
+assert.equal(reachedStatic, false);
+const allowed = await middleware({
+  request: get('/operations/', true), env,
+  next: async () => new Response('<html>Operations</html>', { headers: { 'content-type': 'text/html' } }),
 });
-assert.equal(allowedPage.status, 200);
-assert.match(allowedPage.headers.get('cache-control'), /no-store/);
-
-const ui = await readFile(new URL('../assets/js/deal-ops.js', import.meta.url), 'utf8');
+assert.equal(allowed.status, 200);
+assert.match(allowed.headers.get('cache-control'), /no-store/);
 const markup = await readFile(new URL('../operations/index.html', import.meta.url), 'utf8');
-assert.match(markup, /data-view="timeouts"/);
-assert.match(markup, /data-view="revisit"/);
-assert.match(markup, /data-view="filters"/);
-assert.match(markup, /id="since"/);
-assert.match(ui, /\/api\/deal-ops/);
-assert.doesNotMatch(ui, /innerHTML\s*=/, 'Untrusted GitHub strings should not be parsed as markup');
-assert.doesNotMatch(ui, /fetch\([^)]*method:\s*['"]POST/i, 'Operational UI must not mutate account state');
-assert.match(ui, /visibleLimit = 30/, 'Branch card paging must bound initial Android rendering');
-assert.match(ui, /scheduled snapshot/, 'The app must identify snapshots instead of claiming a live check');
-console.log('DEAL OPS PRIVATE READ-ONLY TESTS PASSED');
+const ui = await readFile(new URL('../assets/js/deal-ops.js', import.meta.url), 'utf8');
+for (const name of ['overview', 'deals', 'delivery', 'timing', 'quality', 'readiness']) {
+  assert.match(markup, new RegExp('data-tab="' + name + '"'));
+}
+assert.match(markup, /No live bot feed connected/);
+assert.match(ui, /\/api\/sniperplug-ops\/live/);
+assert.doesNotMatch(ui, /innerHTML\s*=/, 'Untrusted source strings must never render as HTML');
+assert.doesNotMatch(ui, /\bfetch\([^)]*method:\s*['"]POST/i, 'Dashboard cannot write');
+console.log('SNIPERPLUG REAL OPERATIONS OWNER / TELEMETRY / UI REGRESSIONS PASSED');
