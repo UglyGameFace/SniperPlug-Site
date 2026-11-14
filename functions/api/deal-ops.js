@@ -1,4 +1,5 @@
 import { requireAdmin } from '../_lib/auth.js';
+import { DEAL_OPS_SNAPSHOT } from '../_lib/deal-ops-snapshot.js';
 import { handleError, json, methodNotAllowed } from '../_lib/http.js';
 
 const BOT = 'UglyGameFace/SniperPlug';
@@ -112,7 +113,11 @@ function safeUrl(url, repo = BOT) {
   return typeof url === 'string' && url.startsWith(prefix) && !/[\s<>"']/u.test(url) ? url : null;
 }
 
-export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(), github = publicGithub } = {}) {
+export async function buildDealOpsSnapshot({
+  now = () => new Date().toISOString(),
+  github,
+  fallback = DEAL_OPS_SNAPSHOT,
+} = {}) {
   const keys = ['commit', 'tree', 'runs', 'pulls', 'issues', 'commits', 'siteCommit'];
   const queries = [
     [BOT, 'commits/main'],
@@ -123,14 +128,35 @@ export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(
     [BOT, 'commits?sha=main&per_page=12'],
     [SITE, 'commits/main'],
   ];
-  const results = await Promise.allSettled(queries.map(([repo, path]) => github(repo, path)));
+  // Cloudflare edge egress frequently hits anonymous GitHub limits. Do not
+  // mistake seven empty API responses for a repository with zero PRs/CI.
+  // The default is a periodically regenerated, trusted public-metadata
+  // snapshot imported into the private Pages Function. Unit tests may inject
+  // the same official API reader to validate failures and live responses.
+  const snapshotValid = fallback?.schema === 1 && fallback?.bot === BOT
+    && fallback?.site === SITE && fallback?.sources?.commit?.sha;
+  const usingSnapshot = !github && snapshotValid;
+  const results = usingSnapshot
+    ? keys.map((key) => fallback.sources[key] == null
+      ? { status: 'rejected', reason: new Error('Source not in snapshot') }
+      : { status: 'fulfilled', value: fallback.sources[key] })
+    : await Promise.allSettled(queries.map(([repo, path]) => (github || publicGithub)(repo, path)));
   const byKey = Object.fromEntries(keys.map((key, index) => [key, results[index]]));
+  const captureAt = usingSnapshot ? fallback.collectedAt : now();
+  const captureMs = Date.parse(captureAt);
+  const ageHours = Number.isFinite(captureMs)
+    ? Math.max(0, (Date.parse(now()) - captureMs) / 3600000)
+    : null;
+  const snapshotStale = usingSnapshot && (ageHours == null || ageHours > 8);
+  const sourceStatus = (result) => result.status === 'fulfilled'
+    ? usingSnapshot ? (snapshotStale ? 'stale' : 'snapshot') : 'available'
+    : 'unavailable';
   const mainCommit = resultValue(byKey.commit, null);
   const mainSha = typeof mainCommit?.sha === 'string' && /^[0-9a-f]{40}$/i.test(mainCommit.sha) ? mainCommit.sha : null;
   const tree = resultValue(byKey.tree, null);
   const paths = Array.isArray(tree?.tree) ? new Set(tree.tree.filter((entry) => entry.type === 'blob').map((entry) => entry.path)) : null;
   const runs = resultValue(byKey.runs, null);
-  const recentRuns = Array.isArray(runs?.workflow_runs) ? runs.workflow_runs.slice(0, 12) : [];
+  const recentRuns = Array.isArray(runs?.workflow_runs) ? runs.workflow_runs : [];
   const exactHeadRuns = mainSha ? recentRuns.filter((run) => run.head_sha === mainSha) : [];
   const prs = resultValue(byKey.pulls, null);
   const issues = resultValue(byKey.issues, null);
@@ -142,7 +168,7 @@ export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(
     const testsPresent = paths ? check.tests.filter((path) => paths.has(path)) : [];
     return {
       ...check,
-      status: codePresent === false ? 'blocked' : 'unknown',
+      status: codePresent === true ? 'pushed' : codePresent === false ? 'blocked' : 'unknown',
       evidenceLevel: codePresent === true ? 'code_present' : codePresent === false ? 'missing_code' : 'unknown',
       codePresent,
       testFilesPresent: paths ? testsPresent.length : null,
@@ -151,7 +177,11 @@ export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(
       runtime: 'unknown', deployed: 'unknown', observedAt: null,
       branch: 'main', test: check.tests[0], date: null,
       logLines: null, listing: null, price: null, availability: null,
-      reason: codePresent === false ? 'Required code is absent from the inspected main tree.' : 'Live Discloud, listing, and Discord evidence have not been connected.',
+      reason: codePresent === false
+        ? 'Required code is absent from the inspected main tree.'
+        : codePresent === true
+          ? 'Source exists on GitHub main. Production Discloud, listing, and Discord receipts remain unverified.'
+          : 'GitHub source unavailable; no runtime evidence connected.',
       inferred: false,
     };
   });
@@ -184,6 +214,36 @@ export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(
     runtime: 'unknown', deployed: 'unknown', inferred: false,
   })) : [];
 
+  const remoteBranches = usingSnapshot && Array.isArray(fallback.sources.branches)
+    ? fallback.sources.branches : [];
+  const remoteBranchRows = remoteBranches
+    .filter((b) => b?.name && b.name !== 'main')
+    .map((b) => ({
+      id: `branch-${b.name}`,
+      title: `Remote branch: ${b.name}`,
+      view: 'branches', route: 'Repository', category: 'Branch', productType: 'All',
+      severity: 'medium',
+      status: 'unknown',
+      evidenceLevel: 'remote_branch',
+      branch: b.name,
+      test: 'unknown',
+      date: null,
+      observedAt: captureAt,
+      expected: b.sha === mainSha
+        ? 'Branch head matches current main. Branch retirement can be investigated.'
+        : 'This remote ref exists; its commits may already be merged or still be independent. Git ancestry was not checked.',
+      reason: 'A remote ref is not an unfinished local worktree. Merge/closure state and local-only edits remain unknown.',
+      links: [{
+        label: 'Inspect branch commits',
+        url: `https://github.com/${BOT}/tree/${encodeURIComponent(b.name)}`,
+      }],
+      codeLinks: [], testLinks: [], required: [
+        'Compare branch with main and linked PRs', 'Check unique commits and active owners before cleanup',
+        'Verify no unpushed local changes',
+      ],
+      diagnostic: 'Open the branch in GitHub and use its compare view; do not delete or merge without verifying unique commits.',
+      runtime: 'unknown', deployed: 'unknown', inferred: false,
+    }));
   const audit = Array.isArray(commits) ? commits.slice(0, 12).filter((c) => typeof c.sha === 'string').map((c) => ({
     id: c.sha, at: c.commit?.committer?.date || null,
     state: /^Merge pull request #\d+/i.test(String(c.commit?.message || '')) ? 'merged' : 'pushed',
@@ -199,20 +259,33 @@ export async function buildDealOpsSnapshot({ now = () => new Date().toISOString(
     url: safeUrl(run.html_url), sha: mainSha,
   }));
   return {
-    generatedAt: now(), statusValues: STATUS_VALUES,
+    generatedAt: captureAt, checkedAt: now(),
+    evidenceOrigin: usingSnapshot ? 'scheduled_github_snapshot' : 'github_api',
+    evidenceAgeHours: ageHours, snapshotStale,
+    branchSummary: {
+      remoteCount: remoteBranches.length,
+      localCount: null,
+      verifiedUnmergedCount: null,
+    },
+    statusValues: STATUS_VALUES,
     repository: { bot: repositoryLink(BOT), site: repositoryLink(SITE), mainSha, mainCommitAt: mainCommit?.commit?.committer?.date || null,
       siteMainSha: /^[0-9a-f]{40}$/i.test(String(siteCommit?.sha || '')) ? siteCommit.sha : null },
     sources: {
-      githubCommit: recordStatus(byKey.commit), githubTree: recordStatus(byKey.tree),
-      githubCi: recordStatus(byKey.runs), githubPrs: recordStatus(byKey.pulls),
-      githubIssues: recordStatus(byKey.issues), githubHistory: recordStatus(byKey.commits),
-      siteCommit: recordStatus(byKey.siteCommit),
+      githubCommit: sourceStatus(byKey.commit), githubTree: sourceStatus(byKey.tree),
+      githubCi: sourceStatus(byKey.runs), githubPrs: sourceStatus(byKey.pulls),
+      githubIssues: sourceStatus(byKey.issues), githubHistory: sourceStatus(byKey.commits),
+      siteCommit: sourceStatus(byKey.siteCommit), githubBranches: usingSnapshot
+        ? (snapshotStale ? 'stale' : 'snapshot') : 'unavailable',
       discloud: 'not_connected', retailer: 'not_connected', discord: 'not_connected',
       listingSnapshots: 'not_connected', deployment: 'not_connected', localBranches: 'not_connected',
     },
-    ci: checksCi, checks: [...checks, ...prRows, ...issueRows], audit,
+    ci: checksCi, checks: [...checks, ...prRows, ...issueRows, ...remoteBranchRows], audit,
     notes: [
       'Code presence, CI outcome, PR state, and production behavior are different kinds of evidence.',
+      usingSnapshot
+        ? `GitHub metadata was captured at ${captureAt}, normally refreshed every six hours; reloading this page does not force a GitHub update.`
+        : 'GitHub metadata is from an independent API read; disconnected sources are never treated as empty.',
+      `Found ${remoteBranches.length} GitHub remote branches. This does not establish any unfinished local branches or unmerged commits.`,
       'The ~16-minute revisit is a code-derived scheduling target, not a measured production SLO.',
       'The site has no authorized Discloud, retailer listing, Discord receipt, or local-worktree feed. Those fields remain unknown.',
       'A GitHub merge does not prove a Discloud release, database preservation, or a Cloudflare Pages deployment.',

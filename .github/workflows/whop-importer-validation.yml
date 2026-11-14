@@ -28,6 +28,12 @@ jobs:
         run: npm install --ignore-scripts
       - name: Run full build and regression suite
         run: npm run build
+      - name: Validate GitHub evidence refresh against real public repositories
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node tools/generate-deal-ops-snapshot.mjs
+          node tools/test-deal-ops.mjs
       - name: Package Firefox Android extension
         run: |
           set -euo pipefail
