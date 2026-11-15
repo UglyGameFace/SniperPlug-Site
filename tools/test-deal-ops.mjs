@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHmac, createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createAdminSession } from '../functions/_lib/auth.js';
 import { sanitizeOpsSnapshot, summarizeOpsSnapshot } from '../functions/_lib/sniperplug-ops-telemetry.js';
@@ -42,7 +42,7 @@ assert.equal(summarizeOpsSnapshot(null, null).state, 'not_connected');
 assert.equal(summarizeOpsSnapshot(cleaned, new Date(Date.now() - 20 * 60_000).toISOString()).state, 'stale');
 
 class Db {
-  constructor() { this.rows = new Map(); this.queries = []; }
+  constructor() { this.rows = new Map(); this.queries = []; this.pairing = null; }
   prepare(sql) {
     const db = this;
     return {
@@ -50,7 +50,9 @@ class Db {
       bind(...args) { this.args = args; return this; },
       async run() {
         db.queries.push(sql);
-        if (sql.startsWith('INSERT')) {
+        if (sql.includes('INSERT INTO sniperplug_ops_pairing')) {
+          db.pairing = { key_digest_hex: this.args[0] };
+        } else if (sql.startsWith('INSERT')) {
           const [id, observed_at, received_at, source, schema_version, payload_json] = this.args;
           if (!db.rows.has(id)) db.rows.set(id, { id, observed_at, received_at, source, schema_version, payload_json });
         } else if (sql.startsWith('DELETE')) {
@@ -58,6 +60,10 @@ class Db {
           for (const [id, row] of db.rows) if (row.received_at < cutoff) db.rows.delete(id);
         } else { throw Error('Unexpected query: ' + sql); }
         return { success: true };
+      },
+      async first() {
+        assert.match(sql, /SELECT key_digest_hex FROM sniperplug_ops_pairing/);
+        return db.pairing;
       },
       async all() {
         assert.match(sql, /SELECT observed_at, received_at, payload_json/);
@@ -83,7 +89,7 @@ assert.match(empty.headers.get('cache-control'), /no-store/);
 
 function signed(body, timestamp = Math.floor(Date.now() / 1000), overrideSignature = '') {
   const raw = JSON.stringify(body);
-  const signature = overrideSignature || createHmac('sha256', secret)
+  const signature = overrideSignature || createHmac('sha256', createHash('sha256').update(secret).digest())
     .update(String(timestamp) + '.' + raw).digest('hex');
   return new Request('https://sniperplug.com/api/sniperplug-ops/ingest', {
     method: 'POST',
@@ -109,6 +115,21 @@ assert.equal(report.snapshot.metrics.queue.due, 3);
 assert.equal(report.snapshot.metrics.decisions.category_muted, 4);
 assert.equal(report.history.length, 1);
 assert.equal(report.history[0].posted_24h, 5);
+const pairingRequest = new Request('https://sniperplug.com/api/sniperplug-ops/pair', {
+  method: 'POST', headers: { cookie, origin: 'https://sniperplug.com' },
+});
+const pairingResponse = await operations({ request: pairingRequest, env });
+assert.equal(pairingResponse.status, 200);
+const issued = await pairingResponse.json();
+assert.equal(issued.token.length, 64);
+assert(!JSON.stringify(db.rows).includes(issued.token), 'Cleartext token must not be stored in snapshots');
+assert.equal(db.pairing.key_digest_hex, createHash('sha256').update(issued.token).digest('hex'));
+const pairingRead = await operations({ request: get('/api/sniperplug-ops/live', true), env });
+assert.equal((await pairingRead.json()).paired, true);
+const secondPair = await operations({ request: new Request('https://sniperplug.com/api/sniperplug-ops/pair', {
+  method: 'POST', headers: { cookie, origin: 'https://sniperplug.com' },
+}), env });
+assert.equal(secondPair.status, 409, 'Rotation requires explicit owner confirmation');
 assert.equal((await operations({ request: get('/api/sniperplug-ops/ingest'), env })).status, 405);
 assert.equal((await operations({ request: new Request('https://sniperplug.com/api/sniperplug-ops/live', { method: 'POST' }), env })).status, 405);
 
