@@ -76,7 +76,7 @@ historical snapshots.
 - `GET /api/sniperplug-ops/live` requires the existing owner Control Center
   session, is strictly read-only, returns only bounded sanitized telemetry and
   labels no-source and stale evidence explicitly.
-- `POST /api/sniperplug-ops/pair` is the one deliberate setup action. Owner
+- `POST /api/sniperplug-ops/pair` is available only through the separate /operations/settings/ owner setup view. Owner
   creates/rotates a one-time high-entropy connection token, stored only as a
   derived HMAC key in D1. The token must be installed in the Discloud bot's
   environment by the owner, never committed or shared in public.
@@ -105,3 +105,11 @@ npm run build
 The Node 22 build runs public affiliate-review audits plus the existing private-guide, Whop discovery/import, security, concurrency, recovery, media, and resilience regressions.
 
 The operation workspace deliberately does not equate an existing remote branch to an unmerged change; local-only branches cannot be observed from GitHub. The public GitHub snapshot is committed to the site repository and served only through the existing owner session at `/api/deal-ops`. GitHub Actions may fail to refresh during outages; old evidence remains dated and marked stale.
+
+The operations homepage contains no key generation/rotation controls or cleartext
+pairing instructions. Pairing and key rotation live at `/operations/settings/`,
+reachable from Reliability. The existing owner session is enforced on both.
+The one-time key is cleared from the browser UI on copy, dismiss, and page exit.
+Paired-without-reports is shown separately from a connected Discloud bot; adding
+a key to an already-running Discloud process requires a restart and verified
+local SQLite backup. A paired key alone is **not** a live report.
