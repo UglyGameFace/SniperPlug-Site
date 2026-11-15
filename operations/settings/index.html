@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#0a101b">
+  <title>SniperPlug | Connection Settings</title>
+  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=3">
+  <script src="/assets/js/ops-connection-settings.js?v=1" type="module"></script>
+</head>
+<body>
+<header class="topbar">
+  <a href="/operations/" class="brand"><span class="logo">SP</span><span><strong>SniperPlug</strong><small>CONNECTION SETTINGS</small></span></a>
+  <div class="toptools"><span class="ro">OWNER ONLY</span><a class="ctl" href="/operations/">Dashboard</a></div>
+</header>
+<main class="shell settings-shell">
+  <a class="back-link" href="/operations/">← Back to operations</a>
+  <span class="eyebrow">DISCloud / SNIPERPLUG</span>
+  <h1>Bot connection</h1>
+  <p class="settings-intro">Check whether your bot has sent a verified report. Keep credentials away from the dashboard and only rotate a key when necessary.</p>
+
+  <section class="panel" aria-labelledby="connection-title">
+    <div class="panel-head">
+      <div><h2 id="connection-title">Connection status</h2><p id="pairing-state">Checking setup…</p></div>
+      <button id="reload-settings" class="flat-button" type="button">Check again</button>
+    </div>
+    <div id="settings-state" class="notice" role="status" aria-live="polite">Loading the last signed receipt…</div>
+    <div class="breakdown">
+      <div class="break-row"><div><strong>Paired with website</strong><small>Does not prove the Discloud app has loaded this key.</small></div><b id="pair-status">Unknown</b></div>
+      <div class="break-row"><div><strong>Last received bot report</strong><small>Accepted HMAC-signed telemetry observation.</small></div><b id="last-report">None</b></div>
+      <div class="break-row"><div><strong>Reporting state</strong><small>The bot reports once every five minutes when enabled and running.</small></div><b id="report-state">Unknown</b></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Confirm the Discloud side</h2>
+    <ol class="setup-steps">
+      <li>Make sure the key is saved in the canonical <strong>SniperPlug</strong> Discloud app environment as <code>SNIPERPLUG_OPS_INGEST_SECRET</code> with no extra quote marks, spaces or pasted variable name in the value.</li>
+      <li>Restart the app after changing its environment. An already-running Python process cannot pick up a newly saved environment variable without restarting. First preserve a verified backup of the production SQLite database.</li>
+      <li>Check the current Discloud logs for <code>Operational telemetry enabled</code> or <code>Operational telemetry delivery</code>. A 401 means a key mismatch; a 404 indicates the endpoint isn't reachable; a 422 points to invalid telemetry. Never share or log the key itself.</li>
+      <li>Use <strong>Check again</strong> here. A received signed report proves connectivity, not the accuracy of each retailer listing.</li>
+    </ol>
+  </section>
+
+  <section class="panel">
+    <h2>Private pairing key</h2>
+    <p id="key-summary" class="fine">Checking whether a key is already paired…</p>
+    <div id="first-pair" hidden>
+      <button type="button" class="pair-btn" id="pair-start">Generate one-time connection key</button>
+    </div>
+    <details id="rotate-section" hidden>
+      <summary>Advanced: replace a lost or compromised key</summary>
+      <p class="fine">Rotating disconnects the current Discloud bot until the new key is saved in its environment and the app is restarted.</p>
+      <button type="button" class="pair-btn danger-btn" id="pair-rotate">Rotate existing key</button>
+    </details>
+    <div id="pair-result" class="pair-result" hidden>
+      <strong>One-time key, shown only during this setup step</strong>
+      <p>Save the value in your Discloud environment. It is never shown on the operations homepage and isn't available after leaving this page.</p>
+      <code id="pair-token" class="key-value"></code>
+      <div class="settings-actions">
+        <button type="button" class="pair-btn" id="copy-key">Copy key and hide</button>
+        <button type="button" class="flat-button" id="dismiss-key">I've saved it, hide key</button>
+      </div>
+      <span id="copy-feedback" class="fine" role="status"></span>
+    </div>
+    <p id="action-error" role="alert" class="fine" aria-live="polite"></p>
+  </section>
+  <footer class="footer">Only connection configuration is changed here. No bot scans, Discord messages, retailer requests or deployments are started.</footer>
+</main>
+</body>
+</html>
