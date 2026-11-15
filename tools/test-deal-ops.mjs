@@ -154,5 +154,7 @@ for (const name of ['overview', 'deals', 'delivery', 'timing', 'quality', 'readi
 assert.match(markup, /No live bot feed connected/);
 assert.match(ui, /\/api\/sniperplug-ops\/live/);
 assert.doesNotMatch(ui, /innerHTML\s*=/, 'Untrusted source strings must never render as HTML');
-assert.doesNotMatch(ui, /\bfetch\([^)]*method:\s*['"]POST/i, 'Dashboard cannot write');
+assert.match(ui, /\/api\/sniperplug-ops\/pair/, 'Only owner-initiated pairing may write');
+assert.doesNotMatch(ui, /fetch\(['"]\/api\/sniperplug-ops\/ingest/, 'Browser must not fabricate telemetry');
+assert.doesNotMatch(ui, /fetch\(['"]https?:\/\//, 'Dashboard must not call external retailer or bot endpoints');
 console.log('SNIPERPLUG REAL OPERATIONS OWNER / TELEMETRY / UI REGRESSIONS PASSED');
