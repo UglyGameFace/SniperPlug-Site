@@ -7,8 +7,8 @@
   <meta name="theme-color" content="#0a101b">
   <title>SniperPlug | Live Operations</title>
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=2">
-  <script src="/assets/js/deal-ops.js?v=2" type="module"></script>
+  <link rel="stylesheet" href="/assets/css/deal-ops.css?v=3">
+  <script src="/assets/js/deal-ops.js?v=3" type="module"></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to dashboard</a>
@@ -37,17 +37,8 @@
     <div><h2>No live bot feed connected</h2>
       <p>This website cannot read Discloud's local SQLite on its own. The dashboard needs a signed, read-only telemetry feed from the running SniperPlug bot. Until then, no deal counts, alert history or scanner health can honestly be marked live.</p>
       <span id="connection-reason" class="reason">Awaiting first authenticated snapshot</span>
-      <div class="pairing">
-        <h3>Connect your Discloud bot</h3>
-        <p>Generate a one-time private key here, add it as <code>SNIPERPLUG_OPS_INGEST_SECRET</code> in the canonical SniperPlug Discloud app, and start the telemetry-enabled bot after backing up its local SQLite. No public logging or account tokens are required.</p>
-        <button type="button" id="pair-btn" class="pair-btn">Generate private connection key</button>
-        <div id="pair-result" class="pair-result" hidden>
-          <p>Copy this key now. It will not be shown again, and rotating it disconnects the previous key.</p>
-          <code id="pair-token"></code>
-          <button type="button" id="copy-key">Copy key</button>
-          <small id="copy-feedback" role="status"></small>
-        </div>
-      </div>
+      <p id="connection-guidance" class="connection-guidance">Checking whether this bot has already been paired…</p>
+      <p class="connection-help">You can check setup and troubleshoot a connection from the Reliability tab. No credentials are shown on this screen.</p>
     </div>
   </div>
   <section class="panel-group" id="overview" data-panel>
@@ -105,6 +96,8 @@
   <section class="panel-group" id="readiness" data-panel hidden>
     <div class="section-title"><div><span class="eyebrow">RELEASE AND SERVICE HEALTH</span><h2>Production readiness</h2></div></div>
     <section class="panel"><div id="health-rows" class="breakdown"></div></section>
+    <section class="panel"><div class="panel-head"><div><h3>Discloud connection</h3><p id="connection-health">Checking signed reports from your bot.</p></div><a class="flat-button connection-settings-link" href="/operations/settings/">Connection settings</a></div>
+    <p class="fine">Manage the one-time telemetry pairing key in a separate owner-only settings screen. The dashboard never displays it.</p></section>
     <section class="panel"><h3>What still needs direct evidence?</h3><div id="gaps" class="breakdown"></div></section>
   </section>
   <footer class="footer">SniperPlug operational data only. The dashboard does not scan retailers, send alerts, change bot settings, or perform deployments. <span id="evidence-at">No verified snapshot</span></footer>
