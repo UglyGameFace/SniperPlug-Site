@@ -319,6 +319,9 @@ function render(data) {
     : data.state === 'stale' ? 'Last bot report was ' + time(data.received_at) + '. Historic records are shown as stale, not live.'
     : 'No connected SniperPlug bot snapshots. This page will not invent operational results.';
   $('unconnected').hidden = data.state === 'connected';
+  $('pair-btn').textContent = data.paired
+    ? 'Rotate private connection key'
+    : 'Generate private connection key';
   if (data.state !== 'connected') show('connection-reason',
     data.state === 'stale' ? 'Last recorded receipt: ' + time(data.received_at)
       : data.state === 'migration_required' ? 'Telemetry database migration not applied'
@@ -370,6 +373,42 @@ async function reload() {
     button.disabled = false; button.textContent = 'Refresh';
   }
 }
+$('pair-btn').addEventListener('click', async () => {
+  const existing = state.data?.paired === true;
+  if (existing && !window.confirm(
+    'Rotating the pairing key will disconnect the current Discloud feed until the new key is installed. Continue?'
+  )) return;
+  const button = $('pair-btn');
+  button.disabled = true;
+  button.textContent = 'Creating key…';
+  try {
+    const response = await fetch('/api/sniperplug-ops/pair', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: existing ? { 'x-sniperplug-confirm-rotate': 'yes' } : {},
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.token) throw Error(payload.error || 'Unable to create the key');
+    $('pair-result').hidden = false;
+    show('pair-token', payload.token);
+    show('copy-feedback', 'Save it in Discloud. The website does not save or re-display the cleartext key.');
+    if (state.data) state.data.paired = true;
+    button.textContent = 'Rotate private connection key';
+  } catch (error) {
+    show('copy-feedback', String(error?.message || error));
+    $('pair-result').hidden = false;
+    button.textContent = existing ? 'Rotate private connection key' : 'Generate private connection key';
+  } finally { button.disabled = false; }
+});
+$('copy-key').addEventListener('click', async () => {
+  const token = $('pair-token').textContent;
+  if (!token) return;
+  try {
+    await navigator.clipboard.writeText(token);
+    show('copy-feedback', 'Copied. Set this as SNIPERPLUG_OPS_INGEST_SECRET in Discloud.');
+  } catch {
+    show('copy-feedback', 'Long-press the key above to copy it into Discloud.');
+  }
+});
 $('refresh').addEventListener('click', reload);
 chooseTab('overview');
 reload();
