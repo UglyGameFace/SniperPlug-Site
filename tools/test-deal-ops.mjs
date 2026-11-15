@@ -146,6 +146,16 @@ const allowed = await middleware({
 });
 assert.equal(allowed.status, 200);
 assert.match(allowed.headers.get('cache-control'), /no-store/);
+const settingsDenied = await middleware({
+  request: get('/operations/settings/'), env,
+  next: async () => new Response('SECRET SETTINGS'),
+});
+assert.equal(settingsDenied.status, 401);
+const settingsAllowed = await middleware({
+  request: get('/operations/settings/', true), env,
+  next: async () => new Response('<html>Connection settings</html>', { headers: { 'content-type': 'text/html' } }),
+});
+assert.equal(settingsAllowed.status, 200);
 const markup = await readFile(new URL('../operations/index.html', import.meta.url), 'utf8');
 const ui = await readFile(new URL('../assets/js/deal-ops.js', import.meta.url), 'utf8');
 for (const name of ['overview', 'deals', 'delivery', 'timing', 'quality', 'readiness']) {
@@ -154,7 +164,19 @@ for (const name of ['overview', 'deals', 'delivery', 'timing', 'quality', 'readi
 assert.match(markup, /No live bot feed connected/);
 assert.match(ui, /\/api\/sniperplug-ops\/live/);
 assert.doesNotMatch(ui, /innerHTML\s*=/, 'Untrusted source strings must never render as HTML');
-assert.match(ui, /\/api\/sniperplug-ops\/pair/, 'Only owner-initiated pairing may write');
+const settingsMarkup = await readFile(new URL('../operations/settings/index.html', import.meta.url), 'utf8');
+const settingsUi = await readFile(new URL('../assets/js/ops-connection-settings.js', import.meta.url), 'utf8');
+assert.match(markup, /href="\/operations\/settings\/"/);
+assert.doesNotMatch(markup, /pair-token|pair-btn|SNIPERPLUG_OPS_INGEST_SECRET|Generate one-time connection key/,
+  'Operational homepage must never display pairing controls or cleartext key instructions');
+assert.doesNotMatch(ui, /pair-token|pair-btn|\/api\/sniperplug-ops\/pair/,
+  'Dashboard script must not create or render credentials');
+assert.match(settingsMarkup, /id="pair-token"/);
+assert.match(settingsMarkup, /id="pair-rotate"/);
+assert.match(settingsUi, /\/api\/sniperplug-ops\/pair/, 'Pairing only runs on owner settings screen');
+assert.match(settingsUi, /pagehide.*clearKey/);
+assert.match(settingsUi, /clearKey\(\)/);
+
 assert.doesNotMatch(ui, /fetch\(['"]\/api\/sniperplug-ops\/ingest/, 'Browser must not fabricate telemetry');
 assert.doesNotMatch(ui, /fetch\(['"]https?:\/\//, 'Dashboard must not call external retailer or bot endpoints');
 console.log('SNIPERPLUG REAL OPERATIONS OWNER / TELEMETRY / UI REGRESSIONS PASSED');
