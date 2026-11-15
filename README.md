@@ -64,15 +64,37 @@ Do not publish a generic retailer search page as an exact deal destination.
 - Support and corrections: `support@sniperplug.com`
 - Retailer, API, and affiliate partnerships: `partners@sniperplug.com`
 
-## Private deal operations (read only)
+## Owner-only SniperPlug operations dashboard
 
-The owner-only /operations/ view reuses the existing Control Center owner session. Its /api/deal-ops GET endpoint reads public GitHub main, code paths, exact-head workflow runs, open PRs/issues, and commit history without credentials or writes. No external scripts or public listing feeds are loaded in the browser.
+The Android/desktop owner workspace at **/operations/** is a real operations
+dashboard for the canonical Discloud SniperPlug bot, not a GitHub or release
+viewer. It displays signed bot observations: live connection and guild readiness,
+Walmart verification queue and exact-price items, actual public post receipts,
+fanout decision reasons, worker failures and timeouts, catalog progress and
+historical snapshots.
 
-- Separate monitored code/test presence from measured Discloud behavior.
-- Show missing source listings, current offer prices, receipt logs, unverified ~16-minute revisit, deployment SHA, and local-only branches as unknown. Do not fabricate successful deal validations or deployments.
-- GitHub public API reads from Cloudflare proved unreliable on Android. Owner workspace now serves a timestamped, CI-generated public GitHub metadata snapshot with 8-hour staleness detection, real open PRs, remote branch refs, code-path checks, and exact-main CI when available. Scheduled GitHub Actions refreshes only this generated site file every six hours; the read-only dashboard never writes to the bot, Discloud, Discord, retailer accounts or repository.
-- This is not an alert sender or a production Discloud integration. Connecting trusted, private, *read-only* telemetry later requires a separately authenticated source, redaction policy, and an explicit deploy/acceptance check.
-- No RivaL, Discord health Site, Whop subscriber, or bot database changes are made.
+- `GET /api/sniperplug-ops/live` requires the existing owner Control Center
+  session, is strictly read-only, returns only bounded sanitized telemetry and
+  labels no-source and stale evidence explicitly.
+- `POST /api/sniperplug-ops/pair` is the one deliberate setup action. Owner
+  creates/rotates a one-time high-entropy connection token, stored only as a
+  derived HMAC key in D1. The token must be installed in the Discloud bot's
+  environment by the owner, never committed or shared in public.
+- `POST /api/sniperplug-ops/ingest` accepts at most 64KB of recent HMAC-signed
+  aggregate telemetry, with a 5-minute timestamp check, idempotent UUIDs and
+  14-day retention. The only changed data store is the isolated site
+  observability table (migration `0008_sniperplug_operations.sql`).
+- Live data requires the paired telemetry-enabled SniperPlug bot to be **safely
+  deployed** after an external backup of its Discloud local SQLite. This site
+  cannot infer bot deployment from a GitHub merge.
+- Independent missed-deal evidence, per-query revisit metrics, live retailer
+  checkout proof, jewelry authenticity and net resale sold comps remain
+  unknown until separately instrumented. No fake live metrics or product prices.
+- The obsolete GitHub-only dashboard API, scheduled metadata exporter and
+  repository snapshot have been removed.
+
+Details: `migrations/0008_sniperplug_operations.sql` and the SniperPlug
+bot's `docs/SNIPERPLUG_OPERATIONS_DASHBOARD.md`.
 
 ## Validation
 
