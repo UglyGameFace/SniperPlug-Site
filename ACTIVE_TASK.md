@@ -1,5 +1,14 @@
 # Active Task
 
+## 2026-11-14: Replace repo viewer with real SniperPlug Control Desk
+- Objective: SniperPlug runtime operations on Android and desktop, not a GitHub-status page.
+- Branch: `feat/real-sniperplug-ops-20261114`. Site-only changes: sanitized D1 snapshot ingest/storage, owner HMAC pairing, no cross-origin secret sharing, operational views for exact items, posts, fanout decisions, backlog and timeout history.
+- Preserves existing Control Center owner login, Whop subscriber isolation, public affiliate pages, and unrelated health sites.
+- Removes the obsolete GitHub-only dashboard API, snapshot storage module, generator and scheduled workflow. No real-money actions, bot settings, deploy buttons or retailer checkout automation.
+- Validation pending: Node 22 build and ops regression suite; apply additive D1 `0008_sniperplug_operations.sql` to production; Cloudflare Pages production deployment and owner login/first signed receipt.
+- Data source limitation: Discloud is not directly connected via ChatGPT; dashboards must remain not connected until the bot with the matching key is actually deployed and reports.
+- Bot-side partner: `UglyGameFace/SniperPlug` branch `feat/operational-telemetry-readonly-20261114`. Production integration requires safe bot deploy with preserved local SQLite, not just a site merge.
+
 ## Active task / outcome
 Fix Firefox Android Better Content Capture-all so rendered click-only Better Content guide cards are captured instead of collapsing to the directory shell, and make the in-page Capture-all progress HUD controllable/removable.
 
