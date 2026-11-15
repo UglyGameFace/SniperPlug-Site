@@ -37,6 +37,17 @@
     <div><h2>No live bot feed connected</h2>
       <p>This website cannot read Discloud's local SQLite on its own. The dashboard needs a signed, read-only telemetry feed from the running SniperPlug bot. Until then, no deal counts, alert history or scanner health can honestly be marked live.</p>
       <span id="connection-reason" class="reason">Awaiting first authenticated snapshot</span>
+      <div class="pairing">
+        <h3>Connect your Discloud bot</h3>
+        <p>Generate a one-time private key here, add it as <code>SNIPERPLUG_OPS_INGEST_SECRET</code> in the canonical SniperPlug Discloud app, and start the telemetry-enabled bot after backing up its local SQLite. No public logging or account tokens are required.</p>
+        <button type="button" id="pair-btn" class="pair-btn">Generate private connection key</button>
+        <div id="pair-result" class="pair-result" hidden>
+          <p>Copy this key now. It will not be shown again, and rotating it disconnects the previous key.</p>
+          <code id="pair-token"></code>
+          <button type="button" id="copy-key">Copy key</button>
+          <small id="copy-feedback" role="status"></small>
+        </div>
+      </div>
     </div>
   </div>
   <section class="panel-group" id="overview" data-panel>
